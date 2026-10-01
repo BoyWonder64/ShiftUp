@@ -39,6 +39,7 @@ export default function SignupPage() {
   const [slugEdited, setSlugEdited] = useState(false);
   const [featureTier, setFeatureTier] = useState<FeatureTier>("BOTH");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function SignupPage() {
       const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ businessName, slug, timezone, email, password, featureTier }),
+        body: JSON.stringify({ businessName, slug, timezone, email, username, password, featureTier }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -160,6 +161,23 @@ export default function SignupPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
             />
+          </label>
+
+          <label className="flex flex-col gap-1 text-sm">
+            Username
+            <input
+              className="rounded-lg border border-gray-300 px-3 py-2 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              minLength={3}
+              maxLength={30}
+              pattern="[a-z0-9]+([_-][a-z0-9]+)*"
+              title="Lowercase letters, numbers, - and _ only"
+            />
+            <span className="text-xs text-gray-500">
+              You can log in with either your username or email.
+            </span>
           </label>
 
           <label className="flex flex-col gap-1 text-sm">

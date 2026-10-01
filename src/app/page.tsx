@@ -49,7 +49,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-6 px-8 pb-24 sm:grid-cols-3">
+      <section id="features" className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-6 px-8 pb-24 sm:grid-cols-3">
         {FEATURES.map((feature) => (
           <div
             key={feature.title}

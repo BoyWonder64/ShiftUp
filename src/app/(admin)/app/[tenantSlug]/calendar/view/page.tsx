@@ -22,8 +22,15 @@ export default async function ReadOnlyCalendarPage({
     redirect("/login");
   }
 
-  const tenant = await runInTenantContext(session.tenantId, session.userId, session.role, (tx) =>
-    tx.tenant.findUnique({ where: { id: session.tenantId! } })
+  const { tenant, license } = await runInTenantContext(
+    session.tenantId,
+    session.userId,
+    session.role,
+    async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
+      const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
+      return { tenant, license };
+    }
   );
 
   if (!tenant || tenant.slug !== tenantSlug) {
@@ -32,10 +39,15 @@ export default async function ReadOnlyCalendarPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader tenantSlug={tenantSlug} businessName={tenant.name} role={session.role} />
+      <AppHeader
+        tenantSlug={tenantSlug}
+        businessName={tenant.name}
+        role={session.role}
+        logoUrl={tenant.logoDataUrl}
+      />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">Calendar (view only)</h1>
-        <SchedulingCalendar readOnly />
+        <SchedulingCalendar readOnly licenseTier={license?.tier ?? "BOTH"} />
       </main>
     </div>
   );

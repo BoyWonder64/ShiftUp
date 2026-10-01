@@ -81,6 +81,33 @@ model Tenant {
   name      String
   slug      String   @unique
   timezone  String   @default("UTC")
+  /// Admin-configurable: whether a client must be attached when creating an
+  /// appointment. Off by default for tenants that book clientless work
+  /// (internal-only visits, pure shift scheduling that still uses the
+  /// appointment form) - toggled from the Settings admin page.
+  requireClientForAppointments Boolean  @default(true) @map("require_client_for_appointments")
+  /// Admin-configurable: whether an in-person appointment's address shows an
+  /// "Open in Google Maps" navigation link. On by default - toggled off for
+  /// tenants that don't want that link shown (e.g. privacy preference, or
+  /// addresses that aren't real navigable locations).
+  enableMapsNavigation          Boolean  @default(true) @map("enable_maps_navigation")
+  /// The tenant's company logo, stored as a data: URL (e.g.
+  /// "data:image/png;base64,...") rather than a file path - there's no blob
+  /// storage wired up in this stack (see PROGRESS.md), and a small logo
+  /// comfortably fits in a TEXT column. Null = no logo set. Admin-only to
+  /// change (src/app/api/admin/logo/route.ts); shown in AppHeader for
+  /// everyone in the tenant.
+  logoDataUrl                   String?  @map("logo_data_url")
+  /// Admin-configurable overrides for the 5 built-in event-type colors
+  /// (appointment/shift/completed/noShow/cancelled), stored as a flat
+  /// {key: "#rrggbb"} JSON object - only keys actually overridden need be
+  /// present; `src/lib/colors/eventColors.ts` fills in the rest from the
+  /// hardcoded defaults. Kept as JSON rather than 5 separate columns since
+  /// it's always read/written as one unit and never queried by individual key.
+  eventColors                   Json?    @map("event_colors")
+  /// Admin-configurable: show the standard US federal holidays
+  /// (src/lib/holidays/federal.ts - computed, not stored) on the calendar.
+  showFederalHolidays           Boolean  @default(true) @map("show_federal_holidays")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -95,8 +122,50 @@ model Tenant {
   rolePermissions  RolePermission[]
   roleVisibilities RoleVisibility[]
   timeOffs         TimeOff[]
+  eventTags        EventTag[]
+  holidays         Holiday[]
 
   @@map("tenants")
+}
+
+/// A custom, tenant-defined color tag (e.g. "VIP", "Consultation") that can
+/// be assigned to an individual appointment/shift to override its default
+/// status-based color - the per-event counterpart to the tenant-wide
+/// eventColors overrides above, which only re-theme the 5 built-in
+/// categories rather than adding new ones.
+model EventTag {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// Hex color, e.g. "#2563eb".
+  color     String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  appointments Appointment[]
+
+  @@index([tenantId])
+  @@map("event_tags")
+}
+
+/// A day the business is closed/observing, shown on the calendar. Federal
+/// holidays are computed in code (src/lib/holidays/federal.ts) and never
+/// stored here - this table is only for tenant-added custom holidays.
+model Holiday {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  date      DateTime @db.Date
+  /// If true, this holiday recurs every year on the same month/day
+  /// (the `date` column's year is otherwise ignored for display purposes -
+  /// still stored as a full date since Postgres has no month/day-only type).
+  /// If false, it's a one-off for that exact date.
+  recurring Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@map("holidays")
 }
 
 /// A tenant's entitlement: which feature tier (modules) and which billing
@@ -128,6 +197,11 @@ model User {
   tenantId     String?       @map("tenant_id")
   tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   email        String        @unique
+  /// Admin-set at account creation (signup, or whoever adds a staff member) -
+  /// nullable only because it was added after email-only login already
+  /// existed; every new account is required to set one (see isValidUsername
+  /// in src/modules/identity/service.ts). Lets login accept either.
+  username     String?       @unique
   passwordHash String        @map("password_hash")
   role         UserRole      @default(EMPLOYEE)
   createdAt    DateTime      @default(now()) @map("created_at")
@@ -277,6 +351,7 @@ model Client {
   name      String
   email     String?
   phone     String?
+  address   String?
   isGuest   Boolean  @default(true) @map("is_guest")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -317,6 +392,10 @@ model Appointment {
   location                 String?             @map("location")
   createdByUserId          String              @map("created_by_user_id")
   source                   AppointmentSource   @default(ADMIN)
+  /// Optional custom color tag (see EventTag) overriding this entry's
+  /// default status-based color on the calendar.
+  tagId                    String?             @map("tag_id")
+  tag                      EventTag?           @relation(fields: [tagId], references: [id], onDelete: SetNull)
   createdAt                DateTime            @default(now()) @map("created_at")
   updatedAt                DateTime            @updatedAt @map("updated_at")
 
@@ -332,7 +411,7 @@ model Appointment {
 /// always has every permission and is never overridable (enforced in code,
 /// not the DB, since it's a business rule rather than a tenant-isolation one).
 /// This is what lets a tenant ADMIN configure "what can a manager/supervisor
-/// do" from the User Manager page instead of it being hardcoded.
+/// do" from the Settings page instead of it being hardcoded.
 model RolePermission {
   id            String   @id @default(uuid())
   tenantId      String   @map("tenant_id")

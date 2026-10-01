@@ -49,6 +49,7 @@ const patchSchema = z.object({
   locationType: z.enum(["IN_PERSON", "ONLINE"]).optional(),
   location: z.string().max(500).nullable().optional(),
   staffId: z.string().uuid().optional(),
+  tagId: z.string().uuid().nullable().optional(),
 });
 
 /** Handles drag (time shift), resize (duration change), cancel, and job-estimate edits - all as one PATCH. */
@@ -74,6 +75,7 @@ export async function PATCH(
         const estimateFieldsRequested =
           data.estimatedDurationMinutes !== undefined || data.estimatedValue !== undefined;
         const locationFieldsRequested = data.locationType !== undefined || data.location !== undefined;
+        const tagFieldRequested = data.tagId !== undefined;
         const wantsReschedule = Boolean(data.startTime && data.endTime);
         const wantsReassign = data.staffId !== undefined;
 
@@ -83,7 +85,7 @@ export async function PATCH(
           return cancelAppointment(tx, id);
         }
 
-        if (wantsReschedule || locationFieldsRequested || wantsReassign) {
+        if (wantsReschedule || locationFieldsRequested || tagFieldRequested || wantsReassign) {
           const canEdit = await hasPermission(tx, session.tenantId, session.role, "EDIT_APPOINTMENTS");
           if (!canEdit) throw new Error("FORBIDDEN");
         }
@@ -104,7 +106,7 @@ export async function PATCH(
           });
         }
 
-        if (estimateFieldsRequested || locationFieldsRequested) {
+        if (estimateFieldsRequested || locationFieldsRequested || tagFieldRequested) {
           return tx.appointment.update({
             where: { id },
             data: {
@@ -114,6 +116,7 @@ export async function PATCH(
               }),
               ...(data.locationType !== undefined && { locationType: data.locationType }),
               ...(data.location !== undefined && { location: data.location }),
+              ...(tagFieldRequested && { tagId: data.tagId }),
             },
           });
         }

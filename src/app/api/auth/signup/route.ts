@@ -3,7 +3,7 @@ import { z } from "zod";
 import { runInSystemContext } from "@/lib/tenant-context";
 import { getTenantBySlug, createTenant, isValidSlug } from "@/modules/tenancy/service";
 import { createFreeLicense } from "@/modules/licensing/service";
-import { createUser, findUserByEmail } from "@/modules/identity/service";
+import { createUser, findUserByEmail, findUserByUsername, isValidUsername } from "@/modules/identity/service";
 import {
   createSessionToken,
   SESSION_COOKIE_NAME,
@@ -15,6 +15,7 @@ const signupSchema = z.object({
   slug: z.string().min(3).max(63),
   timezone: z.string().min(1).max(100).default("UTC"),
   email: z.string().email(),
+  username: z.string().min(3).max(30),
   password: z.string().min(8).max(200),
   // Which module(s) to explore - separate from billing plan, which is
   // always FREE at signup (see createFreeLicense) until Phase 3 checkout exists.
@@ -30,11 +31,17 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const { businessName, slug, timezone, email, password, featureTier } = parsed.data;
+  const { businessName, slug, timezone, email, username, password, featureTier } = parsed.data;
 
   if (!isValidSlug(slug)) {
     return NextResponse.json(
       { error: "Slug must be lowercase letters, numbers, and hyphens only." },
+      { status: 400 }
+    );
+  }
+  if (!isValidUsername(username)) {
+    return NextResponse.json(
+      { error: "Username must be 3-30 characters: lowercase letters, numbers, - and _ only." },
       { status: 400 }
     );
   }
@@ -47,11 +54,15 @@ export async function POST(request: NextRequest) {
       const existingUser = await findUserByEmail(tx, email);
       if (existingUser) throw new Error("EMAIL_TAKEN");
 
+      const existingUsername = await findUserByUsername(tx, username);
+      if (existingUsername) throw new Error("USERNAME_TAKEN");
+
       const tenant = await createTenant(tx, { name: businessName, slug, timezone });
       await createFreeLicense(tx, tenant.id, featureTier);
       const user = await createUser(tx, {
         tenantId: tenant.id,
         email,
+        username,
         password,
         role: "ADMIN",
       });
@@ -86,6 +97,9 @@ export async function POST(request: NextRequest) {
         { error: "An account with that email already exists." },
         { status: 409 }
       );
+    }
+    if (err instanceof Error && err.message === "USERNAME_TAKEN") {
+      return NextResponse.json({ error: "That username is already taken." }, { status: 409 });
     }
     console.error("Signup failed", err);
     return NextResponse.json({ error: "Signup failed. Please try again." }, { status: 500 });

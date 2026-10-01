@@ -36,6 +36,7 @@ export interface CreateAppointmentInput {
   estimatedValue?: number | null;
   locationType?: "IN_PERSON" | "ONLINE";
   location?: string | null;
+  tagId?: string | null;
   createdByUserId: string;
   source: "SELF_SERVICE" | "ADMIN";
 }
@@ -58,6 +59,7 @@ export async function createAppointment(tx: Tx, tenantId: string, input: CreateA
         estimatedValue: input.estimatedValue ?? null,
         locationType: input.locationType ?? "IN_PERSON",
         location: input.location ?? null,
+        tagId: input.tagId ?? null,
         createdByUserId: input.createdByUserId,
         source: input.source,
       },
@@ -192,7 +194,7 @@ export async function listAppointmentsInRange(
       startTime: { lt: range.end },
       endTime: { gt: range.start },
     },
-    include: { client: true, serviceType: true, staff: true },
+    include: { client: true, serviceType: true, staff: true, tag: true },
     orderBy: { startTime: "asc" },
   });
 }
@@ -200,6 +202,6 @@ export async function listAppointmentsInRange(
 export async function getAppointmentById(tx: Tx, id: string) {
   return tx.appointment.findUnique({
     where: { id },
-    include: { client: true, serviceType: true, staff: true },
+    include: { client: true, serviceType: true, staff: true, tag: true },
   });
 }

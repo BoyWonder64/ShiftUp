@@ -72,6 +72,7 @@ const createSchema = z.object({
   estimatedValue: z.number().min(0).optional().nullable(),
   locationType: z.enum(["IN_PERSON", "ONLINE"]).default("IN_PERSON"),
   location: z.string().max(500).optional().nullable(),
+  tagId: z.string().uuid().optional().nullable(),
 });
 
 export async function POST(request: NextRequest) {
@@ -107,6 +108,7 @@ export async function POST(request: NextRequest) {
           estimatedValue: canEditEstimates ? data.estimatedValue : null,
           locationType: data.locationType,
           location: data.location,
+          tagId: data.tagId,
           createdByUserId: session.userId,
           source: "ADMIN",
         });

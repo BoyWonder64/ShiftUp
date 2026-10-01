@@ -4,6 +4,11 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import { AppHeader } from "@/components/AppHeader";
 import { PermissionMatrixEditor } from "./PermissionMatrixEditor";
 import { StaffManager } from "./StaffManager";
+import { AppointmentFormSettings } from "./AppointmentFormSettings";
+import { LogoSettings } from "./LogoSettings";
+import { EventColorSettings } from "./EventColorSettings";
+import { EventTagManager } from "./EventTagManager";
+import { HolidaySettings } from "./HolidaySettings";
 
 export default async function UserManagerPage({
   params,
@@ -27,16 +32,26 @@ export default async function UserManagerPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader tenantSlug={tenantSlug} businessName={tenant.name} role="ADMIN" />
+      <AppHeader
+        tenantSlug={tenantSlug}
+        businessName={tenant.name}
+        role="ADMIN"
+        logoUrl={tenant.logoDataUrl}
+      />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-8">
         <div>
-          <h1 className="text-3xl font-semibold tracking-tight">User manager</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
           <p className="mt-1 text-gray-500">
             Decide what each role can do and see. Admin always has full access and
             isn&apos;t shown here.
           </p>
         </div>
         <StaffManager />
+        <LogoSettings initialLogoUrl={tenant.logoDataUrl} />
+        <AppointmentFormSettings />
+        <EventColorSettings />
+        <EventTagManager />
+        <HolidaySettings />
         <PermissionMatrixEditor />
       </main>
     </div>

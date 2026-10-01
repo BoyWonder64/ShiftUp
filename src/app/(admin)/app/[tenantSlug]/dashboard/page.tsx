@@ -98,60 +98,86 @@ export default async function DashboardPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader tenantSlug={tenantSlug} businessName={result.tenant.name} role={session.role} />
+      <AppHeader
+        tenantSlug={tenantSlug}
+        businessName={result.tenant.name}
+        role={session.role}
+        logoUrl={result.tenant.logoDataUrl}
+      />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 p-8">
-        <div>
-          <h1 className="text-3xl font-semibold tracking-tight">{result.tenant.name}</h1>
-          <p className="mt-1 text-gray-500">
-            Signed in as <span className="font-medium text-gray-700">{session.role.toLowerCase()}</span>
-          </p>
+        <div className="flex items-center gap-4">
+          {result.tenant.logoDataUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- per-tenant admin-uploaded data: URL, not a static/optimizable asset
+            <img
+              src={result.tenant.logoDataUrl}
+              alt={`${result.tenant.name} logo`}
+              className="h-14 w-14 shrink-0 rounded-xl border border-gray-200 bg-white object-contain p-1 shadow-sm"
+            />
+          )}
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">{result.tenant.name}</h1>
+            <p className="mt-1 text-gray-500">
+              Signed in as <span className="font-medium text-gray-700">{session.role.toLowerCase()}</span>
+            </p>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {features.shiftManagement && (
-            <span className="rounded-full bg-linear-to-r from-primary-500 to-primary-550 px-4 py-1.5 text-sm font-medium text-white shadow-sm">
-              Shift management
-            </span>
-          )}
-          {features.appointmentManager && (
-            <span className="rounded-full bg-linear-to-r from-primary-500 to-primary-550 px-4 py-1.5 text-sm font-medium text-white shadow-sm">
-              Appointment manager
-            </span>
-          )}
-          {result.license && (
-            <span className="rounded-full border border-gray-200 px-4 py-1.5 text-sm font-medium text-gray-600">
-              {result.license.billingPlan === "FREE" ? "Free plan" : result.license.billingPlan}
-            </span>
-          )}
-        </div>
+        <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-gray-900">Your access</h2>
+          <p className="mt-0.5 text-sm text-gray-500">What your role can see and do in this account.</p>
 
-        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-medium text-gray-500">Your access</h2>
-          {result.accessSummary === null ? (
-            <p className="mt-2 text-sm text-gray-700">
-              As <span className="font-medium">{session.role.toLowerCase()}</span>, you have full
-              access to everything in this account.
-            </p>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-1.5">
-              {result.accessSummary.map((category) => (
-                <li key={category.label} className="text-sm">
-                  <span className="font-medium text-gray-700">{category.label}:</span>{" "}
-                  {category.actions.length > 0 ? (
-                    <span className="text-gray-600">{category.actions.join(", ")}</span>
-                  ) : (
-                    <span className="text-gray-400">no access</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
-          {result.accessSummary !== null && (
-            <p className="mt-3 text-xs text-gray-400">
-              An admin can change what your role can do from User manager.
-            </p>
-          )}
+          {/* Plan/feature-tier info, previously three pill-shaped "badges"
+              above this card that looked clickable but weren't - moved here
+              as plain info boxes (not buttons) alongside the rest of the
+              account summary. */}
+          <div className="mt-4 flex flex-col gap-1">
+            <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Plan</span>
+            <div className="flex flex-wrap gap-2">
+              {features.shiftManagement && (
+                <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
+                  Shift management
+                </span>
+              )}
+              {features.appointmentManager && (
+                <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
+                  Appointment manager
+                </span>
+              )}
+              {result.license && (
+                <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
+                  {result.license.billingPlan === "FREE" ? "Free plan" : result.license.billingPlan}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-primary-100 pt-3">
+            {result.accessSummary === null ? (
+              <p className="text-sm text-gray-700">
+                As <span className="font-medium">{session.role.toLowerCase()}</span>, you have full
+                access to everything in this account.
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-1.5">
+                {result.accessSummary.map((category) => (
+                  <li key={category.label} className="text-sm">
+                    <span className="font-medium text-gray-700">{category.label}:</span>{" "}
+                    {category.actions.length > 0 ? (
+                      <span className="text-gray-600">{category.actions.join(", ")}</span>
+                    ) : (
+                      <span className="text-gray-400">no access</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {result.accessSummary !== null && (
+              <p className="mt-3 text-xs text-gray-400">
+                An admin can change what your role can do from Settings.
+              </p>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

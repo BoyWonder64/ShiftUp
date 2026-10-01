@@ -26,6 +26,7 @@ const createSchema = z.object({
   name: z.string().min(1).max(200),
   email: z.string().email().optional().or(z.literal("")),
   phone: z.string().max(40).optional().or(z.literal("")),
+  address: z.string().max(300).optional().or(z.literal("")),
 });
 
 export async function POST(request: NextRequest) {
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest) {
           name: data.name,
           email: data.email || null,
           phone: data.phone || null,
+          address: data.address || null,
         },
       });
     });

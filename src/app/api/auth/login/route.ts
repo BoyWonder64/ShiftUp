@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { runInSystemContext } from "@/lib/tenant-context";
-import { findUserByEmail } from "@/modules/identity/service";
+import { findUserByEmailOrUsername } from "@/modules/identity/service";
 import { verifyPassword } from "@/lib/auth/password";
 import {
   createSessionToken,
@@ -10,7 +10,7 @@ import {
 } from "@/lib/auth/session";
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  identifier: z.string().min(1),
   password: z.string().min(1),
 });
 
@@ -20,13 +20,13 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
-  const { email, password } = parsed.data;
+  const { identifier, password } = parsed.data;
 
-  const user = await runInSystemContext((tx) => findUserByEmail(tx, email));
+  const user = await runInSystemContext((tx) => findUserByEmailOrUsername(tx, identifier));
 
   // Same error for "no such user" and "wrong password" - don't leak which one.
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
+    return NextResponse.json({ error: "Invalid email/username or password." }, { status: 401 });
   }
 
   const token = createSessionToken({

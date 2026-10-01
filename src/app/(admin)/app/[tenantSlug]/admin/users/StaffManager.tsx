@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 interface StaffRow {
   id: string;
   displayName: string;
-  user: { email: string; role: string };
+  user: { email: string; username: string | null; role: string };
 }
 
 const ROLE_OPTIONS = ["MANAGER", "SUPERVISOR", "EMPLOYEE"] as const;
@@ -24,6 +24,7 @@ export function StaffManager() {
 
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<(typeof ROLE_OPTIONS)[number]>("EMPLOYEE");
   const [submitting, setSubmitting] = useState(false);
@@ -54,10 +55,11 @@ export function StaffManager() {
       await fetchJson("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName, email, password, role }),
+        body: JSON.stringify({ displayName, email, username, password, role }),
       });
       setDisplayName("");
       setEmail("");
+      setUsername("");
       setPassword("");
       setRole("EMPLOYEE");
       await loadStaff();
@@ -69,7 +71,7 @@ export function StaffManager() {
   }
 
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <div>
         <h2 className="text-lg font-medium">Staff</h2>
         <p className="text-sm text-gray-500">
@@ -102,6 +104,19 @@ export function StaffManager() {
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
+          Username
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            minLength={3}
+            maxLength={30}
+            pattern="[a-z0-9]+([_-][a-z0-9]+)*"
+            title="Lowercase letters, numbers, - and _ only"
+            className="rounded-md border border-gray-300 px-2 py-1.5"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
           Password
           <input
             type="password"
@@ -129,7 +144,7 @@ export function StaffManager() {
         <button
           type="submit"
           disabled={submitting}
-          className="rounded-lg bg-linear-to-r from-primary-500 to-primary-550 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all hover:shadow-md disabled:opacity-50"
+          className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md disabled:opacity-50"
         >
           {submitting ? "Adding..." : "Add staff"}
         </button>
@@ -141,6 +156,7 @@ export function StaffManager() {
           <thead>
             <tr className="border-b border-gray-100 text-left text-gray-500">
               <th className="px-4 py-2 font-medium">Name</th>
+              <th className="px-4 py-2 font-medium">Username</th>
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Role</th>
             </tr>
@@ -148,13 +164,13 @@ export function StaffManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td className="px-4 py-3 text-gray-400" colSpan={3}>
+                <td className="px-4 py-3 text-gray-400" colSpan={4}>
                   Loading...
                 </td>
               </tr>
             ) : staff.length === 0 ? (
               <tr>
-                <td className="px-4 py-3 text-gray-400" colSpan={3}>
+                <td className="px-4 py-3 text-gray-400" colSpan={4}>
                   No staff yet.
                 </td>
               </tr>
@@ -162,6 +178,7 @@ export function StaffManager() {
               staff.map((s) => (
                 <tr key={s.id} className="border-b border-gray-50 last:border-0">
                   <td className="px-4 py-2">{s.displayName}</td>
+                  <td className="px-4 py-2 text-gray-600">{s.user.username ?? "—"}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.email}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.role}</td>
                 </tr>

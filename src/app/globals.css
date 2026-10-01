@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Reserves the scrollbar's width up front so its appearance/disappearance
+ * (e.g. when the calendar's create panel pushes page height past the
+ * viewport) never narrows the content area and causes a visible layout
+ * shift - see TODO.md's "Layout shift when opening + Add appointment" entry. */
+html {
+  scrollbar-gutter: stable;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #111827;
@@ -7,10 +15,20 @@
   /* Brand: dodger blue on white. See PROGRESS.md for the palette rationale. */
   --color-primary-50: #eff7ff;
   --color-primary-100: #dbecff;
+  --color-primary-400: #6db7ff; /* lighter dodger blue - hover-glow center */
   --color-primary-500: #1e90ff; /* dodger blue */
   --color-primary-550: #1b84ec; /* subtle gradient endpoint for buttons - closer to 500 than 600 */
   --color-primary-600: #1878d6;
   --color-primary-700: #1361ad;
+
+  /* "Shift" accent: Colorado Rockies purple (#333366), for shift-type
+   * events/buttons, parallel to the primary (dodger blue) scale above. */
+  --color-shift-50: #f2f1f8;
+  --color-shift-100: #e2e0f0;
+  --color-shift-400: #6a5fae; /* lighter purple - hover-glow center */
+  --color-shift-500: #333366; /* Rockies purple */
+  --color-shift-600: #272750;
+  --color-shift-700: #1c1c3d;
 }
 
 @theme inline {
@@ -18,43 +36,44 @@
   --color-foreground: var(--foreground);
   --color-primary-50: var(--color-primary-50);
   --color-primary-100: var(--color-primary-100);
+  --color-primary-400: var(--color-primary-400);
   --color-primary-500: var(--color-primary-500);
   --color-primary-550: var(--color-primary-550);
   --color-primary-600: var(--color-primary-600);
   --color-primary-700: var(--color-primary-700);
+  --color-shift-50: var(--color-shift-50);
+  --color-shift-100: var(--color-shift-100);
+  --color-shift-400: var(--color-shift-400);
+  --color-shift-500: var(--color-shift-500);
+  --color-shift-600: var(--color-shift-600);
+  --color-shift-700: var(--color-shift-700);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Racing-dashboard display face - scoped to just the nav brand wordmark
+   * (AppHeader's "ShiftUp") via the `font-display` utility this generates.
+   * Everything else (headings included) stays on the plain body font - see
+   * the removed h1-h3 rule's history in PROGRESS.md for why that was walked
+   * back after review. */
+  --font-display: var(--font-orbitron);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* App-wide default. Helvetica isn't freely distributable as a web font
+   * (no Google Fonts equivalent), so this leans on it being installed
+   * system-side (standard on macOS) and falls back to Arial - metrically
+   * near-identical to Helvetica - everywhere else, same convention most
+   * sites use. */
+  font-family: Helvetica, Arial, sans-serif;
 }
 
 /* react-big-calendar theming - brings its default look in line with the rest
- * of the app (dodger blue accents, rounded corners, no visual clash). */
-.rbc-toolbar button {
-  border-radius: 0.5rem;
-  border-color: #e5e7eb;
-  color: var(--foreground);
-  transition: background-color 0.15s, color 0.15s;
-}
-.rbc-toolbar button:hover {
-  background-color: var(--color-primary-50);
-  border-color: var(--color-primary-100);
-}
-.rbc-toolbar button.rbc-active {
-  background-color: var(--color-primary-500);
-  border-color: var(--color-primary-500);
-  color: #fff;
-}
-.rbc-toolbar button.rbc-active:hover {
-  background-color: var(--color-primary-600);
-}
-.rbc-toolbar-label {
-  font-weight: 600;
-}
+ * of the app (dodger blue accents, rounded corners, no visual clash).
+ * The toolbar itself (Today/Back/Next, Month/Week/Day, the label) is a fully
+ * custom component (CalendarToolbar in SchedulingCalendar.tsx) styled
+ * directly with Tailwind, not these global rbc-* selectors - only the grid/
+ * event-level pieces below still go through react-big-calendar's own classes. */
 .rbc-today {
   background-color: var(--color-primary-50);
 }
@@ -70,4 +89,12 @@ body {
 }
 .rbc-off-range-bg {
   background-color: #fafafa;
+}
+/* The Week/Day view's top-left corner cell (the gutter spacer above the time
+ * column) has no border by default, while the day-header row right next to
+ * it does - that mismatch is what reads as a disconnected empty box in the
+ * top-left. Matching the border closes the gap so the header reads as one
+ * continuous strip. */
+.rbc-time-header-gutter {
+  border-bottom: 1px solid #ddd;
 }

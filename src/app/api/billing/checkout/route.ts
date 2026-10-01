@@ -12,7 +12,7 @@ import {
 // Billing is deliberately ADMIN-only, hardcoded - not part of the
 // configurable permission system (src/lib/permissions). Who can spend the
 // business's money is a tenant-ownership question, not something an ADMIN
-// should be able to delegate to a MANAGER via the User Manager page.
+// should be able to delegate to a MANAGER via the Settings page.
 const checkoutSchema = z.object({
   billingPlan: z.enum(["ONE_TIME", "SUBSCRIPTION"]),
   // Which module(s) to buy - independent of whatever tier the tenant is

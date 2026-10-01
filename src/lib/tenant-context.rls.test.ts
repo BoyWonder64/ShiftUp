@@ -33,12 +33,14 @@ describe("Row-Level Security tenant isolation", () => {
       await createUser(tx, {
         tenantId: tenantA.id,
         email: `a-${suffix}@rls-test.local`,
+        username: `rls-test-a-${suffix}`,
         password: "irrelevant-not-checked-123",
         role: "ADMIN",
       });
       await createUser(tx, {
         tenantId: tenantB.id,
         email: `b-${suffix}@rls-test.local`,
+        username: `rls-test-b-${suffix}`,
         password: "irrelevant-not-checked-123",
         role: "ADMIN",
       });

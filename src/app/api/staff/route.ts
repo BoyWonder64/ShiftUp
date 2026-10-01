@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
-import { createUser, findUserByEmail } from "@/modules/identity/service";
+import { createUser, findUserByEmail, findUserByUsername, isValidUsername } from "@/modules/identity/service";
 import { assertCanAddStaffProfile, PlanLimitError } from "@/lib/licensing/limits";
 
 export async function GET() {
@@ -14,7 +14,7 @@ export async function GET() {
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.staffProfile.findMany({
         // Never select passwordHash - this response goes straight to the client.
-        include: { user: { select: { id: true, email: true, role: true } } },
+        include: { user: { select: { id: true, email: true, username: true, role: true } } },
         orderBy: { displayName: "asc" },
       });
     });
@@ -30,6 +30,7 @@ export async function GET() {
 
 const createStaffSchema = z.object({
   email: z.string().email(),
+  username: z.string().min(3).max(30),
   password: z.string().min(8).max(200),
   role: z.enum(["MANAGER", "SUPERVISOR", "EMPLOYEE"]),
   displayName: z.string().min(1).max(200),
@@ -53,12 +54,18 @@ export async function POST(request: NextRequest) {
       if (!allowed) throw new Error("FORBIDDEN");
       await assertCanAddStaffProfile(tx, session.tenantId);
 
+      if (!isValidUsername(data.username)) throw new Error("INVALID_USERNAME");
+
       const existing = await findUserByEmail(tx, data.email);
       if (existing) throw new Error("EMAIL_TAKEN");
+
+      const existingUsername = await findUserByUsername(tx, data.username);
+      if (existingUsername) throw new Error("USERNAME_TAKEN");
 
       const user = await createUser(tx, {
         tenantId: session.tenantId,
         email: data.email,
+        username: data.username,
         password: data.password,
         role: data.role,
       });
@@ -84,6 +91,15 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof Error && err.message === "EMAIL_TAKEN") {
       return NextResponse.json({ error: "An account with that email already exists." }, { status: 409 });
+    }
+    if (err instanceof Error && err.message === "USERNAME_TAKEN") {
+      return NextResponse.json({ error: "That username is already taken." }, { status: 409 });
+    }
+    if (err instanceof Error && err.message === "INVALID_USERNAME") {
+      return NextResponse.json(
+        { error: "Username must be 3-30 characters: lowercase letters, numbers, - and _ only." },
+        { status: 400 }
+      );
     }
     if (err instanceof PlanLimitError) {
       return NextResponse.json({ error: err.message }, { status: 403 });

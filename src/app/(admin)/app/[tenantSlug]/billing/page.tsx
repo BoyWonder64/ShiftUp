@@ -42,7 +42,12 @@ export default async function BillingPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader tenantSlug={tenantSlug} businessName={tenant.name} role="ADMIN" />
+      <AppHeader
+        tenantSlug={tenantSlug}
+        businessName={tenant.name}
+        role="ADMIN"
+        logoUrl={tenant.logoDataUrl}
+      />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">Billing</h1>
 

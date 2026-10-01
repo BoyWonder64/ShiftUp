@@ -26,7 +26,12 @@ export default async function TimeOffPage({
 
   return (
     <div className="flex flex-1 flex-col">
-      <AppHeader tenantSlug={tenantSlug} businessName={tenant.name} role={session.role} />
+      <AppHeader
+        tenantSlug={tenantSlug}
+        businessName={tenant.name}
+        role={session.role}
+        logoUrl={tenant.logoDataUrl}
+      />
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">Time off</h1>
         <TimeOffManager />
