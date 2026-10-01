@@ -5,6 +5,26 @@ they don't get lost. Discuss/prioritize before picking any of these up.
 Day-to-day build status (what's done, what's verified) lives in `PROGRESS.md` —
 this file is just the backlog.
 
+## Update (the developer has written these. Please distbute them and orgainze accordingly)
+- We need to update the time estimate to be interchangable to either minutes or hours
+- Buttons on the Calender screen need to hover
+- Add View only to the top nav bar
+- Bug - Changing To Month, Day or Week does not work. Same with Back, Next. 
+- When adding an appointment, dynamicly display the options below the bottons and above the calender. Same with shifts 
+  if their is a conflict, notify the user. 
+- Feature - The ability to add profile picture and Company logo
+- Feature - the ability to be added as a wiget on other companies for booking appointments
+- On the main calendar page we need to allow the user to swap between the appointment calender, shift calender and both if they 
+  have access by either paying for it or just the limited free one. 
+- shareable link to view appointment calender that doesnt display any names or information about clients
+- shareable link to view shift calender 
+- Feature - email reminder/schedule for the week/day of for appointment email. This is a paid only feature 
+
+## Security - organize this as well
+- I need a detailed explaination of security for this software. Is it safe to use?
+- Advertise its safety 
+
+
 ## New feature requests (not started)
 
 - **PTO manager + shift-coverage finder.** When someone needs a shift covered,
@@ -100,3 +120,5 @@ changes, but the shape still holds): client/appointment notes, tenant holidays,
 email notifications/reminders. (Tenant→platform Stripe payments are built -
 see PROGRESS.md; client-pays-business via Stripe Connect is the one payments
 piece still unbuilt, noted above under checkout.)
+
+

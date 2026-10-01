@@ -29,8 +29,8 @@ export function TimeOffManager() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [startTime, setStartTime] = useState(toInputValue(new Date()));
-  const [endTime, setEndTime] = useState(toInputValue(new Date(Date.now() + 86_400_000)));
+  const [startTime, setStartTime] = useState(() => toInputValue(new Date()));
+  const [endTime, setEndTime] = useState(() => toInputValue(new Date(Date.now() + 86_400_000)));
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
