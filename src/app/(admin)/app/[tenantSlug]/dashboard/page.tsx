@@ -1,0 +1,191 @@
+import Link from "next/link";
+import { redirect, notFound } from "next/navigation";
+import { getCurrentSession } from "@/lib/auth/current-user";
+import { runInTenantContext, type Tx } from "@/lib/tenant-context";
+import { featuresForTier } from "@/lib/licensing/features";
+import { hasPermission } from "@/lib/permissions/service";
+import { PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions/catalog";
+import { AppHeader } from "@/components/AppHeader";
+
+const ACCESS_CATEGORIES: Array<{ label: string; keys: PermissionKey[] }> = [
+  { label: "Staff", keys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
+  { label: "Services", keys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },
+  { label: "Clients", keys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
+  {
+    label: "Appointments",
+    keys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
+  },
+  { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
+];
+
+const ACTION_WORDS: Partial<Record<PermissionKey, string>> = {
+  VIEW_STAFF: "view",
+  CREATE_STAFF: "add",
+  EDIT_STAFF: "edit",
+  DELETE_STAFF: "remove",
+  VIEW_SERVICES: "view",
+  CREATE_SERVICES: "add",
+  EDIT_SERVICES: "edit",
+  DELETE_SERVICES: "remove",
+  VIEW_CLIENTS: "view",
+  CREATE_CLIENTS: "add",
+  EDIT_CLIENTS: "edit",
+  DELETE_CLIENTS: "remove",
+  VIEW_APPOINTMENTS: "view",
+  CREATE_APPOINTMENTS: "create",
+  EDIT_APPOINTMENTS: "reschedule",
+  CANCEL_APPOINTMENTS: "cancel",
+  VIEW_JOB_ESTIMATES: "view",
+  EDIT_JOB_ESTIMATES: "edit",
+};
+
+async function buildAccessSummary(tx: Tx, tenantId: string, role: string) {
+  if (role === "ADMIN" || role === "SUPERADMIN") {
+    return null; // full access - nothing to summarize
+  }
+  const summary: Array<{ label: string; actions: string[] }> = [];
+  for (const category of ACCESS_CATEGORIES) {
+    const actions: string[] = [];
+    for (const key of category.keys) {
+      if (await hasPermission(tx, tenantId, role, key)) {
+        actions.push(ACTION_WORDS[key] ?? PERMISSION_LABELS[key]);
+      }
+    }
+    summary.push({ label: category.label, actions });
+  }
+  return summary;
+}
+
+export default async function DashboardPage({
+  params,
+}: {
+  params: Promise<{ tenantSlug: string }>;
+}) {
+  const { tenantSlug } = await params;
+  const session = await getCurrentSession();
+
+  if (!session || session.role === "SUPERADMIN" || !session.tenantId) {
+    redirect("/login");
+  }
+
+  const result = await runInTenantContext(
+    session.tenantId,
+    session.userId,
+    session.role,
+    async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
+      const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
+      const staffCount = await tx.staffProfile.count();
+      const upcomingCount = await tx.appointment.count({
+        where: { startTime: { gte: new Date() }, status: { not: "CANCELLED" } },
+      });
+      const accessSummary = await buildAccessSummary(tx, session.tenantId!, session.role);
+      return { tenant, license, staffCount, upcomingCount, accessSummary };
+    }
+  );
+
+  // The tenantId in the session doesn't match the :tenantSlug in the URL -
+  // e.g. someone pasted another tenant's dashboard link. RLS already stopped
+  // any actual cross-tenant data access above; this just gives a clean 404
+  // instead of silently showing the wrong tenant's shell.
+  if (!result.tenant || result.tenant.slug !== tenantSlug) {
+    notFound();
+  }
+
+  const features = result.license
+    ? featuresForTier(result.license.tier)
+    : { shiftManagement: false, appointmentManager: false };
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <AppHeader tenantSlug={tenantSlug} businessName={result.tenant.name} role={session.role} />
+
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 p-8">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight">{result.tenant.name}</h1>
+          <p className="mt-1 text-gray-500">
+            Signed in as <span className="font-medium text-gray-700">{session.role.toLowerCase()}</span>
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {features.shiftManagement && (
+            <span className="rounded-full bg-linear-to-r from-primary-500 to-primary-550 px-4 py-1.5 text-sm font-medium text-white shadow-sm">
+              Shift management
+            </span>
+          )}
+          {features.appointmentManager && (
+            <span className="rounded-full bg-linear-to-r from-primary-500 to-primary-550 px-4 py-1.5 text-sm font-medium text-white shadow-sm">
+              Appointment manager
+            </span>
+          )}
+          {result.license && (
+            <span className="rounded-full border border-gray-200 px-4 py-1.5 text-sm font-medium text-gray-600">
+              {result.license.billingPlan === "FREE" ? "Free plan" : result.license.billingPlan}
+            </span>
+          )}
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-medium text-gray-500">Your access</h2>
+          {result.accessSummary === null ? (
+            <p className="mt-2 text-sm text-gray-700">
+              As <span className="font-medium">{session.role.toLowerCase()}</span>, you have full
+              access to everything in this account.
+            </p>
+          ) : (
+            <ul className="mt-2 flex flex-col gap-1.5">
+              {result.accessSummary.map((category) => (
+                <li key={category.label} className="text-sm">
+                  <span className="font-medium text-gray-700">{category.label}:</span>{" "}
+                  {category.actions.length > 0 ? (
+                    <span className="text-gray-600">{category.actions.join(", ")}</span>
+                  ) : (
+                    <span className="text-gray-400">no access</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {result.accessSummary !== null && (
+            <p className="mt-3 text-xs text-gray-400">
+              An admin can change what your role can do from User manager.
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <StatCard label="Staff" value={result.staffCount} href={`/app/${tenantSlug}/calendar`} />
+          <StatCard
+            label="Upcoming appointments"
+            value={result.upcomingCount}
+            href={`/app/${tenantSlug}/calendar`}
+          />
+          <Link
+            href={`/app/${tenantSlug}/calendar`}
+            className="group flex flex-col justify-between rounded-xl border border-primary-100 bg-linear-to-br from-primary-50 to-white p-5 shadow-sm transition-all hover:shadow-md"
+          >
+            <span className="text-sm font-medium text-primary-700">Open calendar</span>
+            <span className="mt-2 text-sm text-gray-500 group-hover:text-primary-600">
+              Schedule, reschedule, and view job details →
+            </span>
+          </Link>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function StatCard({ label, value, href }: { label: string; value: number; href: string }) {
+  return (
+    <Link
+      href={href}
+      className="group flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition-all hover:shadow-md"
+    >
+      <span className="text-sm font-medium text-gray-500">{label}</span>
+      <span className="mt-2 text-3xl font-semibold tracking-tight text-gray-900 group-hover:text-primary-600">
+        {value}
+      </span>
+    </Link>
+  );
+}

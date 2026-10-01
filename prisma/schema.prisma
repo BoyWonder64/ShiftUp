@@ -1,0 +1,366 @@
+// Phase 0: Tenancy, auth, and licensing models.
+// Phase 1 (added below): core scheduling - ServiceType, StaffProfile,
+// WorkingHours, Client, Appointment, plus the double-booking EXCLUDE
+// constraint (see the add_appointment_exclusion_constraint migration).
+// Notes/holidays/time-off/payments are added in later phases per the
+// architecture plan (see plans/i-would-like-to-encapsulated-crayon.md) and
+// PROGRESS.md for changes made after that plan was written.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Role hierarchy, highest to lowest authority:
+/// SUPERADMIN (platform operator, tenantId null) > ADMIN (tenant owner) >
+/// MANAGER > SUPERVISOR > EMPLOYEE (internal staff hierarchy) > CUSTOMER
+/// (the client who attends an appointment or shift event - the logged-in
+/// counterpart to a guest Client, added once appointment attendees need
+/// accounts in a later phase).
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  MANAGER
+  SUPERVISOR
+  EMPLOYEE
+  CUSTOMER
+
+  @@map("user_role")
+}
+
+/// Whether a license is currently entitled. FREE licenses are always ACTIVE
+/// (no expiry, no ticking trial clock) - EXPIRED only applies to a lapsed
+/// SUBSCRIPTION (see BillingPlan).
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+
+  @@map("license_status")
+}
+
+/// Which product module(s) a tenant has access to. SHIFT_MANAGEMENT and
+/// APPOINTMENT_MANAGER can run standalone or together (BOTH) in the same
+/// deployment - see src/lib/licensing/features.ts for the runtime feature gate
+/// this drives. Orthogonal to BillingPlan: a tenant can explore any feature
+/// tier for free, same as a paying one - the limit is usage caps
+/// (src/lib/licensing/limits.ts), not which modules are visible.
+enum LicenseTier {
+  SHIFT_MANAGEMENT
+  APPOINTMENT_MANAGER
+  BOTH
+
+  @@map("license_tier")
+}
+
+/// How the tenant is paying, separate from which features they get:
+/// - FREE: permanent, usage-capped (src/lib/licensing/limits.ts) - the "explore
+///   the product" tier, not a time-limited trial.
+/// - ONE_TIME: a single purchase, lifetime access, no usage caps.
+/// - SUBSCRIPTION: recurring (Stripe Subscription), lifetime-while-current,
+///   no usage caps. EXPIRED status means the subscription lapsed.
+/// Checkout for ONE_TIME/SUBSCRIPTION isn't built yet (Phase 3) - every
+/// signup currently gets FREE regardless of which feature tier they pick.
+enum BillingPlan {
+  FREE
+  ONE_TIME
+  SUBSCRIPTION
+
+  @@map("billing_plan")
+}
+
+/// A tenant is one customer business (a therapy practice, a plumbing company, etc.).
+/// All tenant-scoped data carries a tenantId and is additionally isolated at the
+/// database level via Postgres Row-Level Security (see prisma/migrations for the RLS policies).
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  timezone  String   @default("UTC")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  license License?
+  users   User[]
+
+  staffProfiles    StaffProfile[]
+  workingHours     WorkingHours[]
+  serviceTypes     ServiceType[]
+  clients          Client[]
+  appointments     Appointment[]
+  rolePermissions  RolePermission[]
+  roleVisibilities RoleVisibility[]
+  timeOffs         TimeOff[]
+
+  @@map("tenants")
+}
+
+/// A tenant's entitlement: which feature tier (modules) and which billing
+/// plan (free/one-time/subscription) they're on. See BillingPlan and
+/// LicenseTier above - these two are independent dimensions.
+model License {
+  id                    String        @id @default(uuid())
+  tenantId              String        @unique @map("tenant_id")
+  tenant                Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tier                  LicenseTier   @default(BOTH)
+  billingPlan           BillingPlan   @default(FREE) @map("billing_plan")
+  status                LicenseStatus @default(ACTIVE)
+  purchasedAt           DateTime?     @map("purchased_at")
+  /// null = lifetime (FREE or ONE_TIME); non-null = SUBSCRIPTION renewal/expiry date
+  expiresAt             DateTime?     @map("expires_at")
+  stripeCustomerId      String?       @map("stripe_customer_id")
+  stripePaymentIntentId String?       @map("stripe_payment_intent_id")
+  stripeSubscriptionId  String?       @map("stripe_subscription_id")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
+
+  @@map("licenses")
+}
+
+/// A login-capable user. Platform superadmins have tenantId = null;
+/// every other user belongs to exactly one tenant.
+model User {
+  id           String        @id @default(uuid())
+  tenantId     String?       @map("tenant_id")
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email        String        @unique
+  passwordHash String        @map("password_hash")
+  role         UserRole      @default(EMPLOYEE)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+  staffProfile StaffProfile?
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+enum AppointmentStatus {
+  PENDING_PAYMENT
+  BOOKED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+
+  @@map("appointment_status")
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  WAIVED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+enum AppointmentSource {
+  SELF_SERVICE
+  ADMIN
+
+  @@map("appointment_source")
+}
+
+enum MeetingLocationType {
+  IN_PERSON
+  ONLINE
+
+  @@map("meeting_location_type")
+}
+
+/// One staff member's schedulable profile. A User becomes schedulable by
+/// getting a StaffProfile - not every User has one (e.g. CUSTOMER never does).
+model StaffProfile {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId        String   @unique @map("user_id")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName   String   @map("display_name")
+  bufferMinutes Int      @default(0) @map("buffer_minutes")
+  timezone      String   @default("UTC")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  workingHours WorkingHours[]
+  appointments Appointment[]
+  timeOffs     TimeOff[]
+
+  @@index([tenantId])
+  @@map("staff_profiles")
+}
+
+enum TimeOffStatus {
+  PENDING
+  APPROVED
+  DENIED
+
+  @@map("time_off_status")
+}
+
+/// A staff member's request for time off. Anyone with a StaffProfile can
+/// create one for themselves (no permission gate - requesting time off isn't
+/// a privileged action); approving/denying someone else's request requires
+/// APPROVE_TIME_OFF (src/lib/permissions/catalog.ts). Used by the
+/// shift-coverage finder to exclude staff on approved leave from candidates.
+model TimeOff {
+  id                String        @id @default(uuid())
+  tenantId          String        @map("tenant_id")
+  tenant            Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staffProfileId    String        @map("staff_profile_id")
+  staffProfile      StaffProfile  @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  startTime         DateTime      @map("start_time")
+  endTime           DateTime      @map("end_time")
+  reason            String?
+  status            TimeOffStatus @default(PENDING)
+  requestedByUserId String        @map("requested_by_user_id")
+  reviewedByUserId  String?       @map("reviewed_by_user_id")
+  reviewedAt        DateTime?     @map("reviewed_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([staffProfileId, startTime])
+  @@map("time_off")
+}
+
+/// A recurring weekly availability window. dayOfWeek: 0=Sunday .. 6=Saturday.
+/// start/endMinute are minutes since local midnight, in the staff's own
+/// timezone - converted to UTC instants only when computing actual slots
+/// against a specific calendar date (see modules/scheduling/availability.ts).
+model WorkingHours {
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staffProfileId String       @map("staff_profile_id")
+  staffProfile   StaffProfile @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  dayOfWeek      Int          @map("day_of_week")
+  startMinute    Int          @map("start_minute")
+  endMinute      Int          @map("end_minute")
+
+  @@index([tenantId])
+  @@index([staffProfileId])
+  @@map("working_hours")
+}
+
+/// A service/job template a tenant offers (a therapy session type, a plumbing
+/// call-out type, etc.). durationMinutes/price are the defaults a new
+/// Appointment is pre-filled with; estimatedDurationMinutes/estimatedValue on
+/// Appointment itself can then be adjusted per actual job.
+model ServiceType {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  durationMinutes Int      @map("duration_minutes")
+  price           Decimal  @default(0) @db.Decimal(10, 2)
+  requiresPayment Boolean  @default(false) @map("requires_payment")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  appointments Appointment[]
+
+  @@index([tenantId])
+  @@map("service_types")
+}
+
+/// A client/customer. Guest-first (per architecture plan) - isGuest clients
+/// have no User/login; customer accounts (UserRole.CUSTOMER) are a later,
+/// optional upgrade path for this record, not yet wired up.
+model Client {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  email     String?
+  phone     String?
+  isGuest   Boolean  @default(true) @map("is_guest")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  appointments Appointment[]
+
+  @@index([tenantId])
+  @@map("clients")
+}
+
+/// One scheduled visit/shift/job. clientId is nullable for internal,
+/// non-client-facing scheduling (e.g. a pure shift with no paying customer).
+/// estimatedDurationMinutes/estimatedValue are the blue-collar "how long will
+/// this job take and what will it make" fields - intentionally only
+/// exposed to ADMIN/MANAGER in the UI/API layer (see
+/// src/lib/auth/current-user.ts requireRole and the appointments API route),
+/// not restricted at the DB/RLS level since that's a UI/role concern, not a
+/// tenant-isolation one.
+model Appointment {
+  id                       String              @id @default(uuid())
+  tenantId                 String              @map("tenant_id")
+  tenant                   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staffId                  String              @map("staff_id")
+  staff                    StaffProfile        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  clientId                 String?             @map("client_id")
+  client                   Client?             @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  serviceTypeId            String?             @map("service_type_id")
+  serviceType              ServiceType?        @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
+  startTime                DateTime            @map("start_time")
+  endTime                  DateTime            @map("end_time")
+  status                   AppointmentStatus   @default(BOOKED)
+  priceCharged             Decimal?            @map("price_charged") @db.Decimal(10, 2)
+  paymentStatus            PaymentStatus       @default(UNPAID) @map("payment_status")
+  estimatedDurationMinutes Int?                @map("estimated_duration_minutes")
+  estimatedValue           Decimal?            @map("estimated_value") @db.Decimal(10, 2)
+  locationType             MeetingLocationType @default(IN_PERSON) @map("location_type")
+  /// Physical address when locationType is IN_PERSON, or a meeting link/platform note when ONLINE.
+  location                 String?             @map("location")
+  createdByUserId          String              @map("created_by_user_id")
+  source                   AppointmentSource   @default(ADMIN)
+  createdAt                DateTime            @default(now()) @map("created_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([staffId, startTime])
+  @@index([clientId])
+  @@map("appointments")
+}
+
+/// Per-tenant override of what a role is allowed to do, layered on top of a
+/// hardcoded default matrix (src/lib/permissions/catalog.ts). Only
+/// MANAGER/SUPERVISOR/EMPLOYEE/CUSTOMER rows are meaningful here - ADMIN
+/// always has every permission and is never overridable (enforced in code,
+/// not the DB, since it's a business rule rather than a tenant-isolation one).
+/// This is what lets a tenant ADMIN configure "what can a manager/supervisor
+/// do" from the User Manager page instead of it being hardcoded.
+model RolePermission {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role          UserRole
+  permissionKey String   @map("permission_key")
+  granted       Boolean
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, role, permissionKey])
+  @@index([tenantId])
+  @@map("role_permissions")
+}
+
+/// Per-tenant override of which roles can view which other roles' data/schedules
+/// (the "admin can determine who can see who" requirement) - e.g. can a
+/// SUPERVISOR see an EMPLOYEE's appointments. Layered on a hardcoded default
+/// matrix the same way as RolePermission.
+model RoleVisibility {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  viewerRole UserRole @map("viewer_role")
+  targetRole UserRole @map("target_role")
+  canView    Boolean  @map("can_view")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([tenantId, viewerRole, targetRole])
+  @@index([tenantId])
+  @@map("role_visibilities")
+}
