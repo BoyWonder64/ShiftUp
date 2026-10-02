@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
     userId: user.id,
     tenantId: user.tenantId,
     role: user.role,
+    roleId: user.roleId,
+    locale: user.locale,
   });
 
   const response = NextResponse.json(

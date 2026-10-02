@@ -4,6 +4,7 @@ import { runInSystemContext } from "@/lib/tenant-context";
 import { getTenantBySlug, createTenant, isValidSlug } from "@/modules/tenancy/service";
 import { createFreeLicense } from "@/modules/licensing/service";
 import { createUser, findUserByEmail, findUserByUsername, isValidUsername } from "@/modules/identity/service";
+import { seedDefaultRolesForTenant } from "@/lib/permissions/service";
 import {
   createSessionToken,
   SESSION_COOKIE_NAME,
@@ -59,6 +60,7 @@ export async function POST(request: NextRequest) {
 
       const tenant = await createTenant(tx, { name: businessName, slug, timezone });
       await createFreeLicense(tx, tenant.id, featureTier);
+      await seedDefaultRolesForTenant(tx, tenant.id);
       const user = await createUser(tx, {
         tenantId: tenant.id,
         email,
@@ -74,6 +76,8 @@ export async function POST(request: NextRequest) {
       userId: result.user.id,
       tenantId: result.tenant.id,
       role: "ADMIN",
+      roleId: null,
+      locale: result.user.locale,
     });
 
     const response = NextResponse.json({ tenantSlug: result.tenant.slug }, { status: 201 });

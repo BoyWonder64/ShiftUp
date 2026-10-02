@@ -35,7 +35,9 @@ export async function createUser(
     email: string;
     username: string;
     password: string;
-    role: "SUPERADMIN" | "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "CUSTOMER";
+    role: "SUPERADMIN" | "ADMIN" | "STAFF";
+    /** Required when role is "STAFF" - the tenant's custom Role this user holds. Always null for ADMIN/SUPERADMIN. */
+    roleId?: string | null;
   }
 ) {
   const passwordHash = await hashPassword(data.password);
@@ -46,6 +48,7 @@ export async function createUser(
       username: data.username,
       passwordHash,
       role: data.role,
+      roleId: data.roleId ?? null,
     },
   });
 }

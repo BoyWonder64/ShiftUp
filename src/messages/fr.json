@@ -1,0 +1,55 @@
+{
+  "AppHeader": {
+    "dashboard": "Tableau de bord",
+    "calendar": "Calendrier",
+    "viewOnly": "Lecture seule",
+    "staffPages": "Pages du personnel",
+    "roster": "Planning",
+    "timeOff": "Congés",
+    "settings": "Paramètres",
+    "billing": "Facturation",
+    "signOut": "Déconnexion"
+  },
+  "LanguagePicker": {
+    "label": "Langue",
+    "EN": "Anglais",
+    "ES": "Espagnol",
+    "DE": "Allemand",
+    "FR": "Français"
+  },
+  "Dashboard": {
+    "signedInAs": "Connecté en tant que <b>{role}</b>",
+    "yourAccess": "Vos accès",
+    "yourAccessSubtitle": "Ce que votre rôle peut voir et faire sur ce compte.",
+    "plan": "Formule",
+    "freePlan": "Formule gratuite",
+    "fullAccess": "En tant que {role}, vous avez un accès complet à tout sur ce compte.",
+    "noAccess": "aucun accès",
+    "adminNote": "Un administrateur peut modifier ce que votre rôle peut faire depuis Paramètres.",
+    "staffStat": "Personnel",
+    "upcomingAppointments": "Rendez-vous à venir",
+    "openCalendar": "Ouvrir le calendrier",
+    "openCalendarSubtitle": "Planifiez, replanifiez et consultez les détails des interventions →",
+    "roleNames": {
+      "ADMIN": "Administrateur",
+      "SUPERADMIN": "Super-administrateur",
+      "STAFF": "Personnel"
+    },
+    "categories": {
+      "staff": "Personnel",
+      "services": "Services",
+      "clients": "Clients",
+      "appointments": "Rendez-vous",
+      "jobEstimates": "Devis de travaux"
+    },
+    "actions": {
+      "view": "voir",
+      "add": "ajouter",
+      "edit": "modifier",
+      "remove": "retirer",
+      "create": "créer",
+      "reschedule": "replanifier",
+      "cancel": "annuler"
+    }
+  }
+}

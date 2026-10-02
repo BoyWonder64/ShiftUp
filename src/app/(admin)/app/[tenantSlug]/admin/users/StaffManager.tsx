@@ -5,10 +5,13 @@ import { useEffect, useState } from "react";
 interface StaffRow {
   id: string;
   displayName: string;
-  user: { email: string; username: string | null; role: string };
+  user: { email: string; username: string | null; role: string; customRole: { id: string; name: string } | null };
 }
 
-const ROLE_OPTIONS = ["MANAGER", "SUPERVISOR", "EMPLOYEE"] as const;
+interface RoleOption {
+  id: string;
+  name: string;
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -19,6 +22,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function StaffManager() {
   const [staff, setStaff] = useState<StaffRow[]>([]);
+  const [roles, setRoles] = useState<RoleOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -26,7 +30,7 @@ export function StaffManager() {
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<(typeof ROLE_OPTIONS)[number]>("EMPLOYEE");
+  const [roleId, setRoleId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -41,27 +45,40 @@ export function StaffManager() {
     }
   }
 
+  async function loadRoles() {
+    try {
+      const data = await fetchJson<{ roles: RoleOption[] }>("/api/roles");
+      setRoles(data.roles);
+      setRoleId((prev) => prev || data.roles[0]?.id || "");
+    } catch {
+      // Not fatal on its own - the role dropdown just stays empty until retried.
+    }
+  }
+
   useEffect(() => {
     (async () => {
-      await loadStaff();
+      await Promise.all([loadStaff(), loadRoles()]);
     })();
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
+    if (!roleId) {
+      setFormError("Pick a role.");
+      return;
+    }
     setSubmitting(true);
     try {
       await fetchJson("/api/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ displayName, email, username, password, role }),
+        body: JSON.stringify({ displayName, email, username, password, roleId }),
       });
       setDisplayName("");
       setEmail("");
       setUsername("");
       setPassword("");
-      setRole("EMPLOYEE");
       await loadStaff();
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Couldn't add staff.");
@@ -76,7 +93,9 @@ export function StaffManager() {
         <h2 className="text-lg font-medium">Staff</h2>
         <p className="text-sm text-gray-500">
           Add team members and set their role. Admin can&apos;t be assigned here -
-          only the account creator is admin.
+          only the account creator is admin. Roles themselves (their names,
+          descriptions, and what they can do) are managed in the Roles and
+          permission sections below.
         </p>
       </div>
 
@@ -130,13 +149,13 @@ export function StaffManager() {
         <label className="flex flex-col gap-1 text-sm">
           Role
           <select
-            value={role}
-            onChange={(e) => setRole(e.target.value as (typeof ROLE_OPTIONS)[number])}
+            value={roleId}
+            onChange={(e) => setRoleId(e.target.value)}
             className="rounded-md border border-gray-300 px-2 py-1.5"
           >
-            {ROLE_OPTIONS.map((r) => (
-              <option key={r} value={r}>
-                {r.charAt(0) + r.slice(1).toLowerCase()}
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
               </option>
             ))}
           </select>
@@ -180,7 +199,7 @@ export function StaffManager() {
                   <td className="px-4 py-2">{s.displayName}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.username ?? "—"}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.email}</td>
-                  <td className="px-4 py-2 text-gray-600">{s.user.role}</td>
+                  <td className="px-4 py-2 text-gray-600">{s.user.customRole?.name ?? s.user.role}</td>
                 </tr>
               ))
             )}

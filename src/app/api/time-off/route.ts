@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       | null;
 
     const timeOff = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const canViewOthers = await hasPermission(tx, session.tenantId, session.role, "VIEW_TIME_OFF");
+      const canViewOthers = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_TIME_OFF");
       if (canViewOthers) {
         return listTimeOff(tx, { status: status ?? undefined });
       }

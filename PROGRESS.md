@@ -21,6 +21,80 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Service types: optional price + active/inactive toggle
+Raised directly (not pre-existing in TODO.md): the "Service types" Settings
+card already existed (`ServiceTypeManager.tsx`, done 2026-10-02) but every
+service type required a price and had no way to disable one without deleting
+it. Framed explicitly around supporting **both blue-collar and police/public-
+safety tenants** - police work often has no price at all, which is different
+from being free.
+
+- **`ServiceType.price` is now a real nullable column** (`prisma/migrations/
+  20261002045148_service_type_optional_price_and_active`), not just a UI
+  convention - `null` means "no price concept for this service type" (e.g. a
+  police call-out), distinct from an explicit `$0` ("this is free"). Same
+  nullable pattern `Appointment.priceCharged` already used, now applied
+  consistently to `ServiceType.price` too.
+- **New `ServiceType.isActive`** (default `true`). `GET /api/service-types`
+  accepts `?activeOnly=true` - the calendar's create-appointment/shift panel
+  now calls it with that flag so inactive service types drop out of new
+  scheduling, while the Settings manager still fetches all of them (including
+  inactive) so they can be toggled back on. Existing appointments keep their
+  service type name/price regardless of its current active state - that data
+  comes from the appointment's own stored relation, not the filtered list.
+- `POST`/`PATCH /api/service-types` both accept a nullable `price` and the new
+  `isActive` boolean; `ServiceTypeManager.tsx` got a per-row "Active" checkbox
+  (instant-toggle, optimistic with revert-on-failure - same pattern as
+  `AppointmentFormSettings.tsx`'s toggles) and the price input is now genuinely
+  optional (blank input, not a `0` default) in both the add and edit forms.
+- **Verified live** via curl against a fresh signup: created one service type
+  with no price (`price: null` round-trips correctly) and one with a real
+  price; toggled the priceless one inactive and confirmed `GET
+  /api/service-types` still lists both while `?activeOnly=true` correctly
+  drops the inactive one. `tsc --noEmit` and `eslint` both clean on every
+  touched file. The per-row toggle UI and optional-price form inputs
+  themselves are correct by code review - not yet clicked through in a real
+  browser, same standing caveat as the rest of this app's client-rendered UI.
+
+### Security posture review (passwords + overall)
+Closed out the long-standing TODO.md item asking for "a detailed, honest
+explanation of this software's security posture." Reviewed the actual code
+(not assumptions) for `src/lib/auth/password.ts`, `src/lib/auth/session.ts`,
+the login/signup/superadmin-bootstrap routes, `src/modules/identity/service.ts`,
+and `.env.example`, then wrote it all up in a new **`SECURITY.md`** at the
+repo root (same tier as `ARCHITECTURE.md`/`PROGRESS.md`/`TODO.md`).
+
+- **Password storage confirmed sound**: scrypt (Node-native, no bcrypt
+  dependency needed), a fresh random 16-byte salt per password, `timingSafeEqual`
+  for verification (timing-attack resistant), passwords never logged, and
+  login returns an identical error for "no such user" vs. "wrong password"
+  (no enumeration via message or timing).
+- **Sessions confirmed sound**: HMAC-SHA256 signed cookie (`AUTH_SECRET`,
+  required - the app won't issue sessions without it), `httpOnly` +
+  `sameSite: lax` + `secure`-in-production, 7-day expiry checked from the
+  signed payload.
+- **Real gap surfaced and added to TODO.md**: no rate limiting or lockout on
+  `/api/auth/login`, `/api/auth/signup`, or `/api/superadmin/bootstrap` -
+  confirmed by grepping `src/` for any rate-limit/lockout logic (none
+  exists). The hashing/signing above is correctly built, but unlimited
+  attempts are currently possible against it - flagged as the single
+  highest-value next security item, not yet built (needs a decision on
+  in-memory vs. shared-store throttling first).
+- Also restated what was already known but not previously written down in
+  one place: Stripe Checkout handles all card data (none touches this app),
+  the non-superuser DB role fix is what makes RLS actually enforce (verified
+  by `tenant-context.rls.test.ts`), and the honest list of what's *not* true
+  yet (no CI, no external security audit, no penetration test).
+- TODO.md's Security section updated: the write-up item marked done (links
+  to `SECURITY.md`), its "advertise safety" follow-up noted as now
+  unblocked, and the new rate-limiting gap added as its own item.
+
+### Calendar link out of the nav dropdowns, plus a per-role permission for its Appointments/Shifts/Both switcher
+- **Nav change**: `Calendar` (plain link to `/calendar`, no `?type=` pre-filter) and `View only` (`/calendar/view`) are now both plain top-level links in `AppHeader.tsx`, instead of being duplicated inside the "Appointment pages" and "Staff pages" dropdowns (which is how they landed in the earlier "nav bar split into Appointment/Staff dropdowns" entry below). The "Appointment pages" dropdown is gone entirely now that its only other item was `View only`, which moved up to top-level too. "Staff pages" dropdown is untouched (Roster/Time off).
+- **New `VIEW_CALENDAR_TOGGLE` permission** (`src/lib/permissions/catalog.ts`, "Scheduling" group in the Settings permission matrix) — gates whether a role sees/can use the calendar's existing Appointments/Shifts/Both switcher (`SchedulingCalendar.tsx`, previously shown to anyone on a `BOTH`-tier license with no per-role control). Defaults: on for Manager/Supervisor, off for Employee/Customer. Without it, the calendar still *shows* "Both" by default (or whichever single type the license tier allows) — the permission only hides the switcher buttons, it's not a data-visibility gate (that's still `VIEW_APPOINTMENTS`). The always-permission-agnostic `/calendar/view` route deliberately keeps the switcher for everyone regardless of this permission (`canToggleCalendarType` defaults to `true` when not explicitly passed), matching that route's existing "ignores permissions entirely" design.
+- No migration needed — `RolePermission.permissionKey` is a plain string column, not a Postgres enum, same as every permission key added since the custom-roles rework.
+- **Verified**: `tsc --noEmit` and `eslint` both clean on every touched file. Not yet clicked through in a real browser — same standing caveat as the rest of this app's client-rendered UI.
+
 ### PTO manager + shift-coverage finder (the top TODO item, completed)
 This was mid-build when the previous session ended (process died before the write-up), so it wasn't documented yet even though the code and a live multi-staff test had already fully passed. Verified again from scratch this session after a machine restart, including confirming the DB data survived.
 - **Two open design questions from the TODO item, resolved with standard defaults** (not explicitly confirmed by the user, flag if wrong): approval workflow is self-service request (anyone with a `StaffProfile` can request time off for themselves, no permission gate) + `ADMIN`/`MANAGER`/`SUPERVISOR` approval (new `APPROVE_TIME_OFF` permission); "hours worked" = the FLSA-standard calendar week (Sun–Sat) containing the shift, not a configurable pay period.
@@ -299,6 +373,67 @@ Then built the nav-bar reorganization from TODO.md's already-decided spec: `AppH
 **One deliberate deviation from the original spec, flagged rather than silently applied**: did *not* gate the two dropdowns by feature tier (e.g. hiding "Appointment pages" entirely for a shift-only tenant), even though TODO.md's "still open" question suggested it. Settings (tenant-wide config: event colors, holidays, appointment-form settings, permissions) lives inside the "Staff pages" group only because Settings had to go somewhere, not because it's staff-specific - gating that whole group by `features.shiftManagement` would have hidden Settings entirely from an appointment-only tenant, a real functional regression, not just a visual one. Dropdown visibility is therefore unconditional for now; only the two `?type=` links' *content* reflects what the tenant actually has.
 
 **Verified live**: signed up a fresh tenant, confirmed the rendered dashboard HTML contains "Appointment pages", "Staff pages", and "Billing" as separate nav entries. `tsc`/lint/test/build all clean. Dropdown open/close, click-outside-to-close, and the active-highlight logic are correct by code review but not yet clicked through in a real browser.
+
+**Same-day follow-up**: moved Settings back out of "Staff pages" into its own plain top-level nav link (same treatment as Billing) per a direct follow-up request - it's tenant-wide config, not staff-specific, so it didn't belong exclusively grouped with staff pages either.
+
+### Role display names made tenant-customizable (not full custom roles - see TODO.md)
+The user asked to start on "custom roles" (motivated by the product being used across very different industries - police departments, plumbing companies, etc. were named as examples), then redirected mid-conversation to a smaller version first: keep the existing 4 configurable role slots (Manager/Supervisor/Employee/Customer) exactly as they are, but let a tenant rename each one's *display label*. Built that:
+
+- **Schema**: `Tenant.roleLabels Json?` (sparse `{role: "Custom Label"}` override), same pattern as `Tenant.eventColors`. Migration applied, Prisma client regenerated (hit the usual Windows `EPERM` file-lock on the query engine DLL - killed the stray dev-server `node` processes per the documented fix, regenerated, restarted).
+- **Lib**: `DEFAULT_ROLE_LABELS`, `isValidRoleLabel`, `resolveRoleLabels()` added to `src/lib/permissions/catalog.ts` (same defensive-merge shape as `resolveEventColors`).
+- **API**: `/api/tenant-settings` GET/PUT extended to carry `roleLabels`, partial-update (one role renamed at a time) merged over the existing overrides - same convention as `eventColors`.
+- **New Settings card**: `RoleLabelSettings.tsx` - one text input per role, defaulting to the plain English name, saves on blur.
+- **Every place that previously hardcoded a role's display name now resolves through the tenant's labels**: `PermissionMatrixEditor.tsx`'s role-column headers, `StaffManager.tsx`'s add-staff role dropdown and the staff table's Role column, `SchedulingCalendar.tsx`'s inline "+ Add new staff member" role dropdown, and the Dashboard's "Signed in as ..." text (resolved server-side there, since `Tenant.roleLabels` was already being fetched with no extra query needed - same free-column pattern as `logoDataUrl` before it).
+
+**A real bug found and fixed in the same pass**: the PUT handler's merge logic only handled `eventColors` - `roleLabels` updates were written as a raw replacement of the whole column instead of merging onto existing overrides, so renaming a second role would have silently erased the first rename. Caught via live curl testing (renamed EMPLOYEE, the response came back with *only* `EMPLOYEE` in `roleLabels`, missing the other three defaults), fixed by applying the identical merge-then-write pattern already used for `eventColors`, and reconfirmed live that two sequential renames both stick.
+
+**Then clarified further**: the user confirmed this relabeling feature is explicitly **not** what "custom roles" means to them - the real ask is creating and deleting roles from the ground up, not renaming the fixed 4. That full scope (a real per-tenant `Role` table, `User.role`/`RolePermission`/`RoleVisibility` migrated off the fixed enum, deletion with existing-holders blocked until reassigned, ADMIN staying fixed/hardcoded) is logged in TODO.md's "Custom roles" entry, explicitly marked as still fully open - the relabeling work shipped here doesn't reduce that scope at all.
+
+`tsc`/lint/test (15)/build all clean throughout. Verified live via curl (signup, two sequential role renames, confirmed correct merge behavior after the fix). Not yet browser-verified.
+
+### Full custom-roles system (replaces the fixed 4-role enum)
+The user started this twice before landing on the real scope: first asked for custom roles outright, got redirected to a smaller rename-only stopgap (`Tenant.roleLabels`, see the "Role display names made tenant-customizable" entry above) when the full rebuild looked like it'd derail the session, then explicitly confirmed that stopgap wasn't enough - the real ask was creating and deleting roles from the ground up, not renaming Manager/Supervisor/Employee/Customer. Built the full version this session. Mid-build, the user corrected the scope once more: keep the 4 existing roles as real starting data (not wiped), add a `description` field, and add a reports-to hierarchy field (nullable, "None" when nothing is above) - purely organizational/informational, explicitly not used for permission inheritance.
+
+**Schema**: `UserRole` enum shrunk from 6 values to `SUPERADMIN | ADMIN | STAFF` (Postgres enum value removal needs rename-recreate-remap, can't drop a value directly). New `Role` model (`id`, `tenantId`, `name`, `description`, nullable self-referential `reportsToId` → `Role.id` via relation `RoleHierarchy`, `onDelete: SetNull` so removing a role just clears anything reporting to it rather than cascading/blocking) - `@@unique([tenantId, name])`. `User.roleId` (nullable FK to `Role`, `onDelete: Restrict` - this is what actually enforces "can't delete a role while anyone holds it," at the DB level, not just in application code). `RolePermission`/`RoleVisibility` now key off `roleId`/`viewerRoleId`/`targetRoleId` instead of the old enum member. `Tenant.roleLabels` (the superseded rename-only stopgap) removed entirely, its existing override values migrated into real `Role.name` rows first so no tenant's custom renames were lost.
+
+**Migration safety, done deliberately before the irreversible part**: removing the hardcoded-default permission fallback (`DEFAULT_ROLE_PERMISSIONS`/`DEFAULT_ROLE_VISIBILITY` in the old `src/lib/permissions/catalog.ts`) as part of this change would have silently stripped every existing tenant's *effective* permissions down to nothing the moment a tenant's actual DB rows didn't fully cover a role, since the new system has no default-matrix fallback at all - a missing row just denies. Before touching the schema: wrote a one-off script (deleted after use) that used the *old* code's `getEffectivePermissionMatrix`/`getEffectiveVisibilityMatrix` to materialize every tenant's current effective permissions as real stored rows, confirmed via psql (18 tenants, 1440 permission rows + 288 visibility rows), and took a full `pg_dump` backup before applying the migration. Post-migration psql checks confirmed: 72 roles (18 tenants × 4 starter roles), all `STAFF` users have a non-null `roleId`, all 1440 permission rows carried a non-null `role_id`, the enum shrink landed, `tenants.role_labels` is gone, and a tenant's earlier custom role renames survived into the new `Role.name` values correctly.
+
+**Lib** (`src/lib/permissions/catalog.ts` and `service.ts`, both substantially rewritten): `DEFAULT_STARTER_ROLE_NAMES`/`DEFAULT_STARTER_ROLE_PERMISSIONS`/`DEFAULT_STARTER_ROLE_VISIBILITY` (by starter name, used only at signup-time seeding, not as a runtime fallback). New `VIEW_ROSTER` permission key. `hasPermissionByRoleId`/`hasPermission`/`canViewRoleById`/`canViewRole` all rewritten around `roleId` with no default-matrix merge - a missing row denies, full stop. New `seedDefaultRolesForTenant()` creates the 4 starter roles with their default hierarchy (Employee → Supervisor → Manager, Customer → none) and permission/visibility rows, called once at signup (`POST /api/auth/signup`).
+
+**API**: new `GET/POST /api/roles` (list; create, ADMIN-only, validates name uniqueness and that `reportsToId` belongs to the tenant) and `GET/PATCH/DELETE /api/roles/[id]` (PATCH does partial rename/describe/re-parent with a `chainIncludes()` cycle check so a role can't end up reporting to itself through a chain; DELETE proactively checks `user.count({roleId})` and returns a friendly `ROLE_IN_USE` 409 before ever hitting the DB's FK `RESTRICT` backstop). `POST /api/staff` and `PATCH /api/admin/permissions` switched from an enum `role` field to a validated `roleId` (must belong to the tenant). `GET /api/staff` now includes `customRole: {id, name}`.
+
+**UI**: `RoleLabelSettings.tsx` deleted, replaced by `RoleManager.tsx` - lists all tenant roles with inline-editable name/description (save on blur) and a reports-to `<select>`, a Remove button per role (surfaces the `ROLE_IN_USE` error inline if blocked), and an add-role form. `StaffManager.tsx`'s role picker and `SchedulingCalendar.tsx`'s inline "+ Add new staff member" role picker both now populate from `GET /api/roles` instead of a fixed option list. `PermissionMatrixEditor.tsx` reworked around dynamic roles (`Record<roleId, ...>` instead of `Record<enum, ...>`), plus a new "Roster" permission group for `VIEW_ROSTER`. `AppHeader` gained a `canViewRoster: boolean` prop (computed server-side per page via the new permission) replacing a hardcoded role-name check on the Roster nav link - all 7 pages that render `AppHeader` updated to compute and pass it. Dashboard's "Signed in as" label now resolves through `session.roleId → Role.name` instead of the old enum-label resolution.
+
+**A TypeScript/lint pattern worth remembering for next time**: `react-hooks/set-state-in-effect` flags `useEffect(() => { void loadFn(); }, [])` whenever `loadFn` internally calls `setState`, but does *not* flag the IIFE-wrapped form `useEffect(() => { (async () => { await loadFn(); })(); }, [])` - had to convert both `RoleManager.tsx`'s and `StaffManager.tsx`'s initial-load effects to this form to clear lint, matching the convention already established elsewhere in this codebase.
+
+`tsc --noEmit` / `npm run lint` / `npm test` (15/15, including the RLS integration test against the live container) / `npm run build` all clean after the full rewrite. **Verified via direct psql against the migrated data** (role counts, FK population, enum shrink, label-override carryover - see above) but **not yet re-verified live via curl against a running dev server** (fresh signup → 4 seeded roles with correct hierarchy/permissions, create/rename/delete a role via the API, assign a staff member to a custom role, confirm delete-while-in-use is blocked with the friendly error, confirm cycle prevention on reports-to) - that pass is still outstanding, next up.
+
+### Color key and custom tags merged into one section
+User said they were unclear how the color system worked, after asking for "custom color keys." Turned out the two existing Settings cards - "Color key" (5 fixed status colors, recolor-only) and "Custom color tags" (an open-ended named+colored list, already assignable per-event and already shown in the legend) - already did what "add custom color keys" was asking for, just split across two differently-named cards that didn't read as one system. Rather than building a new feature, merged the two into one: `EventColorSettings.tsx` now contains both the 5 built-in swatches ("Built in") and the custom add/delete list ("Your own") in a single "Color key" card with copy that explains the relationship - pick one of "your own" from the "Color key" field when scheduling an individual appointment/shift. `EventTagManager.tsx` deleted, `admin/users/page.tsx` updated to drop its now-separate render call. No schema or API changes - `EventTag` already supported everything needed.
+
+Also renamed the calendar-side picker itself from "Tag" to "Color key" (`SchedulingCalendar.tsx`'s `CreateEntryPanel` and `AppointmentDetailPanel` - the field label, its "No tag"/"+ Add new tag" options, and the inline new-entry form's "Name" label) so the field a user actually interacts with while scheduling matches the Settings section name that configures it - this was likely the real source of the "unclear how it works" confusion, since the connection between a Settings card called "Custom color tags" and a calendar field called "Tag" wasn't obvious. Internal variable/type names (`TagOption`, `tagId`, `/api/event-tags`, `canCreateTag`) were left as-is - this was a user-facing copy and information-architecture fix, not a rename of the underlying `EventTag` model.
+
+**Verified live**: `tsc`/lint/test (15)/build all clean. Confirmed via curl against the custom-roles test tenant from this session: the merged Settings page still renders 200 and its HTML contains the new single "Color key" heading, and `POST/GET /api/event-tags` still work unchanged (created a second color key, "VIP", and confirmed it lists back correctly). Not yet clicked through in a real browser - same standing caveat as the rest of this app's client-rendered UI.
+
+### Appointment & shift form settings split into two cards
+Small TODO item: the single "Appointment & shift form" Settings card (`AppointmentFormSettings.tsx`) had two toggles that only ever applied to appointments (`requireClientForAppointments`, `enableMapsNavigation`) - nothing shift-specific existed to put in a real second section. Went with the "at minimum" option TODO.md had already flagged: retitled the existing card "Appointment form" (same two toggles, no behavior change) and added a new placeholder "Shift form" card (`ShiftFormSettings.tsx`) explaining there's nothing shift-only to configure yet. Both render as separate cards on the User Manager page, same pattern as every other settings card there. `tsc`/lint clean. Not browser-verified - same standing caveat as the rest of this app's client-rendered UI.
+
+### SUPERADMIN dev console (account dashboard, billing override, discount codes)
+Built out the TODO.md "Dev role" item. The data model already had everything needed for this - `UserRole.SUPERADMIN` (platform operator, `tenantId` null) already existed and already bypassed the permission system everywhere, but there was no way to create one and no console for it (`src/app/app/page.tsx` literally said "No superadmin console yet" and bounced SUPERADMIN sessions to the marketing page). This session built the actual console:
+
+- **Creating the account**: no public signup for this role, by design ("an account that I setup" in the original ask) - added `POST /api/superadmin/bootstrap`, gated by a `SUPERADMIN_SETUP_SECRET` env var (compared with `timingSafeEqual`, same convention as session-token verification) and self-disabling once any SUPERADMIN row exists, so it can't be used to mint a second one or by anyone who doesn't have the server's own secret. 404s (not 400) if the env var was never set, so its existence isn't even observable from outside. Added `SUPERADMIN_SETUP_SECRET` to `.env.example` and a real generated value to local `.env`.
+- **Dashboard**: new `/superadmin` route (outside the tenant-scoped `(admin)/app/[tenantSlug]` tree entirely - its own minimal dark-themed header, no `AppHeader` since that's tenant-branded). Server-guarded (`redirect("/login")` unless `session.role === "SUPERADMIN"`), and `src/app/app/page.tsx` (the post-login resolver) now sends SUPERADMIN sessions here instead of to `/`.
+- **Tenant list + billing override** (`TenantBillingManager.tsx`, `GET /api/superadmin/tenants`, `PATCH /api/superadmin/tenants/[id]/license`): every tenant on the platform with its feature tier, staff/appointment counts, and an inline billing-plan/status editor per row. This is the explicit "real write action on `License.billingPlan`/`status`, not just a read-only view" the TODO item called for - `setLicensePlan()` in `src/modules/licensing/service.ts` writes directly, bypassing Stripe checkout entirely, for comping an account, testing paid-tier features without a real charge, or fixing a billing issue by hand. Uses `runInSystemContext` (RLS-bypassing, already built for exactly this kind of cross-tenant platform operation) rather than any per-tenant context.
+- **Discount codes** (`DiscountCodeManager.tsx`, `GET/POST /api/superadmin/discount-codes`, `PATCH/DELETE .../[id]`): new `DiscountCode` model (code, `PERCENT`/`FIXED_CENTS` type, value, active flag) - platform-level, not tenant-scoped, so no RLS policy, gated entirely at the API layer like the rest of this console. **Scoped deliberately narrow**: this is record-keeping/management only, **not yet wired into the actual Stripe checkout flow** - redeeming a code against a real purchase is still a manual step for now, flagged in the UI copy itself, consistent with how checkout overall is already marked "built but not live-tested" in TODO.md.
+
+**Verified live via curl**: bootstrapped a real SUPERADMIN account, confirmed a second bootstrap attempt correctly 409s ("already exists"); `GET /api/superadmin/tenants` returns every tenant with license + counts; `PATCH .../license` successfully comped a real tenant from FREE to SUBSCRIPTION and persisted it; the same PATCH with no session cookie correctly 403s; `/app` redirects a SUPERADMIN session to `/superadmin` (307), which itself renders 200, while a logged-out request to `/superadmin` redirects to `/login`. **Discount codes could not be verified live this session** - the dev server's long-lived `globalForPrisma.prisma` singleton (`src/lib/prisma.ts`, deliberately cached across Fast Refresh to avoid exhausting DB connections in dev) was instantiated before the new `DiscountCode` model existed, so the running process's Prisma Client doesn't know about it until the dev server is actually restarted (not just hot-reloaded) - both `GET` and `POST /api/superadmin/discount-codes` 500 until that happens. This is a one-time dev-environment artifact of *this* schema change, not a bug in the code - restart `npm run dev` once and re-verify. `tsc --noEmit` / `npm run lint` / `npm test` (15/15) all clean regardless.
+
+### Service types Settings card
+TODO.md item: service types (the job types staff pick when scheduling) could only be created via the raw `POST /api/service-types` API - no Settings UI at all, unlike staff/clients/tags which all have an admin card. Added `ServiceTypeManager.tsx` to the User Manager page: list with inline edit (name, duration, price, requires-payment) and delete, plus an add form - same list/add/edit/delete pattern as `HolidaySettings.tsx`/`StaffManager.tsx`. New `src/app/api/service-types/[id]/route.ts` (`PATCH`/`DELETE`, gated by `EDIT_SERVICES`/`DELETE_SERVICES` via `hasPermission` - not a hardcoded role check, consistent with the existing `GET`/`POST`). Both use `updateMany`/`deleteMany` scoped to `{id, tenantId}` rather than a bare `update`/`delete`, so a ServiceType id from another tenant 404s instead of leaking existence - deletion needs no "still in use" guard since `Appointment.serviceTypeId` is `onDelete: SetNull`, unlike deleting a `Role`.
+
+**Flagging rather than solving**: the TODO item asked for this to be "explicitly accessible to both ADMIN and whichever role(s) hold those permissions," but `/admin/users` itself is still hard-gated to ADMIN only at the page level (`page.tsx`'s own redirect, same as every other card on that page) - a non-admin role granted `CREATE_SERVICES` from the permission matrix still can't open Settings at all to use this card. That's a pre-existing gap in the whole Settings page's access model (true for `StaffManager`, `RoleManager`, every card there), not something this one item should fix as a side effect - left it as a known gap rather than quietly expanding scope into a Settings-page access redesign.
+
+**Verified live via curl** against a fresh signup: `/admin/users` renders 200; `POST /api/service-types` creates a service type; `PATCH /api/service-types/[id]` edits it and the change round-trips on the next `GET`; `PATCH` on a nonexistent id correctly 404s; an unauthenticated `PATCH` correctly 401s; `DELETE` removes it and it's gone from the next `GET`. `tsc --noEmit` / `npm run lint` / `npm test` (15/15) all clean. The card's own on-screen interaction (add form, inline edit toggle) is correct by code review but not clicked through in a real browser - same standing caveat as the rest of this app's client-rendered UI.
 
 ## Known gaps / not yet done
 

@@ -8,7 +8,7 @@ export async function GET() {
   try {
     const session = await requireTenantSession();
     const clients = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, "VIEW_CLIENTS");
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_CLIENTS");
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.client.findMany({ orderBy: { name: "asc" } });
     });
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const data = parsed.data;
 
     const client = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, "CREATE_CLIENTS");
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_CLIENTS");
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.client.create({
         data: {

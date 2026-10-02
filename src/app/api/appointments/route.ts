@@ -40,9 +40,9 @@ export async function GET(request: NextRequest) {
       session.userId,
       session.role,
       async (tx) => {
-        const canView = await hasPermission(tx, session.tenantId, session.role, "VIEW_APPOINTMENTS");
+        const canView = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS");
         if (!canView) throw new Error("FORBIDDEN");
-        const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, "VIEW_JOB_ESTIMATES");
+        const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES");
         const rows = await listAppointmentsInRange(tx, session.tenantId, {
           start: new Date(parsed.data.start),
           end: new Date(parsed.data.end),
@@ -91,8 +91,8 @@ export async function POST(request: NextRequest) {
       session.role,
       async (tx) => {
         const [canCreate, canEditEstimates] = await Promise.all([
-          hasPermission(tx, session.tenantId, session.role, "CREATE_APPOINTMENTS"),
-          hasPermission(tx, session.tenantId, session.role, "EDIT_JOB_ESTIMATES"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_JOB_ESTIMATES"),
         ]);
         if (!canCreate) throw new Error("FORBIDDEN");
         await assertCanAddAppointment(tx, session.tenantId);

@@ -19,9 +19,9 @@ export async function GET(
   try {
     const session = await requireTenantSession();
     const result = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const canView = await hasPermission(tx, session.tenantId, session.role, "VIEW_APPOINTMENTS");
+      const canView = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS");
       if (!canView) throw new Error("FORBIDDEN");
-      const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, "VIEW_JOB_ESTIMATES");
+      const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES");
       const appointment = await getAppointmentById(tx, id);
       if (!appointment) return null;
       if (!canViewEstimates) {
@@ -80,17 +80,17 @@ export async function PATCH(
         const wantsReassign = data.staffId !== undefined;
 
         if (data.status === "CANCELLED") {
-          const canCancel = await hasPermission(tx, session.tenantId, session.role, "CANCEL_APPOINTMENTS");
+          const canCancel = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CANCEL_APPOINTMENTS");
           if (!canCancel) throw new Error("FORBIDDEN");
           return cancelAppointment(tx, id);
         }
 
         if (wantsReschedule || locationFieldsRequested || tagFieldRequested || wantsReassign) {
-          const canEdit = await hasPermission(tx, session.tenantId, session.role, "EDIT_APPOINTMENTS");
+          const canEdit = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_APPOINTMENTS");
           if (!canEdit) throw new Error("FORBIDDEN");
         }
         if (estimateFieldsRequested) {
-          const canEditEstimates = await hasPermission(tx, session.tenantId, session.role, "EDIT_JOB_ESTIMATES");
+          const canEditEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_JOB_ESTIMATES");
           if (!canEditEstimates) throw new Error("FORBIDDEN");
         }
 

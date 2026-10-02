@@ -46,6 +46,7 @@ export default async function BillingPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role="ADMIN"
+        canViewRoster
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">

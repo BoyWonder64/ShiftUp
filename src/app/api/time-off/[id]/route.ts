@@ -23,7 +23,7 @@ export async function PATCH(
     }
 
     const timeOff = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const canApprove = await hasPermission(tx, session.tenantId, session.role, "APPROVE_TIME_OFF");
+      const canApprove = await hasPermission(tx, session.tenantId, session.role, session.roleId, "APPROVE_TIME_OFF");
       if (!canApprove) throw new Error("FORBIDDEN");
       return reviewTimeOff(tx, id, session.userId, parsed.data.status);
     });

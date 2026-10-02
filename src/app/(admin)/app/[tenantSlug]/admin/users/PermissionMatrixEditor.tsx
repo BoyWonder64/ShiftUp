@@ -1,23 +1,15 @@
 "use client";
 
 import { Fragment, useEffect, useState } from "react";
-import {
-  CONFIGURABLE_ROLES,
-  PERMISSION_KEYS,
-  PERMISSION_LABELS,
-  type ConfigurableRole,
-  type PermissionKey,
-} from "@/lib/permissions/catalog";
+import { PERMISSION_KEYS, PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions/catalog";
 
-type Grants = Record<ConfigurableRole, Record<PermissionKey, boolean>>;
-type Visibility = Record<ConfigurableRole, Record<ConfigurableRole, boolean>>;
+interface RoleOption {
+  id: string;
+  name: string;
+}
 
-const ROLE_LABELS: Record<ConfigurableRole, string> = {
-  MANAGER: "Manager",
-  SUPERVISOR: "Supervisor",
-  EMPLOYEE: "Employee",
-  CUSTOMER: "Customer",
-};
+type Grants = Record<string, Record<PermissionKey, boolean>>;
+type Visibility = Record<string, Record<string, boolean>>;
 
 /**
  * Groups PERMISSION_KEYS for display only - no new permission keys, no
@@ -32,16 +24,24 @@ const PERMISSION_GROUPS: Array<{ label: string; note?: string; keys: PermissionK
   {
     label: "Scheduling (appointments & shifts)",
     note: "Applies to both - appointments and shifts share these permissions, there's no separate shift-only permission yet.",
-    keys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
+    keys: [
+      "VIEW_APPOINTMENTS",
+      "CREATE_APPOINTMENTS",
+      "EDIT_APPOINTMENTS",
+      "CANCEL_APPOINTMENTS",
+      "VIEW_CALENDAR_TOGGLE",
+    ],
   },
   { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
   { label: "Clients", keys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
   { label: "Staff", keys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
   { label: "Services", keys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },
+  { label: "Roster", keys: ["VIEW_ROSTER"] },
   { label: "Time off", keys: ["VIEW_TIME_OFF", "APPROVE_TIME_OFF"] },
 ];
 
 export function PermissionMatrixEditor() {
+  const [roles, setRoles] = useState<RoleOption[]>([]);
   const [grants, setGrants] = useState<Grants | null>(null);
   const [visibility, setVisibility] = useState<Visibility | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +57,7 @@ export function PermissionMatrixEditor() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed to load");
         if (!cancelled) {
+          setRoles(data.permissions.roles);
           setGrants(data.permissions.grants);
           setVisibility(data.visibility.canView);
         }
@@ -71,17 +72,17 @@ export function PermissionMatrixEditor() {
     };
   }, []);
 
-  function toggleGrant(role: ConfigurableRole, key: PermissionKey) {
+  function toggleGrant(roleId: string, key: PermissionKey) {
     setSaved(false);
     setGrants((prev) =>
-      prev ? { ...prev, [role]: { ...prev[role], [key]: !prev[role][key] } } : prev
+      prev ? { ...prev, [roleId]: { ...prev[roleId], [key]: !prev[roleId][key] } } : prev
     );
   }
 
-  function toggleVisibility(viewer: ConfigurableRole, target: ConfigurableRole) {
+  function toggleVisibility(viewerId: string, targetId: string) {
     setSaved(false);
     setVisibility((prev) =>
-      prev ? { ...prev, [viewer]: { ...prev[viewer], [target]: !prev[viewer][target] } } : prev
+      prev ? { ...prev, [viewerId]: { ...prev[viewerId], [targetId]: !prev[viewerId][targetId] } } : prev
     );
   }
 
@@ -91,19 +92,21 @@ export function PermissionMatrixEditor() {
     setError(null);
     setSaved(false);
     try {
-      const permissionUpdates = CONFIGURABLE_ROLES.flatMap((role) =>
+      const permissionUpdates = roles.flatMap((role) =>
         PERMISSION_KEYS.map((permissionKey) => ({
-          role,
+          roleId: role.id,
           permissionKey,
-          granted: grants[role][permissionKey],
+          granted: grants[role.id][permissionKey],
         }))
       );
-      const visibilityUpdates = CONFIGURABLE_ROLES.flatMap((viewerRole) =>
-        CONFIGURABLE_ROLES.map((targetRole) => ({
-          viewerRole,
-          targetRole,
-          canView: visibility[viewerRole][targetRole],
-        }))
+      const visibilityUpdates = roles.flatMap((viewer) =>
+        roles
+          .filter((target) => target.id !== viewer.id)
+          .map((target) => ({
+            viewerRoleId: viewer.id,
+            targetRoleId: target.id,
+            canView: visibility[viewer.id][target.id],
+          }))
       );
 
       const res = await fetch("/api/admin/permissions", {
@@ -139,12 +142,12 @@ export function PermissionMatrixEditor() {
                 <th className="w-56 border-b-2 border-gray-200 p-2 text-left font-medium text-gray-500">
                   Permission
                 </th>
-                {CONFIGURABLE_ROLES.map((role) => (
+                {roles.map((role) => (
                   <th
-                    key={role}
+                    key={role.id}
                     className="w-24 border-b-2 border-gray-200 p-2 text-center font-medium text-gray-500"
                   >
-                    {ROLE_LABELS[role]}
+                    {role.name}
                   </th>
                 ))}
               </tr>
@@ -154,7 +157,7 @@ export function PermissionMatrixEditor() {
                 <Fragment key={group.label}>
                   <tr>
                     <td
-                      colSpan={CONFIGURABLE_ROLES.length + 1}
+                      colSpan={roles.length + 1}
                       className="border-b border-gray-200 bg-gray-50 px-2 py-1.5 text-xs font-semibold tracking-wide text-gray-600 uppercase"
                     >
                       {group.label}
@@ -168,12 +171,12 @@ export function PermissionMatrixEditor() {
                   {group.keys.map((key) => (
                     <tr key={key}>
                       <td className="border-b border-gray-100 p-2 pl-4">{PERMISSION_LABELS[key]}</td>
-                      {CONFIGURABLE_ROLES.map((role) => (
-                        <td key={role} className="border-b border-gray-100 p-2 text-center">
+                      {roles.map((role) => (
+                        <td key={role.id} className="border-b border-gray-100 p-2 text-center">
                           <input
                             type="checkbox"
-                            checked={grants[role][key]}
-                            onChange={() => toggleGrant(role, key)}
+                            checked={grants[role.id][key]}
+                            onChange={() => toggleGrant(role.id, key)}
                             className="h-4 w-4 accent-primary-500"
                           />
                         </td>
@@ -191,9 +194,9 @@ export function PermissionMatrixEditor() {
         <h2 className="mb-1 text-lg font-medium">Who can see whom</h2>
         <p className="mb-3 text-sm text-gray-600">
           Each row is a role. Check a column to let that row&apos;s role see the
-          schedule and data of roles in that column - e.g. checking
-          &quot;Employee&quot; in the <span className="font-medium">Supervisor</span>{" "}
-          row lets supervisors see employees&apos; schedules.
+          schedule and data of roles in that column - e.g. checking a target
+          role in a viewer role&apos;s row lets that viewer see the target&apos;s
+          schedules.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -202,32 +205,32 @@ export function PermissionMatrixEditor() {
                 <th className="w-32 border-b-2 border-gray-200 p-2 text-left font-medium text-gray-500">
                   This role...
                 </th>
-                {CONFIGURABLE_ROLES.map((role) => (
+                {roles.map((role) => (
                   <th
-                    key={role}
+                    key={role.id}
                     className="w-24 border-b-2 border-gray-200 p-2 text-center font-medium text-gray-500"
                   >
-                    {ROLE_LABELS[role]}
+                    {role.name}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {CONFIGURABLE_ROLES.map((viewer) => (
-                <tr key={viewer}>
-                  <td className="border-b border-gray-100 p-2 font-medium">{ROLE_LABELS[viewer]}</td>
-                  {CONFIGURABLE_ROLES.map((target) => {
-                    const self = viewer === target;
+              {roles.map((viewer) => (
+                <tr key={viewer.id}>
+                  <td className="border-b border-gray-100 p-2 font-medium">{viewer.name}</td>
+                  {roles.map((target) => {
+                    const self = viewer.id === target.id;
                     return (
                       <td
-                        key={target}
+                        key={target.id}
                         className={`border-b border-gray-100 p-2 text-center ${self ? "bg-gray-50" : ""}`}
                       >
                         <input
                           type="checkbox"
-                          checked={self ? true : visibility[viewer][target]}
+                          checked={self ? true : visibility[viewer.id][target.id]}
                           disabled={self}
-                          onChange={() => toggleVisibility(viewer, target)}
+                          onChange={() => toggleVisibility(viewer.id, target.id)}
                           className="h-4 w-4 accent-primary-500 disabled:opacity-40"
                           title={self ? "A role always sees its own role" : undefined}
                         />
@@ -240,8 +243,8 @@ export function PermissionMatrixEditor() {
           </table>
         </div>
         <p className="mt-2 text-xs text-gray-400">
-          The shaded diagonal (e.g. Manager → Manager) is always checked and
-          can&apos;t be turned off - a role always sees its own role.
+          The shaded diagonal is always checked and can&apos;t be turned off - a
+          role always sees its own role.
         </p>
       </section>
 

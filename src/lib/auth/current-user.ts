@@ -34,9 +34,11 @@ export async function requireTenantSession(): Promise<{
   userId: string;
   tenantId: string;
   role: TenantRole;
+  /** The tenant's custom Role id this user holds - null for ADMIN, required for STAFF. */
+  roleId: string | null;
 }> {
   const session = await getCurrentSession();
   if (!session) throw new Error("UNAUTHENTICATED");
   if (session.role === "SUPERADMIN" || !session.tenantId) throw new Error("FORBIDDEN");
-  return { userId: session.userId, tenantId: session.tenantId, role: session.role };
+  return { userId: session.userId, tenantId: session.tenantId, role: session.role, roleId: session.roleId };
 }

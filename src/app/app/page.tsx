@@ -13,8 +13,10 @@ export default async function AppResolverPage() {
     redirect("/login");
   }
 
-  if (session.role === "SUPERADMIN" || !session.tenantId) {
-    // No superadmin console yet (Phase 0 doesn't require one) - send back to the marketing page.
+  if (session.role === "SUPERADMIN") {
+    redirect("/superadmin");
+  }
+  if (!session.tenantId) {
     redirect("/");
   }
 

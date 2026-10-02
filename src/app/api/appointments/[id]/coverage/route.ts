@@ -17,7 +17,7 @@ export async function GET(
       session.userId,
       session.role,
       async (tx) => {
-        const canEdit = await hasPermission(tx, session.tenantId, session.role, "EDIT_APPOINTMENTS");
+        const canEdit = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_APPOINTMENTS");
         if (!canEdit) throw new Error("FORBIDDEN");
         return findCoverageCandidates(tx, session.tenantId, id);
       }

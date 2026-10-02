@@ -249,11 +249,15 @@ export interface StaffOption {
   id: string;
   displayName: string;
 }
+export interface TenantRoleOption {
+  id: string;
+  name: string;
+}
 interface ServiceTypeOption {
   id: string;
   name: string;
   durationMinutes: number;
-  price: string;
+  price: string | null;
 }
 interface ClientOption {
   id: string;
@@ -452,6 +456,7 @@ export function SchedulingCalendar({
   licenseTier = "BOTH",
   initialStaffId,
   initialCalendarType,
+  canToggleCalendarType = true,
 }: {
   readOnly?: boolean;
   licenseTier?: LicenseTier;
@@ -459,12 +464,18 @@ export function SchedulingCalendar({
   // "View full calendar" link (?staff=<id>) so landing here already shows
   // just that one employee instead of "All staff".
   initialStaffId?: string;
-  // Preselects the appointment/shift filter - used by the nav bar's
-  // "Appointment pages"/"Staff pages" dropdown links (?type=appointment or
-  // ?type=shift) so landing here already shows just that type instead of
-  // "Both". Ignored (falls through to the tier-based default below) if the
-  // tenant's license doesn't actually include that type.
+  // Preselects the appointment/shift filter - used by deep links
+  // (?type=appointment or ?type=shift) so landing here already shows just
+  // that type instead of "Both". Ignored (falls through to the tier-based
+  // default below) if the tenant's license doesn't actually include that
+  // type.
   initialCalendarType?: "appointment" | "shift";
+  // Settings > Permissions > VIEW_CALENDAR_TOGGLE - whether this role can see
+  // and use the Appointments/Shifts/Both switcher at all. Defaults to true
+  // so the always-permission-agnostic /calendar/view route (and any other
+  // caller that doesn't pass it) keeps today's behavior; the main /calendar
+  // page explicitly computes and passes the real per-role value.
+  canToggleCalendarType?: boolean;
 } = {}) {
   const features = useMemo(() => featuresForTier(licenseTier), [licenseTier]);
   // Default to whichever single calendar the tier actually includes; only
@@ -497,6 +508,9 @@ export function SchedulingCalendar({
     buildColorTriples(DEFAULT_EVENT_COLORS)
   );
   const [showFederalHolidays, setShowFederalHolidays] = useState(true);
+  // The tenant's real roles (Settings > "Roles") - used by the inline
+  // "+ Add new staff member" role dropdown.
+  const [roles, setRoles] = useState<TenantRoleOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [holidays, setHolidays] = useState<HolidayOption[]>([]);
   const [staffFilter, setStaffFilter] = useState<string>(initialStaffId ?? "all");
@@ -589,11 +603,20 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadRoles = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ roles: TenantRoleOption[] }>("/api/roles");
+      setRoles(data.roles);
+    } catch {
+      // Not fatal - the inline "+ Add new staff member" role dropdown just stays empty until retried.
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
         const [serviceData, permData, settingsData] = await Promise.all([
-          fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/service-types"),
+          fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/service-types?activeOnly=true"),
           fetchJson<{ permissions: Record<PermissionKey, boolean> }>("/api/me/permissions"),
           fetchJson<{
             settings: {
@@ -613,9 +636,9 @@ export function SchedulingCalendar({
       } catch {
         setError("Couldn't load service data.");
       }
-      await Promise.all([loadStaff(), loadClients(), loadTags(), loadHolidays()]);
+      await Promise.all([loadStaff(), loadClients(), loadTags(), loadHolidays(), loadRoles()]);
     })();
-  }, [loadStaff, loadClients, loadTags, loadHolidays]);
+  }, [loadStaff, loadClients, loadTags, loadHolidays, loadRoles]);
 
   useEffect(() => {
     (async () => {
@@ -803,20 +826,34 @@ export function SchedulingCalendar({
     return [...base, ...tagItems];
   }, [calendarType, colorTriples, tags]);
 
-  // react-big-calendar's min/max only read the time-of-day portion of these
-  // Date objects (the date itself is ignored, merged onto whichever day is
-  // actually rendered) - any reference date works, so a fixed one keeps this
-  // from recomputing on every render.
-  const { gridMinTime, gridMaxTime } = useMemo(() => {
-    const min = new Date(2000, 0, 1, 0, 0, 0);
-    const max = new Date(2000, 0, 1, 23, 59, 59);
-    if (amPmHalf === "AM") {
-      max.setHours(12, 0, 0, 0);
-    } else {
-      min.setHours(12, 0, 0, 0);
-    }
-    return { gridMinTime: min, gridMaxTime: max };
-  }, [amPmHalf]);
+  // The time grid always renders the full 24 hours now - the AM/PM toggle
+  // below no longer hides half the day, it just scrolls the (already fully
+  // rendered) grid to that half. react-big-calendar's min/max only read the
+  // time-of-day portion of these Date objects (the date itself is ignored,
+  // merged onto whichever day is actually rendered), so fixed constants are
+  // fine here.
+  const gridMinTime = useMemo(() => new Date(2000, 0, 1, 0, 0, 0), []);
+  const gridMaxTime = useMemo(() => new Date(2000, 0, 1, 23, 59, 59), []);
+
+  // Only affects where the grid starts scrolled to on first mount -
+  // react-big-calendar doesn't re-read this prop after mount, so switching
+  // halves afterward is handled imperatively in scrollToAmPmHalf below.
+  const initialScrollToTime = useMemo(
+    () => new Date(2000, 0, 1, amPmHalf === "PM" ? 12 : 0, 0, 0),
+    [amPmHalf]
+  );
+
+  const calendarWrapperRef = useRef<HTMLDivElement>(null);
+
+  // Smoothly scrolls the Week/Day time gutter to the top (AM) or the
+  // midpoint (PM) of the now-always-full-day grid. Scrolls the actual DOM
+  // node directly since react-big-calendar's `scrollToTime` prop only takes
+  // effect on first mount, not on later prop changes.
+  const scrollToAmPmHalf = useCallback((half: "AM" | "PM") => {
+    const content = calendarWrapperRef.current?.querySelector<HTMLElement>(".rbc-time-content");
+    if (!content) return;
+    content.scrollTo({ top: content.scrollHeight * (half === "PM" ? 0.5 : 0), behavior: "smooth" });
+  }, []);
 
   const showDragHint = creationCount < 10;
 
@@ -878,8 +915,9 @@ export function SchedulingCalendar({
           )}
 
           {/* Only worth showing a switcher when the tier actually includes both -
-              otherwise there's nothing to switch to, so it's just noise. */}
-          {features.appointmentManager && features.shiftManagement && (
+              otherwise there's nothing to switch to, so it's just noise - and
+              only when this role holds VIEW_CALENDAR_TOGGLE. */}
+          {features.appointmentManager && features.shiftManagement && canToggleCalendarType && (
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Calendar</span>
               <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
@@ -925,9 +963,9 @@ export function SchedulingCalendar({
             </div>
           </div>
 
-          {/* Which half of the day the Week/Day time gutter shows - flips
-              between the morning and afternoon/evening block instead of
-              always rendering the full 24 hours. No effect in Month view. */}
+          {/* The Week/Day time gutter always renders the full 24 hours now -
+              this just scrolls it to the morning or afternoon/evening half
+              instead of hiding the other one. No effect in Month view. */}
           <div className="flex flex-col gap-1">
             <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Hours</span>
             <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
@@ -935,8 +973,11 @@ export function SchedulingCalendar({
                 <button
                   key={half}
                   type="button"
-                  onClick={() => setAmPmHalf(half)}
-                  title={half === "AM" ? "Show 12 AM - 12 PM" : "Show 12 PM - 12 AM"}
+                  onClick={() => {
+                    setAmPmHalf(half);
+                    scrollToAmPmHalf(half);
+                  }}
+                  title={half === "AM" ? "Scroll up to 12 AM" : "Scroll down to 12 PM"}
                   className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
                     amPmHalf === half
                       ? "bg-primary-500 text-white shadow-sm"
@@ -1010,7 +1051,11 @@ export function SchedulingCalendar({
         </p>
       )}
 
-      <div style={{ height: 650 }} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div
+        ref={calendarWrapperRef}
+        style={{ height: 650 }}
+        className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+      >
         <DnDCalendar
           localizer={localizer}
           events={calendarEvents}
@@ -1026,6 +1071,7 @@ export function SchedulingCalendar({
           timeslots={1}
           min={gridMinTime}
           max={gridMaxTime}
+          scrollToTime={initialScrollToTime}
           // "ignoreEvents" lets a new selection be drawn starting on top of
           // an existing event instead of the existing event capturing the
           // click/drag - this is what lets overlapping bookings be created
@@ -1080,6 +1126,7 @@ export function SchedulingCalendar({
             serviceTypes={serviceTypes}
             clients={clients}
             tags={tags}
+            roles={roles}
             requireClient={requireClientForAppointments}
             canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
             canCreateStaff={permissions?.CREATE_STAFF ?? false}
@@ -1338,7 +1385,7 @@ function AppointmentDetailPanel({
       </dl>
 
       <div className="mt-4 border-t border-primary-100 pt-3">
-        <h3 className="mb-2 text-sm font-medium text-primary-700">Tag</h3>
+        <h3 className="mb-2 text-sm font-medium text-primary-700">Color key</h3>
         {canEdit ? (
           <select
             value={tagId}
@@ -1355,13 +1402,13 @@ function AppointmentDetailPanel({
             disabled={savingTag}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
-            <option value="">No tag</option>
+            <option value="">No color key</option>
             {tags.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
             ))}
-            {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new tag</option>}
+            {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new color key</option>}
           </select>
         ) : appointment.tag ? (
           <span className="inline-flex items-center gap-1.5 text-sm">
@@ -1369,7 +1416,7 @@ function AppointmentDetailPanel({
             {appointment.tag.name}
           </span>
         ) : (
-          <span className="text-sm text-gray-400">No tag</span>
+          <span className="text-sm text-gray-400">No color key</span>
         )}
 
         {showNewTagForm && (
@@ -1532,7 +1579,6 @@ function AppointmentDetailPanel({
 }
 
 const NEW_STAFF_VALUE = "__new_staff__";
-const NEW_STAFF_ROLE_OPTIONS = ["MANAGER", "SUPERVISOR", "EMPLOYEE"] as const;
 const NEW_TAG_VALUE = "__new_tag__";
 
 function CreateEntryPanel({
@@ -1544,6 +1590,7 @@ function CreateEntryPanel({
   serviceTypes,
   clients,
   tags,
+  roles,
   requireClient,
   canEditEstimates,
   canCreateStaff,
@@ -1567,6 +1614,7 @@ function CreateEntryPanel({
   serviceTypes: ServiceTypeOption[];
   clients: ClientOption[];
   tags: TagOption[];
+  roles: TenantRoleOption[];
   // Admin-configurable per tenant (Settings > "Appointment & shift
   // form") - whether an appointment must have a client attached. Never
   // applies to mode === "shift", which has no client field at all.
@@ -1588,7 +1636,7 @@ function CreateEntryPanel({
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newStaffUsername, setNewStaffUsername] = useState("");
   const [newStaffPassword, setNewStaffPassword] = useState("");
-  const [newStaffRole, setNewStaffRole] = useState<(typeof NEW_STAFF_ROLE_OPTIONS)[number]>("EMPLOYEE");
+  const [newStaffRoleId, setNewStaffRoleId] = useState(() => roles[0]?.id ?? "");
   const [serviceTypeId, setServiceTypeId] = useState("");
   const [tagId, setTagId] = useState("");
   const [showNewTagForm, setShowNewTagForm] = useState(false);
@@ -1678,9 +1726,13 @@ function CreateEntryPanel({
     }
     if (
       staffId === NEW_STAFF_VALUE &&
-      (!newStaffName.trim() || !newStaffEmail.trim() || !newStaffUsername.trim() || !newStaffPassword)
+      (!newStaffName.trim() ||
+        !newStaffEmail.trim() ||
+        !newStaffUsername.trim() ||
+        !newStaffPassword ||
+        !newStaffRoleId)
     ) {
-      fail("Fill in the new staff member's name, email, username, and password.");
+      fail("Fill in the new staff member's name, email, username, password, and role.");
       return;
     }
     if (endTime <= startTime) {
@@ -1716,7 +1768,7 @@ function CreateEntryPanel({
             email: newStaffEmail.trim(),
             username: newStaffUsername.trim(),
             password: newStaffPassword,
-            role: newStaffRole,
+            roleId: newStaffRoleId,
           }),
         });
         resolvedStaffId = newStaff.id;
@@ -1900,13 +1952,13 @@ function CreateEntryPanel({
             <label className="flex flex-col gap-1 text-sm">
               Role
               <select
-                value={newStaffRole}
-                onChange={(e) => setNewStaffRole(e.target.value as (typeof NEW_STAFF_ROLE_OPTIONS)[number])}
+                value={newStaffRoleId}
+                onChange={(e) => setNewStaffRoleId(e.target.value)}
                 className="rounded-md border border-gray-300 px-2 py-1"
               >
-                {NEW_STAFF_ROLE_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r.charAt(0) + r.slice(1).toLowerCase()}
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
                   </option>
                 ))}
               </select>
@@ -1932,7 +1984,7 @@ function CreateEntryPanel({
       </label>
 
       <label className="flex flex-col gap-1 text-sm">
-        Tag (optional)
+        Color key (optional)
         <select
           value={tagId}
           onChange={(e) => {
@@ -1948,14 +2000,14 @@ function CreateEntryPanel({
               {t.name}
             </option>
           ))}
-          {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new tag</option>}
+          {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new color key</option>}
         </select>
       </label>
 
       {showNewTagForm && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <label className="flex flex-col gap-1 text-sm">
-            Tag name
+            Color key name
             <input
               value={newTagName}
               onChange={(e) => setNewTagName(e.target.value)}

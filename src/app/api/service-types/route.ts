@@ -4,17 +4,23 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await requireTenantSession();
+    // The calendar's create panel only wants active service types to pick from;
+    // the Settings manager wants all of them (including inactive, to toggle back on).
+    const activeOnly = request.nextUrl.searchParams.get("activeOnly") === "true";
     const serviceTypes = await runInTenantContext(
       session.tenantId,
       session.userId,
       session.role,
       async (tx) => {
-        const allowed = await hasPermission(tx, session.tenantId, session.role, "VIEW_SERVICES");
+        const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_SERVICES");
         if (!allowed) throw new Error("FORBIDDEN");
-        return tx.serviceType.findMany({ orderBy: { name: "asc" } });
+        return tx.serviceType.findMany({
+          where: activeOnly ? { isActive: true } : undefined,
+          orderBy: { name: "asc" },
+        });
       }
     );
     return NextResponse.json({ serviceTypes });
@@ -30,8 +36,10 @@ export async function GET() {
 const createSchema = z.object({
   name: z.string().min(1).max(200),
   durationMinutes: z.number().int().min(1).max(1440),
-  price: z.number().min(0).max(1_000_000).default(0),
+  // Null = no price set at all (e.g. police work that's never billed) - distinct from an explicit $0.
+  price: z.number().min(0).max(1_000_000).nullable().optional(),
   requiresPayment: z.boolean().default(false),
+  isActive: z.boolean().default(true),
 });
 
 export async function POST(request: NextRequest) {
@@ -49,7 +57,7 @@ export async function POST(request: NextRequest) {
       session.userId,
       session.role,
       async (tx) => {
-        const allowed = await hasPermission(tx, session.tenantId, session.role, "CREATE_SERVICES");
+        const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_SERVICES");
         if (!allowed) throw new Error("FORBIDDEN");
         return tx.serviceType.create({ data: { tenantId: session.tenantId, ...data } });
       }

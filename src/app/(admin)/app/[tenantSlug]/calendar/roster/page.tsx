@@ -1,10 +1,9 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 import { AppHeader } from "@/components/AppHeader";
 import { RosterView } from "./RosterView";
-
-const ROSTER_ROLES = ["ADMIN", "MANAGER", "SUPERVISOR"] as const;
 
 export default async function RosterPage({
   params,
@@ -17,17 +16,28 @@ export default async function RosterPage({
   if (!session || session.role === "SUPERADMIN" || !session.tenantId) {
     redirect("/login");
   }
-  // Manager-facing by design - a plain EMPLOYEE already has the "All staff"
-  // filter on the regular calendar (that gap is tracked separately in
-  // TODO.md under "Who can see who isn't enforced yet"), but this dedicated
-  // drill-down view is scoped to roles that actually manage a team.
-  if (!(ROSTER_ROLES as readonly string[]).includes(session.role)) {
+
+  const { tenant, canView } = await runInTenantContext(
+    session.tenantId,
+    session.userId,
+    session.role,
+    async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
+      // Manager-facing by design - gated on VIEW_ROSTER (an EMPLOYEE-ish role
+      // already has the "All staff" filter on the regular calendar - that gap
+      // is tracked separately in TODO.md under "Who can see who isn't
+      // enforced yet" - but this dedicated drill-down is scoped to roles that
+      // actually manage a team). This used to be hardcoded to specific role
+      // names; now that roles are tenant-defined, a real permission key is
+      // the only way to express "manager-ish" - see TODO.md's note on this.
+      const canView = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      return { tenant, canView };
+    }
+  );
+
+  if (session.role !== "ADMIN" && !canView) {
     redirect(`/app/${tenantSlug}/calendar`);
   }
-
-  const tenant = await runInTenantContext(session.tenantId, session.userId, session.role, (tx) =>
-    tx.tenant.findUnique({ where: { id: session.tenantId! } })
-  );
 
   if (!tenant || tenant.slug !== tenantSlug) {
     notFound();
@@ -39,6 +49,7 @@ export default async function RosterPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        canViewRoster
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">

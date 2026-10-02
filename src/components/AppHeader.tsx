@@ -3,11 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+import { LanguagePicker } from "./LanguagePicker";
 
 interface AppHeaderProps {
   tenantSlug: string;
   businessName: string;
-  role: "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "CUSTOMER";
+  role: "ADMIN" | "STAFF";
+  // Whether to show the Roster link - computed server-side per page via the
+  // VIEW_ROSTER permission (roles are tenant-defined now, not a fixed enum,
+  // so this can't be decided from `role` alone the way it used to be).
+  canViewRoster: boolean;
   // The tenant's own company logo (admin-controlled, see
   // admin/users/LogoSettings.tsx) - distinct from the ShiftUp platform mark
   // below, which always shows regardless of whether a tenant has set one.
@@ -19,7 +25,7 @@ interface NavItem {
   label: string;
 }
 
-/** A top-nav link that opens a small menu of related pages, rather than a flat link - used for the "Appointment pages"/"Staff pages" groupings. */
+/** A top-nav link that opens a small menu of related pages, rather than a flat link - used for the "Staff pages" grouping. */
 function NavDropdown({
   label,
   active,
@@ -77,7 +83,8 @@ function NavDropdown({
   );
 }
 
-export function AppHeader({ tenantSlug, businessName, role, logoUrl }: AppHeaderProps) {
+export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoUrl }: AppHeaderProps) {
+  const t = useTranslations("AppHeader");
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -86,27 +93,13 @@ export function AppHeader({ tenantSlug, businessName, role, logoUrl }: AppHeader
   const qs = searchParams.toString();
   const currentHref = qs ? `${pathname}?${qs}` : pathname;
 
-  const canManageStaff = role === "ADMIN" || role === "MANAGER" || role === "SUPERVISOR";
-
-  const appointmentItems: NavItem[] = [
-    { href: `${base}/calendar?type=appointment`, label: "Calendar" },
-    { href: `${base}/calendar/view`, label: "View only" },
-  ];
   const staffItems: NavItem[] = [
-    { href: `${base}/calendar?type=shift`, label: "Calendar" },
-    ...(canManageStaff ? [{ href: `${base}/calendar/roster`, label: "Roster" }] : []),
-    { href: `${base}/time-off`, label: "Time off" },
+    ...(role === "ADMIN" || canViewRoster ? [{ href: `${base}/calendar/roster`, label: t("roster") }] : []),
+    { href: `${base}/time-off`, label: t("timeOff") },
   ];
 
-  // A dropdown's trigger reads "active" whenever the current page is any of
-  // its own items, or (for the shared /calendar route, which both dropdowns
-  // link into with a different ?type=) the matching type param.
-  const appointmentActive =
-    pathname === `${base}/calendar/view` || currentHref === `${base}/calendar?type=appointment`;
-  const staffActive =
-    pathname === `${base}/calendar/roster` ||
-    pathname === `${base}/time-off` ||
-    currentHref === `${base}/calendar?type=shift`;
+  // A dropdown's trigger reads "active" whenever the current page is any of its own items.
+  const staffActive = pathname === `${base}/calendar/roster` || pathname === `${base}/time-off`;
 
   async function handleSignOut() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -147,16 +140,32 @@ export function AppHeader({ tenantSlug, businessName, role, logoUrl }: AppHeader
                 : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
             }`}
           >
-            Dashboard
+            {t("dashboard")}
           </Link>
 
-          <NavDropdown
-            label="Appointment pages"
-            active={appointmentActive}
-            currentHref={currentHref}
-            items={appointmentItems}
-          />
-          <NavDropdown label="Staff pages" active={staffActive} currentHref={currentHref} items={staffItems} />
+          <Link
+            href={`${base}/calendar`}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              pathname === `${base}/calendar`
+                ? "bg-white text-primary-700 shadow-sm"
+                : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+            }`}
+          >
+            {t("calendar")}
+          </Link>
+
+          <Link
+            href={`${base}/calendar/view`}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              pathname === `${base}/calendar/view`
+                ? "bg-white text-primary-700 shadow-sm"
+                : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+            }`}
+          >
+            {t("viewOnly")}
+          </Link>
+
+          <NavDropdown label={t("staffPages")} active={staffActive} currentHref={currentHref} items={staffItems} />
 
           {role === "ADMIN" && (
             <Link
@@ -167,7 +176,7 @@ export function AppHeader({ tenantSlug, businessName, role, logoUrl }: AppHeader
                   : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
               }`}
             >
-              Settings
+              {t("settings")}
             </Link>
           )}
 
@@ -180,15 +189,17 @@ export function AppHeader({ tenantSlug, businessName, role, logoUrl }: AppHeader
                   : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
               }`}
             >
-              Billing
+              {t("billing")}
             </Link>
           )}
+
+          <LanguagePicker />
 
           <button
             onClick={handleSignOut}
             className="ml-2 rounded-full px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white/60 hover:text-gray-900"
           >
-            Sign out
+            {t("signOut")}
           </button>
         </nav>
       </div>

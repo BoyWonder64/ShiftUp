@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 import { AppHeader } from "@/components/AppHeader";
 import { SchedulingCalendar } from "../SchedulingCalendar";
 
@@ -22,14 +23,15 @@ export default async function ReadOnlyCalendarPage({
     redirect("/login");
   }
 
-  const { tenant, license } = await runInTenantContext(
+  const { tenant, license, canViewRoster } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
-      return { tenant, license };
+      const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      return { tenant, license, canViewRoster };
     }
   );
 
@@ -43,6 +45,7 @@ export default async function ReadOnlyCalendarPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        canViewRoster={canViewRoster}
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">

@@ -10,7 +10,7 @@ import { prisma } from "./prisma";
  * database level even if a repository forgets to filter by tenantId.
  */
 
-export type TenantRole = "ADMIN" | "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "CUSTOMER";
+export type TenantRole = "ADMIN" | "STAFF";
 
 export type TenantContext =
   | { kind: "tenant"; tenantId: string; userId: string; role: TenantRole }

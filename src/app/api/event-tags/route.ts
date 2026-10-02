@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     }
 
     const tag = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, "CREATE_APPOINTMENTS");
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS");
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.eventTag.create({
         data: { tenantId: session.tenantId, name: parsed.data.name, color: parsed.data.color },

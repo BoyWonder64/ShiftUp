@@ -1,0 +1,55 @@
+{
+  "AppHeader": {
+    "dashboard": "Übersicht",
+    "calendar": "Kalender",
+    "viewOnly": "Nur Ansicht",
+    "staffPages": "Mitarbeiterseiten",
+    "roster": "Dienstplan",
+    "timeOff": "Abwesenheit",
+    "settings": "Einstellungen",
+    "billing": "Abrechnung",
+    "signOut": "Abmelden"
+  },
+  "LanguagePicker": {
+    "label": "Sprache",
+    "EN": "Englisch",
+    "ES": "Spanisch",
+    "DE": "Deutsch",
+    "FR": "Französisch"
+  },
+  "Dashboard": {
+    "signedInAs": "Angemeldet als <b>{role}</b>",
+    "yourAccess": "Deine Berechtigungen",
+    "yourAccessSubtitle": "Was deine Rolle in diesem Konto sehen und tun kann.",
+    "plan": "Tarif",
+    "freePlan": "Kostenloser Tarif",
+    "fullAccess": "Als {role} hast du vollen Zugriff auf alles in diesem Konto.",
+    "noAccess": "kein Zugriff",
+    "adminNote": "Ein Administrator kann die Berechtigungen deiner Rolle in den Einstellungen ändern.",
+    "staffStat": "Mitarbeiter",
+    "upcomingAppointments": "Bevorstehende Termine",
+    "openCalendar": "Kalender öffnen",
+    "openCalendarSubtitle": "Termine planen, verschieben und Auftragsdetails ansehen →",
+    "roleNames": {
+      "ADMIN": "Administrator",
+      "SUPERADMIN": "Superadministrator",
+      "STAFF": "Mitarbeiter"
+    },
+    "categories": {
+      "staff": "Mitarbeiter",
+      "services": "Leistungen",
+      "clients": "Kunden",
+      "appointments": "Termine",
+      "jobEstimates": "Auftragsschätzungen"
+    },
+    "actions": {
+      "view": "ansehen",
+      "add": "hinzufügen",
+      "edit": "bearbeiten",
+      "remove": "entfernen",
+      "create": "erstellen",
+      "reschedule": "verschieben",
+      "cancel": "stornieren"
+    }
+  }
+}

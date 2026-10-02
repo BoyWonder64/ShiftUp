@@ -1,5 +1,5 @@
 import type { Tx } from "@/lib/tenant-context";
-import type { LicenseTier } from "@/generated/prisma/client";
+import type { BillingPlan, LicenseStatus, LicenseTier } from "@/generated/prisma/client";
 
 /** Every new tenant starts on the FREE billing plan - permanent and
  * usage-capped (src/lib/licensing/limits.ts), not a ticking trial. `tier` is
@@ -15,5 +15,20 @@ export async function createFreeLicense(tx: Tx, tenantId: string, tier: LicenseT
       billingPlan: "FREE",
       status: "ACTIVE",
     },
+  });
+}
+
+/** Direct, no-Stripe write to a tenant's billing plan/status - only for the
+ * SUPERADMIN console (src/app/superadmin), e.g. comping an account or
+ * manually fixing a billing issue. Bypasses checkout entirely, unlike the
+ * webhook-driven updates in POST /api/billing/webhook. */
+export async function setLicensePlan(
+  tx: Tx,
+  tenantId: string,
+  data: { billingPlan: BillingPlan; status: LicenseStatus }
+) {
+  return tx.license.update({
+    where: { tenantId },
+    data: { billingPlan: data.billingPlan, status: data.status },
   });
 }

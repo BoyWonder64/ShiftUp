@@ -22,27 +22,37 @@ see `ARCHITECTURE.md`.
 
 ## New feature requests (not started)
 
-- **Custom roles — HIGH PRIORITY (flagged by user 2026-10-01).** Let a tenant
-  define its own named roles instead of being limited to the 4 fixed
-  configurable ones (Manager/Supervisor/Employee/Customer). This is a real
-  data-model change, not a UI add-on: `UserRole` is a **Postgres enum**
-  today (`ADMIN`/`MANAGER`/`SUPERVISOR`/`EMPLOYEE`/`CUSTOMER`/`SUPERADMIN`),
-  hardcoded into `User.role`, the signed session cookie's payload type
-  (`src/lib/auth/session.ts`), and every permission/visibility check
-  (`RolePermission`/`RoleVisibility` are keyed by that same enum via
-  `ConfigurableRole`). Supporting real custom roles means turning role into
-  a proper per-tenant `Role` table (id, name, tenantId) that `User.role`
-  references by FK instead of an enum value, and `RolePermission`/
-  `RoleVisibility` keying off that `Role.id` instead of a fixed enum member.
-  Needs decisions before building: can a custom role be deleted/renamed once
-  users hold it (what happens to those users), is there still a fixed
-  minimum role floor (e.g. must every tenant still have something under
-  ADMIN), and whether the existing 4 defaults become just pre-seeded rows a
-  tenant can edit/rename/delete like any other, or stay specially protected.
-  Related to - but a different ask than - the already-open "Dev role" item
-  below (a single new hardcoded platform-operator role) and the "Roster page
-  access hardcoded" item (which this would also let a tenant fix themselves
-  once roles aren't a fixed enum).
+- **A language setting to swap languages.** Raised 2026-10-01. Real scope
+  note: there's no i18n infrastructure anywhere in this app today - every
+  label, button, and message is a hardcoded English string directly in JSX
+  across every page/component. This isn't a quick toggle - it needs an i18n
+  library (e.g. `next-intl`), every user-facing string extracted into
+  translation files, a place to store the chosen language (per-user?
+  per-tenant default?), and translations actually written for each
+  supported language. Needs a decision on which languages to support first
+  before any of that starts.
+- ~~Custom roles — let a tenant define its own named roles instead of being
+  limited to the 4 fixed configurable ones.~~ **Done 2026-10-01** - see
+  PROGRESS.md's "Full custom-roles system" entry. `User.role` is now a
+  3-value enum (`SUPERADMIN`/`ADMIN`/`STAFF`) plus a real per-tenant `Role`
+  table (name, description, nullable `reportsTo` hierarchy) that
+  `RolePermission`/`RoleVisibility` key off of instead of a fixed enum.
+  Roles can be created, renamed, described, given a reports-to, and deleted
+  (blocked while anyone holds them) from Settings. The pre-existing 4
+  defaults (Manager/Supervisor/Employee/Customer) were preserved as real,
+  editable/deletable rows, not replaced. Supersedes the `Tenant.roleLabels`
+  rename-only stopgap mentioned below, which has been removed.
+- **Onboarding: a step where the tenant creates its own roles and decides
+  what each one can do.** Raised 2026-10-01. Now unblocked - the real
+  `Role` table custom roles depended on is built (see above) - this is just
+  the signup-time flow for it: instead of (or in addition to) landing on the
+  4 pre-seeded defaults, walk a new tenant through naming the roles that
+  actually exist in their business (e.g. "Officer"/"Dispatcher" for a police
+  department, "Plumber"/"Apprentice" for a trades business) and setting up
+  each one's permissions/visibility right there, rather than leaving that
+  entirely to a post-signup trip to Settings. Needs its own design pass -
+  how many roles is reasonable to ask for at signup, whether this step is
+  skippable in favor of the existing defaults, etc.
 - **Multi-business management as a paid feature** - one login manages more
   than one business. Raised 2026-10-01, explicitly flagged by the user as "a
   lot of overhaul" - confirmed true after scoping. **This is a different
@@ -168,10 +178,47 @@ see `ARCHITECTURE.md`.
   but not on the calendar toolbar's month/year heading specifically - that
   one spot was reverted to the plain body font (no display face at all, not
   a third font) per "basic professional" feedback.
-- **Dev role** Add a dev role that is only for me with an account that I setup. It
-  allows me to review all accounts and determine if their is an issue that needs 
+- ~~**Dev role** Add a dev role that is only for me with an account that I setup. It
+  allows me to review all accounts and determine if their is an issue that needs
   to be resolved. It has an account dashboard, displays billing, and allows
-  me to setup discount codes
+  me to setup discount codes.~~ **Done 2026-10-02** - see PROGRESS.md's
+  "SUPERADMIN dev console" entry. `UserRole.SUPERADMIN` already existed in the
+  data model but had no account-creation path or console; both are now built:
+  `POST /api/superadmin/bootstrap` (secret-gated, self-disables after the
+  first account) creates the account, and `/superadmin` is the dashboard -
+  a platform-wide tenant list with counts, a direct `License.billingPlan`/
+  `status` override per tenant (bypasses Stripe entirely, the explicit "real
+  write action" ask), and discount-code CRUD. **One thing still open**:
+  discount codes are record-keeping only so far, not yet wired into the
+  actual Stripe checkout redemption flow - noted in the UI copy itself.
+- ~~Let Manager and Admin add job types (service types) from Settings.~~
+  **Done 2026-10-02** - see PROGRESS.md's "Service types Settings card"
+  entry. New `ServiceTypeManager.tsx` card (list + add/edit/delete) and a new
+  `src/app/api/service-types/[id]/route.ts` (PATCH/DELETE, gated by
+  `EDIT_SERVICES`/`DELETE_SERVICES` - not a hardcoded role check, same as the
+  existing GET/POST). **One caveat on the "accessible to whichever role(s)
+  hold those permissions" part**: the card lives on `/admin/users`, which the
+  page itself still hard-gates to ADMIN only (`page.tsx`'s own redirect) -
+  same as every other card there (`StaffManager`, `RoleManager`, etc.). A
+  non-admin role granted `CREATE_SERVICES` from the permission matrix still
+  can't reach this page at all, which is a pre-existing gap in the whole
+  Settings page's access model, not something specific to this one card -
+  flagging it rather than silently redesigning Settings-page access as a
+  side effect of a service-types request. The still-missing inline "+ Add
+  new service type" in the calendar's create panel (mentioned for context in
+  the original ask, not listed under "Needs:") also remains unbuilt.
+- ~~Split the single "Appointment & shift form" Settings card into separate
+  appointment-form and shift-form sections.~~ **Done 2026-10-01** - went with
+  the "at minimum" option noted below, since no shift-specific settings exist
+  yet to populate a real second section. `AppointmentFormSettings.tsx` is now
+  titled "Appointment form" and its description/toggles are unchanged
+  (`requireClientForAppointments`, `enableMapsNavigation`) - no behavior
+  change, just relabeled as appointment-specific. New `ShiftFormSettings.tsx`
+  is a second card titled "Shift form" with no settings yet, just a
+  placeholder description explaining shifts have no client/location to
+  configure - reserved for future shift-only settings. Both render as
+  separate cards on the User Manager page (`page.tsx`), same pattern as every
+  other settings card there.
 - **Time estimates in minutes or hours, interchangeably.** Job time estimates
   are currently a single "minutes" field - let the user enter/view in either
   unit.
@@ -263,31 +310,45 @@ see `ARCHITECTURE.md`.
 - **README for GitHub.** Write/update a proper README and share it. (This one
   doesn't need live testing to do - worth picking off whenever.)
 - ~~Top-nav "Staff management" and "Appointment management" dropdown
-  sections.~~ **Done 2026-10-01** - see PROGRESS.md's "Calendar layout-shift
-  bug, actually fixed this time, and the nav bar split into Appointment/Staff
-  dropdowns" entry. Built as scoped: `AppHeader` now has "Appointment pages"
-  (Calendar pre-filtered via `?type=appointment`, View only) and "Staff
-  pages" (Calendar pre-filtered via `?type=shift`, Roster, Time off)
-  dropdowns; Settings and Billing both stay as plain top-level nav links,
-  separate from either group (Settings was moved back out of "Staff pages"
-  same day, per request - it's tenant-wide config, not staff-specific);
-  Dashboard/Sign out stay general nav too. The dropdowns are not gated by
-  license tier - a shift-only tenant still sees the "Appointment pages"
-  dropdown, same tradeoff noted when this was built.
+  sections.~~ **Done 2026-10-01, later revised same day** - see PROGRESS.md's
+  "Calendar layout-shift bug, actually fixed this time, and the nav bar split
+  into Appointment/Staff dropdowns" entry for the original build. **Revised**:
+  the "Appointment pages" dropdown was removed - `Calendar` (now a single
+  plain link to `/calendar`, no `?type=` pre-filter) and `View only` are both
+  plain top-level nav links instead of being duplicated inside the
+  Appointment/Staff dropdowns. "Staff pages" dropdown keeps Roster/Time off.
+  Settings and Billing stay as separate plain top-level links; Dashboard/Sign
+  out stay general nav too.
+- ~~A per-role permission for the calendar's Appointments/Shifts/Both
+  switcher.~~ **Done 2026-10-01** - new `VIEW_CALENDAR_TOGGLE` permission key
+  in `src/lib/permissions/catalog.ts` (default: on for Manager/Supervisor,
+  off for Employee/Customer), editable per-role from the Settings permission
+  matrix ("Scheduling" group). Without it, a role's calendar still defaults
+  to "Both" (or whatever the license tier allows) - the permission only gates
+  whether the switcher buttons themselves are shown, not what's visible. The
+  always-permission-agnostic `/calendar/view` route is unaffected (switcher
+  still shows there for everyone, same as before).
 
 ## Security
 
-- **A detailed, honest explanation of this software's security posture** -
-  written for you to read, and separately something you could show
-  prospective users to answer "is this safe to use?" Should cover what's
-  actually true today: RLS-enforced tenant isolation (with the automated
-  proof test), scrypt password hashing, HMAC-signed sessions, the
-  non-superuser DB role fix, Stripe handling all card data (no card data
-  touches this app), and - equally honestly - what's *not* yet true (no CI,
-  no security audit, no penetration test, no rate limiting on auth routes
-  yet). Don't write marketing copy here; write the real picture first.
-- **Advertise its safety** - once the above is written and accurate, turn
-  the real parts of it into actual landing-page/marketing copy.
+- ~~A detailed, honest explanation of this software's security posture~~
+  **Done 2026-10-01** - see `SECURITY.md` (new file) and PROGRESS.md's
+  "Security posture review" entry. Covers what's actually true today
+  (RLS-enforced tenant isolation with the automated proof test, scrypt
+  password hashing, HMAC-signed sessions, the non-superuser DB role fix,
+  Stripe handling all card data) and what's not yet true (no CI, no security
+  audit, no penetration test, no rate limiting/lockout on auth routes - the
+  single highest-value gap identified).
+- **Advertise its safety** - now unblocked (`SECURITY.md` exists and is
+  accurate) - turn the real parts of it into actual landing-page/marketing
+  copy.
+- **Rate limiting / lockout on auth routes** - new item surfaced by the
+  review above. `/api/auth/login`, `/api/auth/signup`, and
+  `/api/superadmin/bootstrap` currently accept unlimited attempts from any
+  source - password hashing is sound, but nothing throttles brute-force
+  volume against it. Needs a decision on mechanism (in-memory/per-instance
+  vs. a shared store like Redis, which this stack doesn't have yet) and
+  threshold before building.
 
 ## Confirm/decide
 
@@ -298,13 +359,12 @@ see `ARCHITECTURE.md`.
 - **PTO approval workflow + "hours worked" definition** (self-service request
   + manager/admin approval; "hours worked" = the calendar week containing the
   shift) - built with standard defaults, not explicitly confirmed by you.
-- **Roster page access is hardcoded to ADMIN/MANAGER/SUPERVISOR**, not run
-  through the tenant's configurable permission matrix like every other gate
-  in the app (`VIEW_APPOINTMENTS` etc.) - "manager-facing" was explicit in
-  the request, and there's no existing permission key for "see the team
-  roster," so a role check was the fastest honest option rather than
-  inventing a 19th permission key without being asked. Worth revisiting if
-  you want this configurable per role like everything else.
+- ~~Roster page access is hardcoded to ADMIN/MANAGER/SUPERVISOR, not run
+  through the tenant's configurable permission matrix.~~ **Done 2026-10-01**
+  - resolved as a side effect of the custom-roles build: a real `VIEW_ROSTER`
+  permission key now exists in the catalog and the Roster page gates on
+  `hasPermission(..., "VIEW_ROSTER")` (ADMIN still always allowed) instead of
+  a fixed role-name check - configurable per role like everything else now.
 
 ## Known gaps in what's already built
 

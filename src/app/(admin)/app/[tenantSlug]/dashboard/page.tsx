@@ -1,24 +1,28 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext, type Tx } from "@/lib/tenant-context";
 import { featuresForTier } from "@/lib/licensing/features";
 import { hasPermission } from "@/lib/permissions/service";
-import { PERMISSION_LABELS, type PermissionKey } from "@/lib/permissions/catalog";
+import type { PermissionKey } from "@/lib/permissions/catalog";
 import { AppHeader } from "@/components/AppHeader";
 
-const ACCESS_CATEGORIES: Array<{ label: string; keys: PermissionKey[] }> = [
-  { label: "Staff", keys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
-  { label: "Services", keys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },
-  { label: "Clients", keys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
+// Keys here are translation keys (Dashboard.categories.*/Dashboard.actions.*
+// in src/messages/*.json), not display text - the English word used to be
+// both at once, which broke as soon as a second language existed.
+const ACCESS_CATEGORIES: Array<{ key: string; permissionKeys: PermissionKey[] }> = [
+  { key: "staff", permissionKeys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
+  { key: "services", permissionKeys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },
+  { key: "clients", permissionKeys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
   {
-    label: "Appointments",
-    keys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
+    key: "appointments",
+    permissionKeys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
   },
-  { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
+  { key: "jobEstimates", permissionKeys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
 ];
 
-const ACTION_WORDS: Partial<Record<PermissionKey, string>> = {
+const ACTION_KEYS: Record<PermissionKey, string> = {
   VIEW_STAFF: "view",
   CREATE_STAFF: "add",
   EDIT_STAFF: "edit",
@@ -37,21 +41,25 @@ const ACTION_WORDS: Partial<Record<PermissionKey, string>> = {
   CANCEL_APPOINTMENTS: "cancel",
   VIEW_JOB_ESTIMATES: "view",
   EDIT_JOB_ESTIMATES: "edit",
+  VIEW_TIME_OFF: "view",
+  APPROVE_TIME_OFF: "edit",
+  VIEW_ROSTER: "view",
+  VIEW_CALENDAR_TOGGLE: "view",
 };
 
-async function buildAccessSummary(tx: Tx, tenantId: string, role: string) {
+async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId: string | null) {
   if (role === "ADMIN" || role === "SUPERADMIN") {
     return null; // full access - nothing to summarize
   }
-  const summary: Array<{ label: string; actions: string[] }> = [];
+  const summary: Array<{ categoryKey: string; actionKeys: string[] }> = [];
   for (const category of ACCESS_CATEGORIES) {
-    const actions: string[] = [];
-    for (const key of category.keys) {
-      if (await hasPermission(tx, tenantId, role, key)) {
-        actions.push(ACTION_WORDS[key] ?? PERMISSION_LABELS[key]);
+    const actionKeys: string[] = [];
+    for (const key of category.permissionKeys) {
+      if (await hasPermission(tx, tenantId, role, roleId, key)) {
+        actionKeys.push(ACTION_KEYS[key]);
       }
     }
-    summary.push({ label: category.label, actions });
+    summary.push({ categoryKey: category.key, actionKeys });
   }
   return summary;
 }
@@ -63,6 +71,7 @@ export default async function DashboardPage({
 }) {
   const { tenantSlug } = await params;
   const session = await getCurrentSession();
+  const t = await getTranslations("Dashboard");
 
   if (!session || session.role === "SUPERADMIN" || !session.tenantId) {
     redirect("/login");
@@ -79,8 +88,12 @@ export default async function DashboardPage({
       const upcomingCount = await tx.appointment.count({
         where: { startTime: { gte: new Date() }, status: { not: "CANCELLED" } },
       });
-      const accessSummary = await buildAccessSummary(tx, session.tenantId!, session.role);
-      return { tenant, license, staffCount, upcomingCount, accessSummary };
+      const accessSummary = await buildAccessSummary(tx, session.tenantId!, session.role, session.roleId);
+      const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      // The tenant's own name for this user's role (e.g. "Plumber"), or null
+      // for ADMIN/SUPERADMIN, which aren't tenant-defined roles.
+      const customRole = session.roleId ? await tx.role.findUnique({ where: { id: session.roleId } }) : null;
+      return { tenant, license, staffCount, upcomingCount, accessSummary, canViewRoster, customRole };
     }
   );
 
@@ -96,12 +109,17 @@ export default async function DashboardPage({
     ? featuresForTier(result.license.tier)
     : { shiftManagement: false, appointmentManager: false };
 
+  // The tenant's own role name (e.g. "Plumber") for STAFF, or a translated
+  // fixed label for ADMIN/SUPERADMIN, which aren't tenant-defined roles.
+  const roleLabel = result.customRole?.name ?? t(`roleNames.${session.role}`);
+
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader
         tenantSlug={tenantSlug}
         businessName={result.tenant.name}
         role={session.role}
+        canViewRoster={result.canViewRoster}
         logoUrl={result.tenant.logoDataUrl}
       />
 
@@ -117,9 +135,7 @@ export default async function DashboardPage({
           )}
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">{result.tenant.name}</h1>
-            <p className="mt-1 text-gray-500">
-              Signed in as <span className="font-medium text-gray-700">{session.role.toLowerCase()}</span>
-            </p>
+            <p className="mt-1 text-gray-500">{t("signedInAs", { role: roleLabel })}</p>
           </div>
         </div>
 
@@ -155,7 +171,7 @@ export default async function DashboardPage({
           <div className="mt-4 border-t border-primary-100 pt-3">
             {result.accessSummary === null ? (
               <p className="text-sm text-gray-700">
-                As <span className="font-medium">{session.role.toLowerCase()}</span>, you have full
+                As <span className="font-medium">{roleLabel}</span>, you have full
                 access to everything in this account.
               </p>
             ) : (

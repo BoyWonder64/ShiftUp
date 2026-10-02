@@ -10,11 +10,15 @@ export async function GET() {
   try {
     const session = await requireTenantSession();
     const staff = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, "VIEW_STAFF");
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_STAFF");
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.staffProfile.findMany({
         // Never select passwordHash - this response goes straight to the client.
-        include: { user: { select: { id: true, email: true, username: true, role: true } } },
+        include: {
+          user: {
+            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true } } },
+          },
+        },
         orderBy: { displayName: "asc" },
       });
     });
@@ -32,7 +36,7 @@ const createStaffSchema = z.object({
   email: z.string().email(),
   username: z.string().min(3).max(30),
   password: z.string().min(8).max(200),
-  role: z.enum(["MANAGER", "SUPERVISOR", "EMPLOYEE"]),
+  roleId: z.string().uuid(),
   displayName: z.string().min(1).max(200),
   bufferMinutes: z.number().int().min(0).max(240).default(0),
   timezone: z.string().min(1).max(100).default("UTC"),
@@ -50,11 +54,14 @@ export async function POST(request: NextRequest) {
     const data = parsed.data;
 
     const staff = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, "CREATE_STAFF");
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_STAFF");
       if (!allowed) throw new Error("FORBIDDEN");
       await assertCanAddStaffProfile(tx, session.tenantId);
 
       if (!isValidUsername(data.username)) throw new Error("INVALID_USERNAME");
+
+      const role = await tx.role.findUnique({ where: { id: data.roleId } });
+      if (!role || role.tenantId !== session.tenantId) throw new Error("INVALID_ROLE");
 
       const existing = await findUserByEmail(tx, data.email);
       if (existing) throw new Error("EMAIL_TAKEN");
@@ -67,7 +74,8 @@ export async function POST(request: NextRequest) {
         email: data.email,
         username: data.username,
         password: data.password,
-        role: data.role,
+        role: "STAFF",
+        roleId: data.roleId,
       });
 
       return tx.staffProfile.create({
@@ -100,6 +108,9 @@ export async function POST(request: NextRequest) {
         { error: "Username must be 3-30 characters: lowercase letters, numbers, - and _ only." },
         { status: 400 }
       );
+    }
+    if (err instanceof Error && err.message === "INVALID_ROLE") {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
     if (err instanceof PlanLimitError) {
       return NextResponse.json({ error: err.message }, { status: 403 });

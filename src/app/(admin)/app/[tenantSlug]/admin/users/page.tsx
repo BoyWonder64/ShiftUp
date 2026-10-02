@@ -5,10 +5,12 @@ import { AppHeader } from "@/components/AppHeader";
 import { PermissionMatrixEditor } from "./PermissionMatrixEditor";
 import { StaffManager } from "./StaffManager";
 import { AppointmentFormSettings } from "./AppointmentFormSettings";
+import { ShiftFormSettings } from "./ShiftFormSettings";
+import { ServiceTypeManager } from "./ServiceTypeManager";
 import { LogoSettings } from "./LogoSettings";
 import { EventColorSettings } from "./EventColorSettings";
-import { EventTagManager } from "./EventTagManager";
 import { HolidaySettings } from "./HolidaySettings";
+import { RoleManager } from "./RoleManager";
 
 export default async function UserManagerPage({
   params,
@@ -36,6 +38,7 @@ export default async function UserManagerPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role="ADMIN"
+        canViewRoster
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 p-8">
@@ -49,9 +52,11 @@ export default async function UserManagerPage({
         <StaffManager />
         <LogoSettings initialLogoUrl={tenant.logoDataUrl} />
         <AppointmentFormSettings />
+        <ShiftFormSettings />
+        <ServiceTypeManager />
         <EventColorSettings />
-        <EventTagManager />
         <HolidaySettings />
+        <RoleManager />
         <PermissionMatrixEditor />
       </main>
     </div>

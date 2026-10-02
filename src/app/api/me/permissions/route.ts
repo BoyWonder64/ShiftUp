@@ -11,7 +11,7 @@ export async function GET() {
     const session = await requireTenantSession();
     const grants = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
       const entries = await Promise.all(
-        PERMISSION_KEYS.map(async (key) => [key, await hasPermission(tx, session.tenantId, session.role, key)] as const)
+        PERMISSION_KEYS.map(async (key) => [key, await hasPermission(tx, session.tenantId, session.role, session.roleId, key)] as const)
       );
       return Object.fromEntries(entries);
     });

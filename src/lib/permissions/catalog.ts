@@ -1,25 +1,22 @@
 /**
- * The fixed catalog of permission keys and the hardcoded default matrix each
- * tenant starts from. A tenant ADMIN can override any of these defaults per
- * role from the User Manager page (RolePermission/RoleVisibility tables) -
- * see src/lib/permissions/service.ts for how an override layers on top of
- * these defaults. ADMIN itself is never represented here: it always has
- * every permission and can see every role, unconditionally, in code - not
- * because of a row in this matrix.
+ * The fixed catalog of permission keys. Roles themselves are NOT fixed -
+ * every tenant has its own `Role` rows (see prisma/schema.prisma), fully
+ * custom (name, permissions, visibility), created/renamed/deleted from the
+ * Settings page. ADMIN itself is never represented here: it always has every
+ * permission and can see every role, unconditionally, in code - not because
+ * of a row in any matrix.
  *
  * Permissions are broken down to one action per key (view/create/edit/delete)
  * rather than one combined "manage" key per resource, so a tenant can grant
  * e.g. "view clients" without also granting "delete clients".
+ *
+ * There is no hardcoded default matrix layered under a role's stored
+ * permissions anymore (there was, back when roles were a fixed enum) - a
+ * brand-new role simply has no RolePermission rows, i.e. denies everything,
+ * until an admin explicitly grants some from the Settings page. See
+ * DEFAULT_STARTER_ROLES below for the one place defaults still matter: what
+ * a brand-new tenant's pre-seeded roles start with at signup.
  */
-
-export type ConfigurableRole = "MANAGER" | "SUPERVISOR" | "EMPLOYEE" | "CUSTOMER";
-
-export const CONFIGURABLE_ROLES: ConfigurableRole[] = [
-  "MANAGER",
-  "SUPERVISOR",
-  "EMPLOYEE",
-  "CUSTOMER",
-];
 
 export const PERMISSION_KEYS = [
   "VIEW_STAFF",
@@ -42,6 +39,8 @@ export const PERMISSION_KEYS = [
   "EDIT_JOB_ESTIMATES",
   "VIEW_TIME_OFF",
   "APPROVE_TIME_OFF",
+  "VIEW_ROSTER",
+  "VIEW_CALENDAR_TOGGLE",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -67,11 +66,19 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   EDIT_JOB_ESTIMATES: "Set job time/value estimates",
   VIEW_TIME_OFF: "View others' time-off requests",
   APPROVE_TIME_OFF: "Approve/deny time-off requests",
+  VIEW_ROSTER: "View the team roster",
+  VIEW_CALENDAR_TOGGLE: "Switch the calendar between Appointments/Shifts/Both",
 };
 
-/** Sane starting defaults - every one of these is overridable per tenant. */
-export const DEFAULT_ROLE_PERMISSIONS: Record<ConfigurableRole, Record<PermissionKey, boolean>> = {
-  MANAGER: {
+/** Plain starter role names every new tenant gets at signup - a starting point, not a fixed list; the admin can rename, delete, or add to them freely from day one. */
+export const DEFAULT_STARTER_ROLE_NAMES = ["Manager", "Supervisor", "Employee", "Customer"] as const;
+
+/** What each starter role is granted at signup - mirrors this app's original hardcoded role defaults, kept only as a one-time seed now, not a fallback consulted on every permission check. */
+export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
+  (typeof DEFAULT_STARTER_ROLE_NAMES)[number],
+  Record<PermissionKey, boolean>
+> = {
+  Manager: {
     VIEW_STAFF: true,
     CREATE_STAFF: true,
     EDIT_STAFF: true,
@@ -92,8 +99,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<ConfigurableRole, Record<Permissio
     EDIT_JOB_ESTIMATES: true,
     VIEW_TIME_OFF: true,
     APPROVE_TIME_OFF: true,
+    VIEW_ROSTER: true,
+    VIEW_CALENDAR_TOGGLE: true,
   },
-  SUPERVISOR: {
+  Supervisor: {
     VIEW_STAFF: true,
     CREATE_STAFF: false,
     EDIT_STAFF: false,
@@ -114,8 +123,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<ConfigurableRole, Record<Permissio
     EDIT_JOB_ESTIMATES: false,
     VIEW_TIME_OFF: true,
     APPROVE_TIME_OFF: true,
+    VIEW_ROSTER: true,
+    VIEW_CALENDAR_TOGGLE: true,
   },
-  EMPLOYEE: {
+  Employee: {
     VIEW_STAFF: true,
     CREATE_STAFF: false,
     EDIT_STAFF: false,
@@ -136,8 +147,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<ConfigurableRole, Record<Permissio
     EDIT_JOB_ESTIMATES: false,
     VIEW_TIME_OFF: false,
     APPROVE_TIME_OFF: false,
+    VIEW_ROSTER: false,
+    VIEW_CALENDAR_TOGGLE: false,
   },
-  CUSTOMER: {
+  Customer: {
     VIEW_STAFF: false,
     CREATE_STAFF: false,
     EDIT_STAFF: false,
@@ -158,17 +171,18 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<ConfigurableRole, Record<Permissio
     EDIT_JOB_ESTIMATES: false,
     VIEW_TIME_OFF: false,
     APPROVE_TIME_OFF: false,
+    VIEW_ROSTER: false,
+    VIEW_CALENDAR_TOGGLE: false,
   },
 };
 
-/**
- * Default "who can see who" matrix - e.g. can a SUPERVISOR view an EMPLOYEE's
- * appointments/schedule. ADMIN sees everyone unconditionally (not listed
- * here); everyone implicitly sees their own data regardless of this matrix.
- */
-export const DEFAULT_ROLE_VISIBILITY: Record<ConfigurableRole, ConfigurableRole[]> = {
-  MANAGER: ["MANAGER", "SUPERVISOR", "EMPLOYEE", "CUSTOMER"],
-  SUPERVISOR: ["EMPLOYEE", "CUSTOMER"],
-  EMPLOYEE: ["CUSTOMER"],
-  CUSTOMER: [],
+/** Starter "who can see who" matrix, by starter role name - same one-time-seed-only caveat as DEFAULT_STARTER_ROLE_PERMISSIONS. */
+export const DEFAULT_STARTER_ROLE_VISIBILITY: Record<
+  (typeof DEFAULT_STARTER_ROLE_NAMES)[number],
+  Array<(typeof DEFAULT_STARTER_ROLE_NAMES)[number]>
+> = {
+  Manager: ["Manager", "Supervisor", "Employee", "Customer"],
+  Supervisor: ["Employee", "Customer"],
+  Employee: ["Customer"],
+  Customer: [],
 };

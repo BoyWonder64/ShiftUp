@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "service_types" ADD COLUMN     "is_active" BOOLEAN NOT NULL DEFAULT true,
+ALTER COLUMN "price" DROP NOT NULL,
+ALTER COLUMN "price" DROP DEFAULT;

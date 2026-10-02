@@ -78,10 +78,10 @@ export function LogoSettings({ initialLogoUrl }: { initialLogoUrl: string | null
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-medium">Company logo</h2>
+      <h2 className="text-lg font-medium">Company Settings</h2>
       <p className="mt-1 text-sm text-gray-500">
-        Shown next to your business name in the top navigation, for everyone on
-        your team. PNG, JPEG, WebP, or SVG, up to 500KB.
+        Your logo is shown next to your business name in the top navigation,
+        for everyone on your team. PNG, JPEG, WebP, or SVG, up to 500KB.
       </p>
 
       <div className="mt-4 flex items-center gap-4">

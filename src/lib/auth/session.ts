@@ -4,18 +4,22 @@ export const SESSION_COOKIE_NAME = "shiftup_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 export const SESSION_COOKIE_MAX_AGE = SESSION_TTL_SECONDS;
 
-export type UserRole =
-  | "SUPERADMIN"
-  | "ADMIN"
-  | "MANAGER"
-  | "SUPERVISOR"
-  | "EMPLOYEE"
-  | "CUSTOMER";
+export type UserRole = "SUPERADMIN" | "ADMIN" | "STAFF";
+
+export const SUPPORTED_LOCALES = ["EN", "ES", "DE", "FR"] as const;
+export type AppLocale = (typeof SUPPORTED_LOCALES)[number];
 
 export interface SessionPayload {
   userId: string;
   tenantId: string | null;
   role: UserRole;
+  /** The tenant's custom Role id this user holds - set only when role is STAFF (see the Role model). */
+  roleId: string | null;
+  /** This user's own UI language preference (see User.locale) - cached in the
+   * session so next-intl's request config (src/i18n/request.ts) can resolve
+   * it from the signed cookie alone, no DB round trip per request. Re-issued
+   * on change by PATCH /api/me/locale. */
+  locale: AppLocale;
 }
 
 function getSecret(): string {
@@ -55,7 +59,15 @@ export function verifySessionToken(token: string): SessionPayload | null {
     if (typeof body.exp !== "number" || body.exp < Math.floor(Date.now() / 1000)) {
       return null;
     }
-    return { userId: body.userId, tenantId: body.tenantId ?? null, role: body.role };
+    return {
+      userId: body.userId,
+      tenantId: body.tenantId ?? null,
+      role: body.role,
+      roleId: body.roleId ?? null,
+      // Tokens issued before this field existed have no `locale` - default
+      // to EN rather than invalidating every pre-existing session.
+      locale: SUPPORTED_LOCALES.includes(body.locale) ? body.locale : "EN",
+    };
   } catch {
     return null;
   }

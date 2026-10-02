@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 import { AppHeader } from "@/components/AppHeader";
 import { SchedulingCalendar } from "./SchedulingCalendar";
 
@@ -20,14 +21,22 @@ export default async function CalendarPage({
     redirect("/login");
   }
 
-  const { tenant, license } = await runInTenantContext(
+  const { tenant, license, canViewRoster, canToggleCalendarType } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
-      return { tenant, license };
+      const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      const canToggleCalendarType = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_CALENDAR_TOGGLE"
+      );
+      return { tenant, license, canViewRoster, canToggleCalendarType };
     }
   );
 
@@ -41,6 +50,7 @@ export default async function CalendarPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        canViewRoster={canViewRoster}
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
@@ -60,6 +70,7 @@ export default async function CalendarPage({
           licenseTier={license?.tier ?? "BOTH"}
           initialStaffId={initialStaffId}
           initialCalendarType={initialCalendarType}
+          canToggleCalendarType={canToggleCalendarType}
         />
       </main>
     </div>

@@ -5,12 +5,13 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import {
   getEffectivePermissionMatrix,
   getEffectiveVisibilityMatrix,
+  listTenantRoles,
   setRolePermission,
   setRoleVisibility,
 } from "@/lib/permissions/service";
-import { CONFIGURABLE_ROLES, PERMISSION_KEYS } from "@/lib/permissions/catalog";
+import { PERMISSION_KEYS } from "@/lib/permissions/catalog";
 
-// Only ADMIN can view/change these - granting a MANAGER/SUPERVISOR the
+// Only ADMIN can view/change these - granting a tenant-defined role the
 // ability to edit this matrix would let them hand themselves more access.
 async function requireTenantAdmin() {
   const session = await requireRole(["ADMIN"]);
@@ -38,15 +39,14 @@ export async function GET() {
   }
 }
 
-const roleEnum = z.enum(CONFIGURABLE_ROLES as [string, ...string[]]);
-const permissionKeyEnum = z.enum(PERMISSION_KEYS as unknown as [string, ...string[]]);
+const permissionKeyEnum = z.enum(PERMISSION_KEYS);
 
 const updateSchema = z.object({
   permissionUpdates: z
-    .array(z.object({ role: roleEnum, permissionKey: permissionKeyEnum, granted: z.boolean() }))
+    .array(z.object({ roleId: z.string().uuid(), permissionKey: permissionKeyEnum, granted: z.boolean() }))
     .default([]),
   visibilityUpdates: z
-    .array(z.object({ viewerRole: roleEnum, targetRole: roleEnum, canView: z.boolean() }))
+    .array(z.object({ viewerRoleId: z.string().uuid(), targetRoleId: z.string().uuid(), canView: z.boolean() }))
     .default([]),
 });
 
@@ -61,23 +61,24 @@ export async function PUT(request: NextRequest) {
     const { permissionUpdates, visibilityUpdates } = parsed.data;
 
     await runInTenantContext(session.tenantId!, session.userId, "ADMIN", async (tx) => {
+      // Every roleId in the payload must actually belong to this tenant -
+      // otherwise an admin could write a permission row attached to another
+      // tenant's role id (harmless to real access decisions since it'd never
+      // be looked up, but it's still garbage data worth rejecting outright).
+      const validRoleIds = new Set((await listTenantRoles(tx, session.tenantId!)).map((r) => r.id));
+      const referencedRoleIds = [
+        ...permissionUpdates.map((u) => u.roleId),
+        ...visibilityUpdates.flatMap((u) => [u.viewerRoleId, u.targetRoleId]),
+      ];
+      if (referencedRoleIds.some((id) => !validRoleIds.has(id))) {
+        throw new Error("INVALID_ROLE");
+      }
+
       for (const u of permissionUpdates) {
-        await setRolePermission(
-          tx,
-          session.tenantId!,
-          u.role as never,
-          u.permissionKey as never,
-          u.granted
-        );
+        await setRolePermission(tx, session.tenantId!, u.roleId, u.permissionKey, u.granted);
       }
       for (const u of visibilityUpdates) {
-        await setRoleVisibility(
-          tx,
-          session.tenantId!,
-          u.viewerRole as never,
-          u.targetRole as never,
-          u.canView
-        );
+        await setRoleVisibility(tx, session.tenantId!, u.viewerRoleId, u.targetRoleId, u.canView);
       }
     });
 
@@ -85,6 +86,9 @@ export async function PUT(request: NextRequest) {
   } catch (err) {
     if (err instanceof Error && (err.message === "UNAUTHENTICATED" || err.message === "FORBIDDEN")) {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    if (err instanceof Error && err.message === "INVALID_ROLE") {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
     console.error("Failed to update permission matrix", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });

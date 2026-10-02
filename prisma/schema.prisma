@@ -16,19 +16,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Role hierarchy, highest to lowest authority:
-/// SUPERADMIN (platform operator, tenantId null) > ADMIN (tenant owner) >
-/// MANAGER > SUPERVISOR > EMPLOYEE (internal staff hierarchy) > CUSTOMER
-/// (the client who attends an appointment or shift event - the logged-in
-/// counterpart to a guest Client, added once appointment attendees need
-/// accounts in a later phase).
+/// SUPERADMIN (platform operator, tenantId null) and ADMIN (tenant owner) are
+/// the only two fixed roles - both bypass the configurable permission system
+/// entirely and are hardcoded throughout the app (billing, Settings access,
+/// etc.). Everyone else is STAFF, whose actual role is a tenant-defined `Role`
+/// row referenced by `User.roleId` - tenants can create, rename, and delete
+/// their own roles freely (see the Role model) rather than picking from a
+/// fixed list, since this product spans very different industries (a police
+/// department and a plumbing company have nothing in common role-wise).
 enum UserRole {
   SUPERADMIN
   ADMIN
-  MANAGER
-  SUPERVISOR
-  EMPLOYEE
-  CUSTOMER
+  STAFF
 
   @@map("user_role")
 }
@@ -119,6 +118,7 @@ model Tenant {
   serviceTypes     ServiceType[]
   clients          Client[]
   appointments     Appointment[]
+  roles            Role[]
   rolePermissions  RolePermission[]
   roleVisibilities RoleVisibility[]
   timeOffs         TimeOff[]
@@ -126,6 +126,43 @@ model Tenant {
   holidays         Holiday[]
 
   @@map("tenants")
+}
+
+/// A tenant-defined role (e.g. "Officer", "Plumber", "Dispatcher") - fully
+/// custom per tenant, not picked from a fixed list, since this product spans
+/// very different industries. ADMIN/SUPERADMIN are NOT roles in this table -
+/// they're fixed, hardcoded, and outside the configurable permission system
+/// entirely (see UserRole). Deleting a role is blocked at the DB level
+/// (User.roleId's onDelete: Restrict) while any user still holds it.
+model Role {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  /// Free-text explanation of what this role is for - shown alongside the
+  /// name in Settings. Purely informational, like reportsToId below - it
+  /// doesn't affect what the role can actually do (that's RolePermission).
+  description String? @map("description")
+  /// The role immediately above this one in the tenant's org chart, if any -
+  /// null means nothing is above it. Purely organizational/informational:
+  /// permissions are never inherited through this chain, only ever granted
+  /// directly via RolePermission. SetNull (not Restrict) on delete - removing
+  /// a role just clears anything that reported to it, rather than blocking
+  /// the delete or cascading further up the chain.
+  reportsToId String? @map("reports_to_id")
+  reportsTo   Role?   @relation("RoleHierarchy", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports     Role[]  @relation("RoleHierarchy")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users       User[]
+  permissions RolePermission[]
+  asViewer    RoleVisibility[] @relation("RoleVisibilityViewer")
+  asTarget    RoleVisibility[] @relation("RoleVisibilityTarget")
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@index([reportsToId])
+  @@map("roles")
 }
 
 /// A custom, tenant-defined color tag (e.g. "VIP", "Consultation") that can
@@ -168,6 +205,33 @@ model Holiday {
   @@map("holidays")
 }
 
+enum DiscountType {
+  PERCENT
+  FIXED_CENTS
+
+  @@map("discount_type")
+}
+
+/// A dev-managed discount code, created/deactivated from the SUPERADMIN
+/// console (src/app/superadmin) for manually quoting/tracking a negotiated
+/// discount. Not yet wired into the Stripe checkout flow itself (see
+/// TODO.md) - redeeming one against a real purchase is still a manual step
+/// for now, same "built but not yet live-integrated" status as checkout
+/// overall. Platform-level, not tenant-scoped, so no RLS policy - access is
+/// gated entirely at the API layer (SUPERADMIN-only), the same convention
+/// already used for the hardcoded ADMIN-only billing checkout route.
+model DiscountCode {
+  id        String       @id @default(uuid())
+  code      String       @unique
+  type      DiscountType
+  /// PERCENT: 1-100. FIXED_CENTS: a flat amount off, in cents.
+  value     Int
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@map("discount_codes")
+}
+
 /// A tenant's entitlement: which feature tier (modules) and which billing
 /// plan (free/one-time/subscription) they're on. See BillingPlan and
 /// LicenseTier above - these two are independent dimensions.
@@ -190,6 +254,22 @@ model License {
   @@map("licenses")
 }
 
+/// A user's own display-language preference for the app's UI (not the
+/// business's data - a tenant's client-facing content, names, etc. are
+/// never translated). Per-user, not per-tenant: two people at the same
+/// business can each run the app in a different language. Set from the
+/// language picker in AppHeader, applied via next-intl
+/// (src/i18n/request.ts reads it off the signed session, which is
+/// re-issued on change so the new language takes effect immediately).
+enum Locale {
+  EN
+  ES
+  DE
+  FR
+
+  @@map("locale")
+}
+
 /// A login-capable user. Platform superadmins have tenantId = null;
 /// every other user belongs to exactly one tenant.
 model User {
@@ -197,18 +277,28 @@ model User {
   tenantId     String?       @map("tenant_id")
   tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   email        String        @unique
+  locale       Locale        @default(EN)
   /// Admin-set at account creation (signup, or whoever adds a staff member) -
   /// nullable only because it was added after email-only login already
   /// existed; every new account is required to set one (see isValidUsername
   /// in src/modules/identity/service.ts). Lets login accept either.
   username     String?       @unique
   passwordHash String        @map("password_hash")
-  role         UserRole      @default(EMPLOYEE)
+  role         UserRole      @default(STAFF)
+  /// The tenant's custom Role this user holds - set (and required, enforced
+  /// in application code, not a DB constraint - same convention as ADMIN's
+  /// other code-enforced invariants) whenever `role` is STAFF; always null
+  /// for ADMIN/SUPERADMIN, which are fixed roles outside this table.
+  /// onDelete: Restrict - a role can't be deleted while anyone still holds
+  /// it, by design (the admin must reassign those users first).
+  roleId       String?       @map("role_id")
+  customRole   Role?         @relation(fields: [roleId], references: [id], onDelete: Restrict)
   createdAt    DateTime      @default(now()) @map("created_at")
   updatedAt    DateTime      @updatedAt @map("updated_at")
   staffProfile StaffProfile?
 
   @@index([tenantId])
+  @@index([roleId])
   @@map("users")
 }
 
@@ -330,8 +420,11 @@ model ServiceType {
   tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name            String
   durationMinutes Int      @map("duration_minutes")
-  price           Decimal  @default(0) @db.Decimal(10, 2)
+  /// Null = no price set (e.g. police work that's never billed) - distinct from $0, which is an explicit "free".
+  price           Decimal? @db.Decimal(10, 2)
   requiresPayment Boolean  @default(false) @map("requires_payment")
+  /// Inactive service types are hidden from new scheduling but kept for existing appointments that reference them.
+  isActive        Boolean  @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
@@ -412,34 +505,43 @@ model Appointment {
 /// not the DB, since it's a business rule rather than a tenant-isolation one).
 /// This is what lets a tenant ADMIN configure "what can a manager/supervisor
 /// do" from the Settings page instead of it being hardcoded.
+/// What a tenant-defined Role is allowed to do - a real row per (role, key)
+/// pair is the only source of truth now (no hardcoded default layered under
+/// it): a brand-new role simply has no rows, i.e. denies everything, until
+/// an admin explicitly grants permissions from the Settings page.
 model RolePermission {
   id            String   @id @default(uuid())
   tenantId      String   @map("tenant_id")
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  role          UserRole
+  roleId        String   @map("role_id")
+  role          Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permissionKey String   @map("permission_key")
   granted       Boolean
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, role, permissionKey])
+  @@unique([tenantId, roleId, permissionKey])
   @@index([tenantId])
   @@map("role_permissions")
 }
 
-/// Per-tenant override of which roles can view which other roles' data/schedules
+/// Per-tenant setting for which roles can view which other roles' data/schedules
 /// (the "admin can determine who can see who" requirement) - e.g. can a
-/// SUPERVISOR see an EMPLOYEE's appointments. Layered on a hardcoded default
-/// matrix the same way as RolePermission.
+/// Supervisor-equivalent role see a given Employee-equivalent role's
+/// appointments. A missing row denies (same no-hardcoded-default convention
+/// as RolePermission) - except a role always implicitly sees its own data,
+/// enforced in code, never stored as a row.
 model RoleVisibility {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  viewerRole UserRole @map("viewer_role")
-  targetRole UserRole @map("target_role")
-  canView    Boolean  @map("can_view")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  tenantId     String   @map("tenant_id")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  viewerRoleId String   @map("viewer_role_id")
+  viewerRole   Role     @relation("RoleVisibilityViewer", fields: [viewerRoleId], references: [id], onDelete: Cascade)
+  targetRoleId String   @map("target_role_id")
+  targetRole   Role     @relation("RoleVisibilityTarget", fields: [targetRoleId], references: [id], onDelete: Cascade)
+  canView      Boolean  @map("can_view")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
-  @@unique([tenantId, viewerRole, targetRole])
+  @@unique([tenantId, viewerRoleId, targetRoleId])
   @@index([tenantId])
   @@map("role_visibilities")
 }

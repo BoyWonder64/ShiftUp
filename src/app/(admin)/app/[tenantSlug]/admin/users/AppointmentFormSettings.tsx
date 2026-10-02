@@ -59,10 +59,10 @@ export function AppointmentFormSettings() {
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-medium">Appointment &amp; shift form</h2>
+      <h2 className="text-lg font-medium">Appointment form</h2>
       <p className="mt-1 text-sm text-gray-500">
-        Controls what the appointment-creation form requires and shows. Shifts
-        never ask for a client, regardless of these settings.
+        Controls what the appointment-creation form requires and shows. These
+        only apply to appointments - shifts have no client or location.
       </p>
 
       {loading || !settings ? (

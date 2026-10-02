@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, Orbitron } from "next/font/google";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale } from "next-intl/server";
 import { Footer } from "@/components/Footer";
 import "./globals.css";
 
@@ -27,15 +29,18 @@ export const metadata: Metadata = {
   description: "Scheduling for service businesses.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const locale = await getLocale();
   return (
     <html
-      lang="en"
+      lang={locale}
       className={`${geistSans.variable} ${geistMono.variable} ${orbitron.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        {children}
-        <Footer />
+        <NextIntlClientProvider>
+          {children}
+          <Footer />
+        </NextIntlClientProvider>
       </body>
     </html>
   );

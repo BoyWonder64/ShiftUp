@@ -1,0 +1,55 @@
+{
+  "AppHeader": {
+    "dashboard": "Panel",
+    "calendar": "Calendario",
+    "viewOnly": "Solo lectura",
+    "staffPages": "Páginas de personal",
+    "roster": "Plantilla",
+    "timeOff": "Tiempo libre",
+    "settings": "Configuración",
+    "billing": "Facturación",
+    "signOut": "Cerrar sesión"
+  },
+  "LanguagePicker": {
+    "label": "Idioma",
+    "EN": "Inglés",
+    "ES": "Español",
+    "DE": "Alemán",
+    "FR": "Francés"
+  },
+  "Dashboard": {
+    "signedInAs": "Conectado como <b>{role}</b>",
+    "yourAccess": "Tu acceso",
+    "yourAccessSubtitle": "Lo que tu rol puede ver y hacer en esta cuenta.",
+    "plan": "Plan",
+    "freePlan": "Plan gratuito",
+    "fullAccess": "Como {role}, tienes acceso completo a todo en esta cuenta.",
+    "noAccess": "sin acceso",
+    "adminNote": "Un administrador puede cambiar lo que tu rol puede hacer desde Configuración.",
+    "staffStat": "Personal",
+    "upcomingAppointments": "Próximas citas",
+    "openCalendar": "Abrir calendario",
+    "openCalendarSubtitle": "Programa, reprograma y consulta los detalles del trabajo →",
+    "roleNames": {
+      "ADMIN": "Administrador",
+      "SUPERADMIN": "Superadministrador",
+      "STAFF": "Personal"
+    },
+    "categories": {
+      "staff": "Personal",
+      "services": "Servicios",
+      "clients": "Clientes",
+      "appointments": "Citas",
+      "jobEstimates": "Presupuestos de trabajo"
+    },
+    "actions": {
+      "view": "ver",
+      "add": "añadir",
+      "edit": "editar",
+      "remove": "eliminar",
+      "create": "crear",
+      "reschedule": "reprogramar",
+      "cancel": "cancelar"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "AppHeader": {
+    "dashboard": "Dashboard",
+    "calendar": "Calendar",
+    "viewOnly": "View only",
+    "staffPages": "Staff pages",
+    "roster": "Roster",
+    "timeOff": "Time off",
+    "settings": "Settings",
+    "billing": "Billing",
+    "signOut": "Sign out"
+  },
+  "LanguagePicker": {
+    "label": "Language",
+    "EN": "English",
+    "ES": "Spanish",
+    "DE": "German",
+    "FR": "French"
+  },
+  "Dashboard": {
+    "signedInAs": "Signed in as <b>{role}</b>",
+    "yourAccess": "Your access",
+    "yourAccessSubtitle": "What your role can see and do in this account.",
+    "plan": "Plan",
+    "freePlan": "Free plan",
+    "fullAccess": "As {role}, you have full access to everything in this account.",
+    "noAccess": "no access",
+    "adminNote": "An admin can change what your role can do from Settings.",
+    "staffStat": "Staff",
+    "upcomingAppointments": "Upcoming appointments",
+    "openCalendar": "Open calendar",
+    "openCalendarSubtitle": "Schedule, reschedule, and view job details →",
+    "roleNames": {
+      "ADMIN": "Admin",
+      "SUPERADMIN": "Superadmin",
+      "STAFF": "Staff"
+    },
+    "categories": {
+      "staff": "Staff",
+      "services": "Services",
+      "clients": "Clients",
+      "appointments": "Appointments",
+      "jobEstimates": "Job estimates"
+    },
+    "actions": {
+      "view": "view",
+      "add": "add",
+      "edit": "edit",
+      "remove": "remove",
+      "create": "create",
+      "reschedule": "reschedule",
+      "cancel": "cancel"
+    }
+  }
+}

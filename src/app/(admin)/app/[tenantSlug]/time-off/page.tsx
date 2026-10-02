@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 import { AppHeader } from "@/components/AppHeader";
 import { TimeOffManager } from "./TimeOffManager";
 
@@ -16,8 +17,15 @@ export default async function TimeOffPage({
     redirect("/login");
   }
 
-  const tenant = await runInTenantContext(session.tenantId, session.userId, session.role, (tx) =>
-    tx.tenant.findUnique({ where: { id: session.tenantId! } })
+  const { tenant, canViewRoster } = await runInTenantContext(
+    session.tenantId,
+    session.userId,
+    session.role,
+    async (tx) => {
+      const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
+      const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      return { tenant, canViewRoster };
+    }
   );
 
   if (!tenant || tenant.slug !== tenantSlug) {
@@ -30,6 +38,7 @@ export default async function TimeOffPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        canViewRoster={canViewRoster}
         logoUrl={tenant.logoDataUrl}
       />
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 p-8">
