@@ -51,6 +51,7 @@ export default async function RosterPage({
         role={session.role}
         canViewRoster
         logoUrl={tenant.logoDataUrl}
+        companyNameFont={tenant.companyNameFont}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
         <div>

@@ -5,6 +5,7 @@ import en from "@/messages/en.json";
 // exists in one locale's JSON is a compile error instead of a silent
 // untranslated string at runtime.
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- required shape for next-intl's global augmentation
   interface IntlMessages extends Messages {}
 }
 

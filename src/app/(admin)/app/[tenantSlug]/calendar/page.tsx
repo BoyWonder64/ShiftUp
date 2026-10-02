@@ -52,6 +52,7 @@ export default async function CalendarPage({
         role={session.role}
         canViewRoster={canViewRoster}
         logoUrl={tenant.logoDataUrl}
+        companyNameFont={tenant.companyNameFont}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
         <div className="flex items-center justify-center gap-4">

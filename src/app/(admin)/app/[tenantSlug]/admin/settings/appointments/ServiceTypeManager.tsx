@@ -170,7 +170,7 @@ export function ServiceTypeManager() {
   }
 
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+    <section id="service-types" className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Service types</h2>
       <p className="mt-1 text-sm text-gray-500">
         The job types staff pick from when scheduling an appointment - name, default duration, and an

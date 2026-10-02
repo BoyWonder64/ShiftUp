@@ -47,6 +47,7 @@ export default async function ReadOnlyCalendarPage({
         role={session.role}
         canViewRoster={canViewRoster}
         logoUrl={tenant.logoDataUrl}
+        companyNameFont={tenant.companyNameFont}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">Calendar (view only)</h1>

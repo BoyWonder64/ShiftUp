@@ -7,6 +7,7 @@ import { featuresForTier } from "@/lib/licensing/features";
 import { hasPermission } from "@/lib/permissions/service";
 import type { PermissionKey } from "@/lib/permissions/catalog";
 import { AppHeader } from "@/components/AppHeader";
+import { companyNameFontFamily } from "@/lib/fonts/companyNameFonts";
 
 // Keys here are translation keys (Dashboard.categories.*/Dashboard.actions.*
 // in src/messages/*.json), not display text - the English word used to be
@@ -45,6 +46,11 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   APPROVE_TIME_OFF: "edit",
   VIEW_ROSTER: "view",
   VIEW_CALENDAR_TOGGLE: "view",
+  // Not in any ACCESS_CATEGORIES list below (VIEW_APPOINTMENTS already
+  // contributes "view" to the "appointments" category) - these two only need
+  // an entry here to satisfy Record<PermissionKey, string>'s exhaustiveness.
+  VIEW_ALL_SHIFTS: "view",
+  VIEW_ALL_APPOINTMENTS: "view",
 };
 
 async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId: string | null) {
@@ -121,6 +127,7 @@ export default async function DashboardPage({
         role={session.role}
         canViewRoster={result.canViewRoster}
         logoUrl={result.tenant.logoDataUrl}
+        companyNameFont={result.tenant.companyNameFont}
       />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 p-8">
@@ -134,35 +141,42 @@ export default async function DashboardPage({
             />
           )}
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight">{result.tenant.name}</h1>
-            <p className="mt-1 text-gray-500">{t("signedInAs", { role: roleLabel })}</p>
+            <h1
+              className="text-3xl font-semibold tracking-tight"
+              style={{ fontFamily: companyNameFontFamily(result.tenant.companyNameFont) }}
+            >
+              {result.tenant.name}
+            </h1>
+            <p className="mt-1 text-gray-500">
+              {t.rich("signedInAs", { role: roleLabel, b: (chunks) => <span className="font-medium text-gray-700">{chunks}</span> })}
+            </p>
           </div>
         </div>
 
         <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">Your access</h2>
-          <p className="mt-0.5 text-sm text-gray-500">What your role can see and do in this account.</p>
+          <h2 className="text-lg font-semibold text-gray-900">{t("yourAccess")}</h2>
+          <p className="mt-0.5 text-sm text-gray-500">{t("yourAccessSubtitle")}</p>
 
           {/* Plan/feature-tier info, previously three pill-shaped "badges"
               above this card that looked clickable but weren't - moved here
               as plain info boxes (not buttons) alongside the rest of the
               account summary. */}
           <div className="mt-4 flex flex-col gap-1">
-            <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Plan</span>
+            <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">{t("plan")}</span>
             <div className="flex flex-wrap gap-2">
               {features.shiftManagement && (
                 <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
-                  Shift management
+                  {t("shiftManagementBadge")}
                 </span>
               )}
               {features.appointmentManager && (
                 <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
-                  Appointment manager
+                  {t("appointmentManagerBadge")}
                 </span>
               )}
               {result.license && (
                 <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
-                  {result.license.billingPlan === "FREE" ? "Free plan" : result.license.billingPlan}
+                  {result.license.billingPlan === "FREE" ? t("freePlan") : result.license.billingPlan}
                 </span>
               )}
             </div>
@@ -171,35 +185,32 @@ export default async function DashboardPage({
           <div className="mt-4 border-t border-primary-100 pt-3">
             {result.accessSummary === null ? (
               <p className="text-sm text-gray-700">
-                As <span className="font-medium">{roleLabel}</span>, you have full
-                access to everything in this account.
+                {t.rich("fullAccess", { role: roleLabel, b: (chunks) => <span className="font-medium">{chunks}</span> })}
               </p>
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {result.accessSummary.map((category) => (
-                  <li key={category.label} className="text-sm">
-                    <span className="font-medium text-gray-700">{category.label}:</span>{" "}
-                    {category.actions.length > 0 ? (
-                      <span className="text-gray-600">{category.actions.join(", ")}</span>
+                  <li key={category.categoryKey} className="text-sm">
+                    <span className="font-medium text-gray-700">{t(`categories.${category.categoryKey}`)}:</span>{" "}
+                    {category.actionKeys.length > 0 ? (
+                      <span className="text-gray-600">
+                        {category.actionKeys.map((k) => t(`actions.${k}`)).join(", ")}
+                      </span>
                     ) : (
-                      <span className="text-gray-400">no access</span>
+                      <span className="text-gray-400">{t("noAccess")}</span>
                     )}
                   </li>
                 ))}
               </ul>
             )}
-            {result.accessSummary !== null && (
-              <p className="mt-3 text-xs text-gray-400">
-                An admin can change what your role can do from Settings.
-              </p>
-            )}
+            {result.accessSummary !== null && <p className="mt-3 text-xs text-gray-400">{t("adminNote")}</p>}
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <StatCard label="Staff" value={result.staffCount} href={`/app/${tenantSlug}/calendar`} />
+          <StatCard label={t("staffStat")} value={result.staffCount} href={`/app/${tenantSlug}/calendar`} />
           <StatCard
-            label="Upcoming appointments"
+            label={t("upcomingAppointments")}
             value={result.upcomingCount}
             href={`/app/${tenantSlug}/calendar`}
           />
@@ -207,9 +218,9 @@ export default async function DashboardPage({
             href={`/app/${tenantSlug}/calendar`}
             className="group flex flex-col justify-between rounded-xl border border-primary-100 bg-linear-to-br from-primary-50 to-white p-5 shadow-sm transition-all hover:shadow-md"
           >
-            <span className="text-sm font-medium text-primary-700">Open calendar</span>
+            <span className="text-sm font-medium text-primary-700">{t("openCalendar")}</span>
             <span className="mt-2 text-sm text-gray-500 group-hover:text-primary-600">
-              Schedule, reschedule, and view job details →
+              {t("openCalendarSubtitle")}
             </span>
           </Link>
         </div>

@@ -508,12 +508,26 @@ export function SchedulingCalendar({
     buildColorTriples(DEFAULT_EVENT_COLORS)
   );
   const [showFederalHolidays, setShowFederalHolidays] = useState(true);
+  // Admin-configurable (Settings > "Shift form") - whether the shift
+  // create/detail forms show these fields at all. Never applies to
+  // mode === "appointment", which has its own always-shown equivalents.
+  const [showJobTypeOnShiftForm, setShowJobTypeOnShiftForm] = useState(true);
+  const [showJobEstimateOnShiftForm, setShowJobEstimateOnShiftForm] = useState(true);
+  const [showColorKeyOnShiftForm, setShowColorKeyOnShiftForm] = useState(true);
   // The tenant's real roles (Settings > "Roles") - used by the inline
   // "+ Add new staff member" role dropdown.
   const [roles, setRoles] = useState<TenantRoleOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [holidays, setHolidays] = useState<HolidayOption[]>([]);
   const [staffFilter, setStaffFilter] = useState<string>(initialStaffId ?? "all");
+  // Settings > Permissions > VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS - "all" is
+  // only ever an option when the viewer actually holds the relevant
+  // permission; without it the server always scopes the response to the
+  // viewer's own shifts/appointments regardless of this state (see
+  // loadAppointments below), so there's nothing insecure about defaulting to
+  // "all" here - a viewer who lacks both permissions just gets their own data
+  // back either way.
+  const [viewScope, setViewScope] = useState<"all" | "mine">("all");
   // Explicitly controlled, rather than relying on react-big-calendar's own
   // internal (uncontrolled) date/view state via its `uncontrollable` wrapper -
   // owning this ourselves means Today/Back/Next and Month/Week/Day switching
@@ -556,14 +570,14 @@ export function SchedulingCalendar({
 
   const loadAppointments = useCallback(async (r: { start: Date; end: Date }) => {
     try {
-      const data = await fetchJson<{ appointments: ApiAppointment[] }>(
-        `/api/appointments?start=${r.start.toISOString()}&end=${r.end.toISOString()}`
-      );
+      const params = new URLSearchParams({ start: r.start.toISOString(), end: r.end.toISOString() });
+      if (viewScope === "mine") params.set("view", "mine");
+      const data = await fetchJson<{ appointments: ApiAppointment[] }>(`/api/appointments?${params.toString()}`);
       setEvents(data.appointments.map(toEvent));
     } catch {
       setError("Couldn't load appointments.");
     }
-  }, []);
+  }, [viewScope]);
 
   const loadStaff = useCallback(async () => {
     try {
@@ -624,6 +638,9 @@ export function SchedulingCalendar({
               enableMapsNavigation: boolean;
               eventColors: Record<EventColorKey, string>;
               showFederalHolidays: boolean;
+              showJobTypeOnShiftForm: boolean;
+              showJobEstimateOnShiftForm: boolean;
+              showColorKeyOnShiftForm: boolean;
             };
           }>("/api/tenant-settings"),
         ]);
@@ -633,6 +650,9 @@ export function SchedulingCalendar({
         setEnableMapsNavigation(settingsData.settings.enableMapsNavigation);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
         setShowFederalHolidays(settingsData.settings.showFederalHolidays);
+        setShowJobTypeOnShiftForm(settingsData.settings.showJobTypeOnShiftForm);
+        setShowJobEstimateOnShiftForm(settingsData.settings.showJobEstimateOnShiftForm);
+        setShowColorKeyOnShiftForm(settingsData.settings.showColorKeyOnShiftForm);
       } catch {
         setError("Couldn't load service data.");
       }
@@ -731,6 +751,17 @@ export function SchedulingCalendar({
   const canCreate = !readOnly && (permissions?.CREATE_APPOINTMENTS ?? false);
   const canEdit = !readOnly && (permissions?.EDIT_APPOINTMENTS ?? false);
   const canCancel = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
+  const canViewAllShifts = permissions?.VIEW_ALL_SHIFTS ?? false;
+  const canViewAllAppointments = permissions?.VIEW_ALL_APPOINTMENTS ?? false;
+  // Whether the Everyone/Just mine toggle is worth showing for whatever the
+  // calendar is currently filtered to - no point offering it for a type the
+  // viewer can never see beyond their own anyway.
+  const canToggleViewScope =
+    calendarType === "shift"
+      ? canViewAllShifts
+      : calendarType === "appointment"
+        ? canViewAllAppointments
+        : canViewAllShifts || canViewAllAppointments;
 
   const visibleEvents = useMemo(() => {
     let list = staffFilter === "all" ? events : events.filter((e) => e.resource.staffId === staffFilter);
@@ -939,6 +970,32 @@ export function SchedulingCalendar({
             </div>
           )}
 
+          {/* Settings > Permissions > VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS -
+              only rendered when the viewer actually holds the relevant
+              permission for whatever's currently shown; without it they're
+              always scoped to their own regardless of this control. */}
+          {canToggleViewScope && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Viewing</span>
+              <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+                {(["all", "mine"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setViewScope(v)}
+                    className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                      viewScope === v
+                        ? "bg-primary-500 text-white shadow-sm"
+                        : "text-gray-600 hover:text-primary-600"
+                    }`}
+                  >
+                    {v === "all" ? "Everyone" : "Just mine"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Controls the Week/Day time gutter's row size - hour, half-hour,
               or 15-minute blocks. No effect in Month view, which doesn't
               show a time gutter at all. */}
@@ -992,7 +1049,7 @@ export function SchedulingCalendar({
         </div>
 
         {canCreate && (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
             {features.appointmentManager && (
               <button
                 onClick={() => setCreating({ ...nextHourSlot(), mode: "appointment" })}
@@ -1128,6 +1185,9 @@ export function SchedulingCalendar({
             tags={tags}
             roles={roles}
             requireClient={requireClientForAppointments}
+            showJobType={showJobTypeOnShiftForm}
+            showJobEstimate={showJobEstimateOnShiftForm}
+            showColorKey={showColorKeyOnShiftForm}
             canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
             canCreateStaff={permissions?.CREATE_STAFF ?? false}
             canCreateClient={permissions?.CREATE_CLIENTS ?? false}
@@ -1154,6 +1214,9 @@ export function SchedulingCalendar({
           canFindCoverage={canEdit}
           readOnly={readOnly}
           enableMapsNavigation={enableMapsNavigation}
+          showJobType={showJobTypeOnShiftForm}
+          showJobEstimate={showJobEstimateOnShiftForm}
+          showColorKey={showColorKeyOnShiftForm}
           colorTriples={colorTriples}
           tags={tags}
           canCreateTag={canCreate}
@@ -1196,6 +1259,9 @@ function AppointmentDetailPanel({
   canFindCoverage,
   readOnly = false,
   enableMapsNavigation,
+  showJobType,
+  showJobEstimate,
+  showColorKey,
   colorTriples,
   tags,
   canCreateTag,
@@ -1210,6 +1276,12 @@ function AppointmentDetailPanel({
   canFindCoverage: boolean;
   readOnly?: boolean;
   enableMapsNavigation: boolean;
+  // Admin-configurable (Settings > "Shift form") - only applies when this
+  // appointment is a shift (isShift(appointment)); appointments always show
+  // these fields regardless.
+  showJobType: boolean;
+  showJobEstimate: boolean;
+  showColorKey: boolean;
   colorTriples: Record<EventColorKey, ColorTriple>;
   tags: TagOption[];
   canCreateTag: boolean;
@@ -1354,8 +1426,12 @@ function AppointmentDetailPanel({
             <dd>{appointment.client.phone}</dd>
           </>
         )}
-        <dt className="text-gray-500">Service</dt>
-        <dd>{appointment.serviceType?.name ?? "—"}</dd>
+        {(!isShift(appointment) || showJobType) && (
+          <>
+            <dt className="text-gray-500">Service</dt>
+            <dd>{appointment.serviceType?.name ?? "—"}</dd>
+          </>
+        )}
         <dt className="text-gray-500">Staff</dt>
         <dd>{appointment.staff.displayName}</dd>
         <dt className="text-gray-500">Meeting</dt>
@@ -1384,6 +1460,7 @@ function AppointmentDetailPanel({
         <dd>{appointment.paymentStatus}</dd>
       </dl>
 
+      {(!isShift(appointment) || showColorKey) && (
       <div className="mt-4 border-t border-primary-100 pt-3">
         <h3 className="mb-2 text-sm font-medium text-primary-700">Color key</h3>
         {canEdit ? (
@@ -1456,8 +1533,9 @@ function AppointmentDetailPanel({
           </div>
         )}
       </div>
+      )}
 
-      {canViewEstimates && (
+      {canViewEstimates && (!isShift(appointment) || showJobEstimate) && (
         <div className="mt-4 border-t border-primary-100 pt-3">
           <h3 className="mb-2 text-sm font-medium text-primary-700">Job estimate</h3>
           {canEditEstimates ? (
@@ -1592,6 +1670,9 @@ function CreateEntryPanel({
   tags,
   roles,
   requireClient,
+  showJobType,
+  showJobEstimate,
+  showColorKey,
   canEditEstimates,
   canCreateStaff,
   canCreateClient,
@@ -1619,6 +1700,11 @@ function CreateEntryPanel({
   // form") - whether an appointment must have a client attached. Never
   // applies to mode === "shift", which has no client field at all.
   requireClient: boolean;
+  // Admin-configurable (Settings > "Shift form") - only applies when
+  // mode === "shift"; the appointment form always shows these.
+  showJobType: boolean;
+  showJobEstimate: boolean;
+  showColorKey: boolean;
   canEditEstimates: boolean;
   canCreateStaff: boolean;
   canCreateClient: boolean;
@@ -1967,6 +2053,7 @@ function CreateEntryPanel({
         </div>
       )}
 
+      {(mode !== "shift" || showJobType) && (
       <label className="flex flex-col gap-1 text-sm">
         {mode === "shift" ? "Job type (optional)" : "Service (optional)"}
         <select
@@ -1982,7 +2069,9 @@ function CreateEntryPanel({
           ))}
         </select>
       </label>
+      )}
 
+      {(mode !== "shift" || showColorKey) && (
       <label className="flex flex-col gap-1 text-sm">
         Color key (optional)
         <select
@@ -2003,8 +2092,9 @@ function CreateEntryPanel({
           {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new color key</option>}
         </select>
       </label>
+      )}
 
-      {showNewTagForm && (
+      {(mode !== "shift" || showColorKey) && showNewTagForm && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <label className="flex flex-col gap-1 text-sm">
             Color key name
@@ -2180,7 +2270,7 @@ function CreateEntryPanel({
         />
       </label>
 
-      {canEditEstimates && (
+      {canEditEstimates && (mode !== "shift" || showJobEstimate) && (
         <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
             <input

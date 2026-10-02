@@ -183,16 +183,42 @@ export async function findCoverageCandidates(
   return candidates;
 }
 
+/**
+ * `visibility` implements the VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS permission
+ * split: a shift is an Appointment row with `clientId: null`, an appointment
+ * has one set - each axis is allowed through independently, and whatever's
+ * left over is only shown if it belongs to `ownStaffId`. Passing `undefined`
+ * (the coverage-finder caller) keeps the old "see everything" behavior, since
+ * that's an internal staffing computation, not a viewer-facing listing.
+ */
+export interface AppointmentVisibility {
+  allShifts: boolean;
+  allAppointments: boolean;
+  ownStaffId: string | null;
+}
+
 export async function listAppointmentsInRange(
   tx: Tx,
   tenantId: string,
-  range: { start: Date; end: Date }
+  range: { start: Date; end: Date },
+  visibility?: AppointmentVisibility
 ) {
+  const visibilityFilter = visibility
+    ? {
+        OR: [
+          ...(visibility.allShifts ? [{ clientId: null }] : []),
+          ...(visibility.allAppointments ? [{ clientId: { not: null } }] : []),
+          ...(visibility.ownStaffId ? [{ staffId: visibility.ownStaffId }] : []),
+        ],
+      }
+    : {};
+
   return tx.appointment.findMany({
     where: {
       tenantId,
       startTime: { lt: range.end },
       endTime: { gt: range.start },
+      ...visibilityFilter,
     },
     include: { client: true, serviceType: true, staff: true, tag: true },
     orderBy: { startTime: "asc" },

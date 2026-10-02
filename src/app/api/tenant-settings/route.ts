@@ -9,6 +9,9 @@ const SETTINGS_SELECT = {
   enableMapsNavigation: true,
   eventColors: true,
   showFederalHolidays: true,
+  showJobTypeOnShiftForm: true,
+  showJobEstimateOnShiftForm: true,
+  showColorKeyOnShiftForm: true,
 } as const;
 
 // Readable by any signed-in tenant member (not just ADMIN) - this drives
@@ -43,6 +46,9 @@ const updateSchema = z
     requireClientForAppointments: z.boolean(),
     enableMapsNavigation: z.boolean(),
     showFederalHolidays: z.boolean(),
+    showJobTypeOnShiftForm: z.boolean(),
+    showJobEstimateOnShiftForm: z.boolean(),
+    showColorKeyOnShiftForm: z.boolean(),
     // Sparse - only the keys being changed need be present; merged onto the
     // existing stored overrides below rather than replacing them wholesale,
     // so changing one color doesn't require resending all five.

@@ -10,6 +10,7 @@ import {
   rescheduleAppointment,
   SchedulingConflictError,
 } from "@/modules/scheduling/service";
+import { getOwnStaffProfile } from "@/modules/timeoff/service";
 
 export async function GET(
   _request: NextRequest,
@@ -24,6 +25,23 @@ export async function GET(
       const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES");
       const appointment = await getAppointmentById(tx, id);
       if (!appointment) return null;
+
+      // Same VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS scoping as the list
+      // endpoint - without it for this appointment's type, only its own
+      // assigned staff member can fetch it directly by id.
+      const isShift = !appointment.clientId;
+      const canViewAll = await hasPermission(
+        tx,
+        session.tenantId,
+        session.role,
+        session.roleId,
+        isShift ? "VIEW_ALL_SHIFTS" : "VIEW_ALL_APPOINTMENTS"
+      );
+      if (!canViewAll) {
+        const own = await getOwnStaffProfile(tx, session.userId);
+        if (own?.id !== appointment.staffId) throw new Error("FORBIDDEN");
+      }
+
       if (!canViewEstimates) {
         return { ...appointment, estimatedDurationMinutes: null, estimatedValue: null };
       }

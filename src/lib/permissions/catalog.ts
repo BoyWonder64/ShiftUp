@@ -41,6 +41,8 @@ export const PERMISSION_KEYS = [
   "APPROVE_TIME_OFF",
   "VIEW_ROSTER",
   "VIEW_CALENDAR_TOGGLE",
+  "VIEW_ALL_SHIFTS",
+  "VIEW_ALL_APPOINTMENTS",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -68,6 +70,8 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   APPROVE_TIME_OFF: "Approve/deny time-off requests",
   VIEW_ROSTER: "View the team roster",
   VIEW_CALENDAR_TOGGLE: "Switch the calendar between Appointments/Shifts/Both",
+  VIEW_ALL_SHIFTS: "See shifts outside your own",
+  VIEW_ALL_APPOINTMENTS: "See appointments outside your own",
 };
 
 /** Plain starter role names every new tenant gets at signup - a starting point, not a fixed list; the admin can rename, delete, or add to them freely from day one. */
@@ -101,6 +105,8 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     APPROVE_TIME_OFF: true,
     VIEW_ROSTER: true,
     VIEW_CALENDAR_TOGGLE: true,
+    VIEW_ALL_SHIFTS: true,
+    VIEW_ALL_APPOINTMENTS: true,
   },
   Supervisor: {
     VIEW_STAFF: true,
@@ -125,6 +131,8 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     APPROVE_TIME_OFF: true,
     VIEW_ROSTER: true,
     VIEW_CALENDAR_TOGGLE: true,
+    VIEW_ALL_SHIFTS: true,
+    VIEW_ALL_APPOINTMENTS: true,
   },
   Employee: {
     VIEW_STAFF: true,
@@ -149,6 +157,8 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     APPROVE_TIME_OFF: false,
     VIEW_ROSTER: false,
     VIEW_CALENDAR_TOGGLE: false,
+    VIEW_ALL_SHIFTS: false,
+    VIEW_ALL_APPOINTMENTS: false,
   },
   Customer: {
     VIEW_STAFF: false,
@@ -173,6 +183,8 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     APPROVE_TIME_OFF: false,
     VIEW_ROSTER: false,
     VIEW_CALENDAR_TOGGLE: false,
+    VIEW_ALL_SHIFTS: false,
+    VIEW_ALL_APPOINTMENTS: false,
   },
 };
 

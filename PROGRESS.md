@@ -21,6 +21,24 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Custom roles: fixed the "can't configure a new role's permissions" bug, redesigned the Permissions page around it
+Raised directly: after the custom-roles system shipped (2026-10-01 entry below), a newly-created role couldn't have its permissions set. **Root cause found**: `RoleManager` (the role list/CRUD) and `PermissionMatrixEditor` (the checkbox grid) were two sibling client components, each independently fetching its own copy of the role list on mount (`/api/roles` vs. `/api/admin/permissions`) with no way to tell each other when it changed. Creating a role in `RoleManager` worked at the DB level, but `PermissionMatrixEditor` never re-fetched, so the new role's column never appeared in the matrix without a hard page reload - it looked broken even though the backend (`src/lib/permissions/service.ts`'s `getEffectivePermissionMatrix`/`getEffectiveVisibilityMatrix`, already fully role-id-generic, no hardcoded 4-role assumption) was correct.
+
+- **Fixed by redesign, not a patch** - asked the user whether to keep the two-section layout (role list above a big permission matrix) and just wire the sync, or redo it; chose the redesign. `RoleManager.tsx` and `PermissionMatrixEditor.tsx` are gone, replaced by **`RolesAndPermissionsEditor.tsx`** (owns one shared fetch of roles + grants + visibility, the single source of truth both panes read from) and **`RoleDetailPanel.tsx`** (the right-hand panel for whichever role is selected).
+- **New layout**: a role picker sidebar on the left (plus the "+ Add role" form, moved here from its own section) and a detail panel on the right showing, for just the selected role: its name/description/reports-to fields (same onBlur-save pattern as before), a grouped permission checklist (same `PERMISSION_GROUPS`/`PERMISSION_LABELS`, same keys - no catalog changes), and a "who this role can see" checklist (one row of the old visibility matrix, scoped to the selected role as viewer). Permission and visibility checkboxes now **autosave instantly per-click** (optimistic, revert-on-failure - same convention as `AppointmentFormSettings.tsx`'s toggles) instead of batching every role's changes behind one global "Save changes" button.
+- **Creating a role now jumps straight to it** - `handleCreate` passes the newly-created role's id into the shared `reload()`, so you land directly on its (deny-everything-by-default) permission checklist instead of having to find it in a list afterward. This is the direct fix for the reported bug: there's now exactly one fetch of the role list, shared by the picker and the detail panel, so a create/rename/delete can never leave the permission UI looking at a stale role set.
+- **Verified**: `tsc --noEmit`, `eslint`, and the full `vitest` suite (15/15) all clean. No API or schema changes - `src/app/api/roles/**`, `src/app/api/admin/permissions/route.ts`, and `src/lib/permissions/{catalog,service}.ts` are untouched, this was purely a frontend data-flow and layout fix. **Not yet clicked through in a real browser** - same standing caveat as the rest of this app's client-rendered UI; the state-sharing fix is correct by code review (one `reload()` call site refetches both the role list and the permission/visibility matrices together) but hasn't been watched end-to-end in an actual browser session.
+
+### Shift/appointment visibility: own-only by default, VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS to see everyone
+Closes out TODO.md's long-standing "'Who can see who' isn't enforced yet" gap - but via a different, simpler mechanism than the one that item originally pointed at. Confirmed with the user up front: the existing `RoleVisibility`/`canViewRole()` role-to-role matrix (modeled since the custom-roles work, never wired to appointments) was a deliberate **not-chosen** option in favor of two plain per-role booleans, closer to "can this role see shifts/appointments outside its own" than a full role-pair matrix. `RoleVisibility`/`canViewRole()` remain exactly as unenforced as before this change - nothing here touches them.
+
+- **Two new permission keys**, `VIEW_ALL_SHIFTS` and `VIEW_ALL_APPOINTMENTS` (`src/lib/permissions/catalog.ts`), same plain-string `RolePermission` pattern as every key since the granular-permissions rework - no migration needed. Independent per type (shift = `clientId: null`, appointment = `clientId` set, same convention as `isShift()` everywhere else) since a role might reasonably see all shifts but not all appointments, or vice versa. **Defaults** (confirmed with the user, a real behavior change for Employee/Customer): Manager/Supervisor get both `true` (they already had tenant-wide edit/cancel rights); Employee/Customer get both `false` - a real narrowing from before, where any `VIEW_APPOINTMENTS` holder saw every appointment tenant-wide regardless of role.
+- **Enforced server-side**, not just hidden in the UI. `listAppointmentsInRange` (`src/modules/scheduling/service.ts`) takes an optional `AppointmentVisibility` (`{allShifts, allAppointments, ownStaffId}`) and builds a Prisma `OR` filter from it; `GET /api/appointments` (`src/app/api/appointments/route.ts`) computes it from the caller's effective permissions plus `getOwnStaffProfile()` (reused from `src/modules/timeoff/service.ts`) and passes it through - a role lacking both keys only ever gets rows where `staffId` is their own. Also closed the matching bypass on `GET /api/appointments/[id]` - fetching someone else's shift/appointment directly by id now 403s the same way the list endpoint would have excluded it.
+- **A voluntary "Everyone / Just mine" toggle on the calendar can only narrow, never widen.** `GET /api/appointments?view=mine` lets a viewer who *does* hold `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` deliberately collapse down to their own, same as the user's literal ask ("if they have access then they need to be able to see everyone's and then just see their own") - the query param is read server-side and can only subtract from what the permission already grants, never add to it, so a viewer without the permission sending `view=all` still gets scoped results. `SchedulingCalendar.tsx` renders this as a new "Viewing" pill (Everyone/Just mine) in the existing filters settings box, next to the Staff/Calendar-type/Time-grid controls - only shown when the viewer holds the relevant `VIEW_ALL_*` for whatever `calendarType` is currently selected (shift-only, appointment-only, or either for "Both").
+- **Settings UI**: both new keys added to the Permissions matrix's existing "Scheduling" group (`PermissionMatrixEditor.tsx`), alongside `VIEW_APPOINTMENTS`/`CREATE_APPOINTMENTS`/etc.
+- **Verified live** via curl against a fresh signup with two Employee-role staff (A, B) and one Manager: confirmed Employee A's `/api/me/permissions` defaults both new keys to `false`; confirmed A's appointment list initially contained only A's own shift; granted the Employee role `VIEW_ALL_APPOINTMENTS` only (not shifts) and confirmed A then saw B's real appointment but still not B's shift - the per-type split works; confirmed `?view=mine` collapsed A back to just their own row even after that grant; confirmed direct-id fetch of B's shift 403'd before the grant and B's appointment 200'd after it; confirmed Manager's permissions default both to `true` and their unscoped list returned all 3 test rows. `tsc --noEmit`, `eslint`, and the full `vitest` suite (15/15) all clean on every touched file.
+- **New known gap surfaced, added to TODO.md**: `/calendar/roster` reads from this same now-scoped endpoint - a role holding `VIEW_ROSTER` without also holding `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` would get a Roster page that only shows their own row. The two Manager/Supervisor defaults cover this out of the box; flagged rather than silently making one permission imply the other.
+
 ### Service types: optional price + active/inactive toggle
 Raised directly (not pre-existing in TODO.md): the "Service types" Settings
 card already existed (`ServiceTypeManager.tsx`, done 2026-10-02) but every
@@ -434,6 +452,58 @@ TODO.md item: service types (the job types staff pick when scheduling) could onl
 **Flagging rather than solving**: the TODO item asked for this to be "explicitly accessible to both ADMIN and whichever role(s) hold those permissions," but `/admin/users` itself is still hard-gated to ADMIN only at the page level (`page.tsx`'s own redirect, same as every other card on that page) - a non-admin role granted `CREATE_SERVICES` from the permission matrix still can't open Settings at all to use this card. That's a pre-existing gap in the whole Settings page's access model (true for `StaffManager`, `RoleManager`, every card there), not something this one item should fix as a side effect - left it as a known gap rather than quietly expanding scope into a Settings-page access redesign.
 
 **Verified live via curl** against a fresh signup: `/admin/users` renders 200; `POST /api/service-types` creates a service type; `PATCH /api/service-types/[id]` edits it and the change round-trips on the next `GET`; `PATCH` on a nonexistent id correctly 404s; an unauthenticated `PATCH` correctly 401s; `DELETE` removes it and it's gone from the next `GET`. `tsc --noEmit` / `npm run lint` / `npm test` (15/15) all clean. The card's own on-screen interaction (add form, inline edit toggle) is correct by code review but not clicked through in a real browser - same standing caveat as the rest of this app's client-rendered UI.
+
+### Language setting (i18n infrastructure + Dashboard/AppHeader translated)
+TODO.md's "language setting" item, previously blocked on two decisions - resolved this session: **which languages** (English + Spanish/German/French, your call) and **per-user vs. per-tenant** (per-user - each person picks their own, not one tenant-wide default, your call). Used **next-intl** (the plugin Next.js's own docs recommend first for this), since there was no i18n infrastructure anywhere in the app before this.
+
+- **Data model**: new `Locale` enum (`EN`/`ES`/`DE`/`FR`) and `User.locale` (`prisma/migrations/..._add_user_locale`, default `EN`) - per-user, not per-tenant, so two people at the same business can each run the app in a different language.
+- **No URL-based routing** (`/es/...` prefixes) - deliberately skipped, since the language is a per-user preference, not part of a tenant's public URL shape, and adding a `[locale]` segment would mean restructuring the entire `app/(admin)/app/[tenantSlug]/...` tree. Locale is instead resolved per-request from the signed session cookie (`src/i18n/request.ts`), which already carries `tenantId`/`role`/`roleId` the same way.
+- **Session carries locale now** (`SessionPayload.locale`, `src/lib/auth/session.ts`) - avoids a DB query on every single request just to pick a language. Tokens issued before this field existed default to `EN` rather than invalidating every pre-existing session. All three places that mint a session (`login`, `signup`, `superadmin/bootstrap` routes) now include it.
+- **`PATCH /api/me/locale`**: the only way to change it - validates against the 4 supported codes, updates `User.locale`, and **re-issues the session cookie** with the new locale baked in so it takes effect on the very next request, no logout/login needed. Works for ADMIN/STAFF (via `runInTenantContext`) and SUPERADMIN (via `runInSystemContext`, since that role's row has `tenantId: null`) - deliberately not `requireTenantSession`, which excludes SUPERADMIN.
+- **`LanguagePicker.tsx`**: a plain `<select>` in `AppHeader`, visible to every tenant role (not just ADMIN) - this is the real reason it isn't on the admin-only `/admin/users` Settings page the original ask mentioned: a per-user preference has to be reachable by non-admin STAFF too, and that page is hard-gated to ADMIN (same gap flagged in the service-types entry above). Calls the PATCH route then `router.refresh()` so server components re-render with the new locale immediately.
+- **Translated so far**: `AppHeader` (every nav label) and the full `Dashboard` page (including the dynamically-built permission-based access summary - its category/action labels used to double as both an internal key *and* the English display text, which only worked because there was one language; now they're stable keys like `categories.staff`/`actions.view` looked up through the translation, not translated-by-coincidence). **Not translated yet** (still hardcoded English, by deliberate scope cut, not oversight): every other page - Calendar/`SchedulingCalendar.tsx` (the biggest surface by far), Settings and all its cards, Billing, Time off, Roster, Login/Signup, the SUPERADMIN console. Login/signup specifically can't use a stored preference at all pre-authentication - `i18n/request.ts` falls back to `"en"` when there's no session, which is correct for now but means those pages stay English-only until/unless a logged-out mechanism (e.g. browser `Accept-Language`) is added.
+- `src/global.d.ts` types `useTranslations`/`getTranslations` against `en.json`'s actual shape (next-intl's documented pattern) so a typo or a key missing from one locale's JSON is a compile error, not a silent untranslated string at runtime.
+
+**Verified live via curl** against a real tenant: confirmed `PATCH /api/me/locale` to `ES`/`DE`/`FR`/`EN` each actually changes `<html lang>` and the rendered AppHeader/Dashboard text on the very next request (no page reload or re-login needed) - e.g. "Signed in as" → "Conectado como" in Spanish, "Settings" → "Configuración", "Sign out" → "Cerrar sesión". Every other existing page (Calendar, Settings, Billing, Time off, Roster) still renders 200 with the new `NextIntlClientProvider` wrapping the root layout - the wrap itself doesn't break anything client-side-rendered elsewhere. `tsc --noEmit` / `npm run lint` / `npm test` (15/15) all clean. Not browser-click-tested (same standing caveat as the rest of this app's client UI) - the `<select>` itself hasn't been operated through an actual browser, only driven via the API it calls.
+
+### Shift form field toggles + "Manage job types" link
+
+Raised directly (not pre-existing in TODO.md): `ShiftFormSettings.tsx` was a
+placeholder with nothing to configure (see the "Split the single
+'Appointment & shift form' Settings card" entry above). It now has real
+toggles.
+
+- **Three new `Tenant` booleans**, all default `true` (today's existing
+  behavior unchanged until an admin turns one off): `showJobTypeOnShiftForm`,
+  `showJobEstimateOnShiftForm`, `showColorKeyOnShiftForm`
+  (`prisma/migrations/20261002145550_add_shift_form_field_toggles`). Wired
+  into `GET`/`PUT /api/tenant-settings` the same partial-update way as the
+  existing toggles.
+- **Only gates `mode === "shift"`** in `SchedulingCalendar.tsx` - the
+  appointment form's "Service"/"Color key"/job-estimate fields are
+  unaffected regardless of these settings. Applied in both the create panel
+  (`CreateEntryPanel`) and the existing-shift detail panel
+  (`AppointmentDetailPanel`, gated via `isShift(appointment)`), so turning a
+  field off hides it consistently whether creating or viewing a shift.
+- **Didn't duplicate the job-types list.** Job types are the existing
+  `ServiceType` model/"Service types" Settings card (shared with
+  appointments, full CRUD already built - see the "Let Manager and Admin add
+  job types" TODO entry). Per the user's explicit choice when asked, left
+  that card's naming/placement alone and instead added a "Manage job types"
+  link inside the new Shift form card that jumps to `#service-types` (a new
+  anchor `id` added to `ServiceTypeManager.tsx`'s section).
+
+**Verified via curl** against a throwaway signup tenant (created and fully
+deleted afterward - no leftover test data): `GET /api/tenant-settings`
+returns all three new keys defaulting `true`; `PUT` with each
+key individually (and two at once) persists correctly; the Settings page
+HTML includes the new "Shift form" heading, the "Manage job types" link, and
+`id="service-types"` on the target card. `tsc --noEmit` and `eslint` both
+clean on every touched file. **Not browser-click-tested** - no headless
+browser tooling (chromium-cli/Playwright) is installed in this Windows dev
+environment, so the checkboxes' actual on-screen behavior (and the anchor
+link's scroll-to) haven't been visually confirmed, only their rendering and
+the API they call.
 
 ## Known gaps / not yet done
 

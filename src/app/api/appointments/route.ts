@@ -5,6 +5,7 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { createAppointment, listAppointmentsInRange, SchedulingConflictError } from "@/modules/scheduling/service";
 import { assertCanAddAppointment, PlanLimitError } from "@/lib/licensing/limits";
+import { getOwnStaffProfile } from "@/modules/timeoff/service";
 
 type AppointmentWithMaybeEstimates = {
   estimatedDurationMinutes: number | null;
@@ -35,6 +36,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "start and end query params (ISO datetimes) are required" }, { status: 400 });
     }
 
+    // "view=mine" is a voluntary narrowing a viewer who CAN see everyone can
+    // ask for (the calendar's Everyone/Just mine toggle) - it can only ever
+    // narrow the result, never widen it past what VIEW_ALL_SHIFTS/
+    // VIEW_ALL_APPOINTMENTS actually grant, which is enforced below
+    // regardless of what the client sends.
+    const requestedMineOnly = url.searchParams.get("view") === "mine";
+
     const appointments = await runInTenantContext(
       session.tenantId,
       session.userId,
@@ -42,11 +50,21 @@ export async function GET(request: NextRequest) {
       async (tx) => {
         const canView = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS");
         if (!canView) throw new Error("FORBIDDEN");
-        const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES");
-        const rows = await listAppointmentsInRange(tx, session.tenantId, {
-          start: new Date(parsed.data.start),
-          end: new Date(parsed.data.end),
-        });
+        const [canViewEstimates, canViewAllShifts, canViewAllAppointments] = await Promise.all([
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_ALL_SHIFTS"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_ALL_APPOINTMENTS"),
+        ]);
+        const allShifts = canViewAllShifts && !requestedMineOnly;
+        const allAppointments = canViewAllAppointments && !requestedMineOnly;
+        const own = allShifts && allAppointments ? null : await getOwnStaffProfile(tx, session.userId);
+
+        const rows = await listAppointmentsInRange(
+          tx,
+          session.tenantId,
+          { start: new Date(parsed.data.start), end: new Date(parsed.data.end) },
+          { allShifts, allAppointments, ownStaffId: own?.id ?? null }
+        );
         return rows.map((row) => redactEstimates(row, canViewEstimates));
       }
     );

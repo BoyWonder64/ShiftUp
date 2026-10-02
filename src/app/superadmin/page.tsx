@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
+import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { SuperadminHeader } from "./SuperadminHeader";
 import { TenantBillingManager } from "./TenantBillingManager";
 import { DiscountCodeManager } from "./DiscountCodeManager";
@@ -20,6 +21,7 @@ export default async function SuperadminPage() {
             Platform-wide view across every tenant - not visible or reachable from any tenant account.
           </p>
         </div>
+        <ChangePasswordForm />
         <TenantBillingManager />
         <DiscountCodeManager />
       </main>

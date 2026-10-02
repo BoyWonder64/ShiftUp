@@ -22,15 +22,37 @@ see `ARCHITECTURE.md`.
 
 ## New feature requests (not started)
 
-- **A language setting to swap languages.** Raised 2026-10-01. Real scope
-  note: there's no i18n infrastructure anywhere in this app today - every
-  label, button, and message is a hardcoded English string directly in JSX
-  across every page/component. This isn't a quick toggle - it needs an i18n
-  library (e.g. `next-intl`), every user-facing string extracted into
-  translation files, a place to store the chosen language (per-user?
-  per-tenant default?), and translations actually written for each
-  supported language. Needs a decision on which languages to support first
-  before any of that starts.
+- **A language setting to swap languages - infrastructure done, most pages
+  still untranslated.** Raised 2026-10-01, infra built 2026-10-02 - see
+  PROGRESS.md's "Language setting" entry. Decisions resolved: English +
+  Spanish/German/French, and **per-user** (not per-tenant - each person
+  picks their own in `AppHeader`'s new language picker, visible to every
+  role, not just ADMIN). Built on **next-intl**: `User.locale` enum column,
+  cached on the session (re-issued immediately on change via
+  `PATCH /api/me/locale`, no logout needed), resolved per-request with no
+  URL-prefix routing since the language isn't part of the tenant's public
+  URL shape. **Fully translated**: `AppHeader` nav, the `Dashboard` page.
+  **Still hardcoded English, not yet migrated** - the bulk of the remaining
+  work, listed explicitly so it doesn't get lost:
+  - `SchedulingCalendar.tsx` - by far the biggest surface (create/edit
+    panels, detail panel, legend, toolbar, every validation message).
+  - Settings and every card on it (`AppointmentFormSettings`,
+    `ShiftFormSettings`, `ServiceTypeManager`, `StaffManager`,
+    `RolesAndPermissionsEditor`, `RoleDetailPanel`, `EventColorSettings`,
+    `HolidaySettings`, `LogoSettings`).
+  - Billing (`PricingDeck.tsx`, `src/lib/licensing/pricing.ts`'s
+    `FEATURE_TIER_LABELS`), Time off, Roster.
+  - Login/Signup pages - can't read a stored preference pre-authentication;
+    `src/i18n/request.ts` falls back to English when there's no session,
+    which is correct for now but means these stay English-only until a
+    logged-out detection mechanism (e.g. browser `Accept-Language`) is
+    separately decided and added.
+  - The SUPERADMIN console (`/superadmin`) - internal dev tool, left
+    English-only as a deliberate low-priority call, not an oversight.
+  Pick off incrementally - the pattern (stable translation keys in
+  `src/messages/*.json`, `getTranslations`/`useTranslations`) is now
+  established from the Dashboard page, so each additional page is a smaller
+  lift than the first one was.
 - ~~Custom roles — let a tenant define its own named roles instead of being
   limited to the 4 fixed configurable ones.~~ **Done 2026-10-01** - see
   PROGRESS.md's "Full custom-roles system" entry. `User.role` is now a
@@ -152,6 +174,30 @@ see `ARCHITECTURE.md`.
   Authenticator is just one compatible app among several (needs a stored
   per-user secret + backup codes) - these are different features with
   different scope, not two options for the same thing.
+- **Password reset workflow - half done.** Raised 2026-10-02. **Done
+  2026-10-02**: a logged-in user can now change their own password -
+  `PATCH /api/me/password` (verifies `currentPassword` via `verifyPassword`,
+  then re-hashes) plus a new `ChangePasswordForm.tsx` card on the Account
+  settings page (`/admin/settings/account`), works for ADMIN/STAFF/
+  SUPERADMIN alike. **Still open**: there's still no way for a *locked-out*
+  user (one who can't log in at all, so can't reach Settings) to reset their
+  password. That needs: a "Forgot password?" link on the login page, a
+  `POST /api/auth/password-reset/request` endpoint that generates a
+  single-use, time-limited token (store a hash of the token, not the raw
+  value, same care as `passwordHash` itself) tied to the user's email, and a
+  `POST /api/auth/password-reset/confirm` endpoint that verifies the token
+  (checking expiry and single-use), and updates `passwordHash`. **Real
+  blocker, unchanged**: actually delivering the reset link needs an
+  email-sending channel, and **there is no email infrastructure anywhere in
+  this app yet** - same gap already flagged under the paid-email-reminders
+  and overlapping-PTO-alert items below. A provider (e.g. Resend, Postmark,
+  SES) needs to be picked before this can do more than generate a token
+  nobody receives. **Secondary decision, still open**: whether a successful
+  reset should invalidate the user's other active sessions - session tokens
+  today are stateless, HMAC-signed, and have no server-side revocation list
+  at all (`src/lib/auth/session.ts`), so "sign out everywhere" isn't possible
+  for *any* flow yet, not just this one - worth deciding if that's in scope
+  here or its own separate item.
 - **Dark mode.** Raised 2026-10-01. Note: an earlier auto (prefers-color-scheme)
   dark mode existed early on and was deliberately removed in favor of the
   current fixed light palette (dodger blue/Rockies purple on white) - see
@@ -160,18 +206,21 @@ see `ARCHITECTURE.md`.
   `--color-primary-*`/`--color-shift-*` value plus `--background`/
   `--foreground`, not just inverting backgrounds - a real design pass, not a
   quick CSS flip.
-- **Settings: a "Company name" card with a font dropdown.** Refined
-  2026-10-01 from the earlier vague "custom font" ask into something more
-  concrete: a Settings section where the admin can (a) edit the business's
-  display name - there's currently no way to rename it after signup at all,
-  `Tenant.name` is set once at signup and nothing in Settings can change it
-  - and (b) pick a font for how that name renders (e.g. in `AppHeader`, the
-  Dashboard heading) from a curated dropdown of preset options, not a raw
-  font-file upload. Needs a decision on scope: just the business-name text,
-  or (as the original ask also mentioned) customizable fonts for the overall
-  page too - the latter is the much bigger version, see the font-scoping
-  back-and-forth already done this session for how fiddly getting one font
-  choice right was.
+- ~~Settings: a "Company name" card with a font dropdown.~~ **Font half done
+  2026-10-02** - new `Tenant.companyNameFont` column, `src/lib/fonts/
+  companyNameFonts.ts` (8 curated Google Fonts loaded via `next/font/google`
+  in `layout.tsx`, not a raw font-file upload), `POST /api/admin/
+  company-name-font` (ADMIN-only), and a new `CompanyNameFontSettings.tsx`
+  card on the Company Profile settings page (`/admin/settings/
+  company-profile`) - admin picks a font and it applies to the business name
+  everywhere it renders (`AppHeader`, the Dashboard heading). The scope
+  question is resolved as just the business-name text, not customizable
+  fonts for the overall page too (the bigger version from the original ask)
+  - deliberately not built. **Still open**: part (a) of the original ask,
+  actually editing the business's display name - `Tenant.name` is still set
+  once at signup with no rename path anywhere in Settings; the new font card
+  only picks a font for whatever `Tenant.name` already is, it doesn't let
+  you change the text itself.
 - ~~Give the app's font more of a "racing" feel - thicker overall.~~ **Done**
   2026-10-01 - Orbitron on headings and the nav brand, body text left alone,
   colors unchanged (see PROGRESS.md). User reviewed live: liked it overall
@@ -197,16 +246,27 @@ see `ARCHITECTURE.md`.
   `src/app/api/service-types/[id]/route.ts` (PATCH/DELETE, gated by
   `EDIT_SERVICES`/`DELETE_SERVICES` - not a hardcoded role check, same as the
   existing GET/POST). **One caveat on the "accessible to whichever role(s)
-  hold those permissions" part**: the card lives on `/admin/users`, which the
-  page itself still hard-gates to ADMIN only (`page.tsx`'s own redirect) -
-  same as every other card there (`StaffManager`, `RoleManager`, etc.). A
-  non-admin role granted `CREATE_SERVICES` from the permission matrix still
-  can't reach this page at all, which is a pre-existing gap in the whole
-  Settings page's access model, not something specific to this one card -
-  flagging it rather than silently redesigning Settings-page access as a
-  side effect of a service-types request. The still-missing inline "+ Add
-  new service type" in the calendar's create panel (mentioned for context in
-  the original ask, not listed under "Needs:") also remains unbuilt.
+  hold those permissions" part**: the card now lives on
+  `/admin/settings/appointments` - the old single `/admin/users` page was
+  split 2026-10-02 into a multi-page Settings nav (`SettingsNav.tsx`/
+  `sections.ts`: Appointments/Shifts/Calendar/Company Profile/Staff/
+  Permissions/Account, one page each), purely a navigation reorg, not a
+  permissions change. Every settings page is still hard-gated to ADMIN only
+  (now one shared check in `getAdminTenant.ts` instead of each page's own
+  redirect) - same as every other card there (`StaffManager`,
+  `RolesAndPermissionsEditor`, etc.). A non-admin role granted
+  `CREATE_SERVICES` from the permission matrix still can't reach this page
+  at all, which is a pre-existing gap in the whole Settings access model,
+  not something specific to this one card - flagging it rather than
+  silently redesigning Settings-page access as a side effect of a
+  service-types request. The still-missing inline "+ Add new service type"
+  in the calendar's create panel (mentioned for context in the original ask,
+  not listed under "Needs:") also remains unbuilt.
+  **Addendum 2026-10-02**: an explicit $0 price now displays the same as a
+  blank/unset one (nothing shown) instead of printing "$0.00" - the two
+  remain distinct values in the database (`price: null` vs `price: 0`,
+  `ServiceTypeManager.tsx`'s own comment still explains why), this only
+  changed how `$0` renders in the list.
 - ~~Split the single "Appointment & shift form" Settings card into separate
   appointment-form and shift-form sections.~~ **Done 2026-10-01** - went with
   the "at minimum" option noted below, since no shift-specific settings exist
@@ -218,7 +278,10 @@ see `ARCHITECTURE.md`.
   placeholder description explaining shifts have no client/location to
   configure - reserved for future shift-only settings. Both render as
   separate cards on the User Manager page (`page.tsx`), same pattern as every
-  other settings card there.
+  other settings card there. ~~Placeholder now filled~~ **Done 2026-10-02** -
+  see PROGRESS.md's "Shift form field toggles" entry: three real toggles
+  (job type / job estimate / color key) plus a "Manage job types" link to
+  the Service types card below it.
 - **Time estimates in minutes or hours, interchangeably.** Job time estimates
   are currently a single "minutes" field - let the user enter/view in either
   unit.
@@ -368,6 +431,21 @@ see `ARCHITECTURE.md`.
 
 ## Known gaps in what's already built
 
+- **Roster could go blank for a role that holds `VIEW_ROSTER` without
+  `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`.** New interaction surfaced by the
+  shift/appointment visibility work (PROGRESS.md, 2026-10-02): `/calendar/roster`
+  (`RosterView.tsx`) is a manager-facing "see everyone's schedule, grouped by
+  person" tool, gated on `VIEW_ROSTER`, but it fetches its data from the same
+  `GET /api/appointments` the main calendar uses - which now scopes results to
+  the caller's own shifts/appointments unless they separately hold
+  `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`. The two defaults (Manager/
+  Supervisor get both `VIEW_ROSTER` and `VIEW_ALL_*`) keep this working out of
+  the box, but an admin who grants `VIEW_ROSTER` to a role without also
+  granting the `VIEW_ALL_*` pair would get a Roster page that only ever shows
+  that one person's own row - defeating the page's purpose. Not fixed here
+  deliberately - flagging rather than silently making `VIEW_ROSTER` imply full
+  visibility, since that conflates two permissions that are meant to be
+  independent.
 - **Checkout flow built, not yet live-tested.** `License.billingPlan` supports
   `ONE_TIME` and `SUBSCRIPTION`, and real Stripe Checkout is wired up
   (`src/lib/licensing/pricing.ts`, `POST /api/billing/checkout`,
@@ -386,11 +464,19 @@ see `ARCHITECTURE.md`.
     self-service booking portal. **Venmo was considered and deliberately not
     built** — it needs its own Braintree/PayPal integration (separate from
     Stripe entirely), not worth the complexity for a B2B software purchase.
-- **"Who can see who" isn't enforced yet.** `RoleVisibility` is modeled and
-  editable from the User Manager page, and `canViewRole()` exists in
-  `src/lib/permissions/service.ts`, but no route actually calls it. Right now
-  anyone with `VIEW_APPOINTMENTS` sees every appointment tenant-wide,
-  regardless of the visibility matrix.
+- ~~"Who can see who" isn't enforced yet.~~ **Done 2026-10-02, via a different
+  mechanism than the one this item originally pointed at** - see PROGRESS.md's
+  "Shift/appointment visibility: own-only by default, VIEW_ALL_SHIFTS/
+  VIEW_ALL_APPOINTMENTS to see everyone" entry. `RoleVisibility`/
+  `canViewRole()` (the per-role-pair "which roles can see which other roles"
+  matrix this item described) was a deliberate **not-chosen** option -
+  confirmed with the user, who picked two simple per-role booleans
+  (`VIEW_ALL_SHIFTS`, `VIEW_ALL_APPOINTMENTS`) instead, closer to "can see
+  outside your own" than a full role-to-role matrix. **`RoleVisibility`/
+  `canViewRole()` themselves remain exactly as unenforced as before** -
+  nothing in this change wires them up, and nothing currently plans to; if
+  that role-to-role granularity is wanted later it's still a separate,
+  unstarted piece of work, not a leftover bug in what shipped here.
 - **No part of `SchedulingCalendar`'s client-fetched UI can be confirmed by curl.**
   Its permissions/staff/events all load via `useEffect` after hydration, so a
   server-rendered curl check always sees `permissions = null` and skips every

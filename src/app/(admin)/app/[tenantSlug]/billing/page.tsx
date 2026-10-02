@@ -48,6 +48,7 @@ export default async function BillingPage({
         role="ADMIN"
         canViewRoster
         logoUrl={tenant.logoDataUrl}
+        companyNameFont={tenant.companyNameFont}
       />
       <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 p-8">
         <h1 className="text-3xl font-semibold tracking-tight">Billing</h1>

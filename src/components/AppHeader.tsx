@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { LanguagePicker } from "./LanguagePicker";
+import { companyNameFontFamily } from "@/lib/fonts/companyNameFonts";
 
 interface AppHeaderProps {
   tenantSlug: string;
@@ -15,9 +16,13 @@ interface AppHeaderProps {
   // so this can't be decided from `role` alone the way it used to be).
   canViewRoster: boolean;
   // The tenant's own company logo (admin-controlled, see
-  // admin/users/LogoSettings.tsx) - distinct from the ShiftUp platform mark
+  // admin/settings/company-profile/LogoSettings.tsx) - distinct from the ShiftUp platform mark
   // below, which always shows regardless of whether a tenant has set one.
   logoUrl?: string | null;
+  // Admin-selectable font key for `businessName` below (see
+  // admin/settings/company-profile/CompanyNameFontSettings.tsx). Null/unset
+  // falls back to the default body font.
+  companyNameFont?: string | null;
 }
 
 interface NavItem {
@@ -83,7 +88,7 @@ function NavDropdown({
   );
 }
 
-export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoUrl }: AppHeaderProps) {
+export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoUrl, companyNameFont }: AppHeaderProps) {
   const t = useTranslations("AppHeader");
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -127,7 +132,12 @@ export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoU
                 className="h-6 w-6 rounded-md object-contain"
               />
             )}
-            <span className="text-sm text-gray-400">{businessName}</span>
+            <span
+              className="text-sm text-gray-400"
+              style={{ fontFamily: companyNameFontFamily(companyNameFont) }}
+            >
+              {businessName}
+            </span>
           </span>
         </div>
 
@@ -169,9 +179,9 @@ export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoU
 
           {role === "ADMIN" && (
             <Link
-              href={`${base}/admin/users`}
+              href={`${base}/admin/settings`}
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                pathname === `${base}/admin/users`
+                pathname.startsWith(`${base}/admin/settings`)
                   ? "bg-white text-primary-700 shadow-sm"
                   : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
               }`}

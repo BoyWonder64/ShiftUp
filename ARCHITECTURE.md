@@ -128,9 +128,15 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
   SUPERVISOR only, role-hardcoded not permission-key-gated - see TODO.md).
 - `time-off` — request/approve UI.
 - `billing` — plan display + pricing deck (`PricingDeck.tsx`).
-- `admin/users` — Settings (labeled "Settings" in the nav; route unchanged): staff CRUD, and every tenant-wide settings
-  card (`AppointmentFormSettings`, `LogoSettings`, `EventColorSettings`,
-  `EventTagManager`, `HolidaySettings`, `PermissionMatrixEditor`).
+- `admin/settings` — Settings, split across a landing page of links
+  (`page.tsx`) plus one page per section under a shared `layout.tsx`
+  (auth/tenant lookup + `AppHeader` + `SettingsNav` tabs, all ADMIN-only):
+  `appointments` (`AppointmentFormSettings`, `ServiceTypeManager`), `shifts`
+  (`ShiftFormSettings`), `calendar` (`EventColorSettings`/`EventTagManager`,
+  `HolidaySettings`), `company-profile` (`LogoSettings`), `staff`
+  (`StaffManager`), `permissions` (`RolesAndPermissionsEditor`, `RoleDetailPanel`),
+  `account` (`ChangePasswordForm`). Was one long page at `admin/users`
+  before 2026-10-02 - see PROGRESS.md.
 
 ## Where the narrative detail lives
 

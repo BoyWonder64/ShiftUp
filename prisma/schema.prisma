@@ -97,6 +97,11 @@ model Tenant {
   /// change (src/app/api/admin/logo/route.ts); shown in AppHeader for
   /// everyone in the tenant.
   logoDataUrl                   String?  @map("logo_data_url")
+  /// Admin-configurable: which font the tenant's business name is rendered
+  /// in (AppHeader, dashboard heading) - one of the keys in
+  /// src/lib/fonts/companyNameFonts.ts. Null = the default body font (no
+  /// override). Admin-only to change (src/app/api/admin/company-name-font/route.ts).
+  companyNameFont                String?  @map("company_name_font")
   /// Admin-configurable overrides for the 5 built-in event-type colors
   /// (appointment/shift/completed/noShow/cancelled), stored as a flat
   /// {key: "#rrggbb"} JSON object - only keys actually overridden need be
@@ -107,6 +112,14 @@ model Tenant {
   /// Admin-configurable: show the standard US federal holidays
   /// (src/lib/holidays/federal.ts - computed, not stored) on the calendar.
   showFederalHolidays           Boolean  @default(true) @map("show_federal_holidays")
+  /// Admin-configurable (Settings > "Shift form"): whether the shift
+  /// create/detail forms show the job type (ServiceType), job estimate, and
+  /// color key fields. On by default (today's existing behavior). Only
+  /// affects shift mode - the appointment form's equivalent fields are
+  /// unaffected by these.
+  showJobTypeOnShiftForm        Boolean  @default(true) @map("show_job_type_on_shift_form")
+  showJobEstimateOnShiftForm    Boolean  @default(true) @map("show_job_estimate_on_shift_form")
+  showColorKeyOnShiftForm       Boolean  @default(true) @map("show_color_key_on_shift_form")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
