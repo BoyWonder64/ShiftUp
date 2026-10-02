@@ -1,6 +1,10 @@
 import { RolesAndPermissionsEditor } from "./RolesAndPermissionsEditor";
+import { requireSettingsSection } from "../access";
 
-export default function PermissionsSettingsPage() {
+export default async function PermissionsSettingsPage({ params }: { params: Promise<{ tenantSlug: string }> }) {
+  const { tenantSlug } = await params;
+  await requireSettingsSection(tenantSlug, "permissions");
+
   return (
     <div className="flex flex-col gap-6">
       <div>

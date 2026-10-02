@@ -1,4 +1,4 @@
-import { getAdminTenant } from "../getAdminTenant";
+import { requireSettingsSection } from "../access";
 import { LogoSettings } from "./LogoSettings";
 import { CompanyNameFontSettings } from "./CompanyNameFontSettings";
 
@@ -8,7 +8,7 @@ export default async function CompanyProfileSettingsPage({
   params: Promise<{ tenantSlug: string }>;
 }) {
   const { tenantSlug } = await params;
-  const tenant = await getAdminTenant(tenantSlug);
+  const { tenant } = await requireSettingsSection(tenantSlug, "company-profile");
 
   return (
     <div className="flex flex-col gap-6">

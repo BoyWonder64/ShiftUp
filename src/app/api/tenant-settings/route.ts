@@ -12,6 +12,7 @@ const SETTINGS_SELECT = {
   showJobTypeOnShiftForm: true,
   showJobEstimateOnShiftForm: true,
   showColorKeyOnShiftForm: true,
+  allowOverlappingShifts: true,
 } as const;
 
 // Readable by any signed-in tenant member (not just ADMIN) - this drives
@@ -49,6 +50,7 @@ const updateSchema = z
     showJobTypeOnShiftForm: z.boolean(),
     showJobEstimateOnShiftForm: z.boolean(),
     showColorKeyOnShiftForm: z.boolean(),
+    allowOverlappingShifts: z.boolean(),
     // Sparse - only the keys being changed need be present; merged onto the
     // existing stored overrides below rather than replacing them wholesale,
     // so changing one color doesn't require resending all five.

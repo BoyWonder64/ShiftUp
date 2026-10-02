@@ -25,6 +25,45 @@ function isOverlapConstraintViolation(err: unknown): boolean {
   return typeof anyErr.message === "string" && anyErr.message.includes("appointments_no_overlapping_staff_time");
 }
 
+/**
+ * The DB's appointments_no_overlapping_staff_time EXCLUDE constraint (see the
+ * add_phase1_scheduling_and_permissions and add_allow_overlapping_shifts
+ * migrations) only ever fires for rows with a client attached - a shift
+ * (clientId null) is never blocked by Postgres, so whether a staff member's
+ * shifts may overlap is enforced here instead, gated on the tenant's
+ * Settings > "Shift form" toggle. Known gap: this is a plain read-then-write
+ * check inside the same transaction, not a DB-level guarantee, so two
+ * concurrent requests creating overlapping shifts for the same staff member
+ * at the same instant could both slip through - acceptable at this app's
+ * scale, same tradeoff as assertCanAddAppointment's plan-limit check.
+ */
+async function assertShiftOverlapAllowed(
+  tx: Tx,
+  tenantId: string,
+  staffId: string,
+  startTime: Date,
+  endTime: Date,
+  excludeId?: string
+) {
+  const tenant = await tx.tenant.findUniqueOrThrow({
+    where: { id: tenantId },
+    select: { allowOverlappingShifts: true },
+  });
+  if (tenant.allowOverlappingShifts) return;
+
+  const conflict = await tx.appointment.findFirst({
+    where: {
+      staffId,
+      status: { not: "CANCELLED" },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+      startTime: { lt: endTime },
+      endTime: { gt: startTime },
+    },
+    select: { id: true },
+  });
+  if (conflict) throw new SchedulingConflictError();
+}
+
 export interface CreateAppointmentInput {
   staffId: string;
   clientId?: string | null;
@@ -44,6 +83,12 @@ export interface CreateAppointmentInput {
 export async function createAppointment(tx: Tx, tenantId: string, input: CreateAppointmentInput) {
   if (input.endTime <= input.startTime) {
     throw new Error("endTime must be after startTime");
+  }
+  // A shift is an Appointment row with no clientId - the DB constraint never
+  // covers these (see assertShiftOverlapAllowed), so check explicitly here.
+  // A real appointment (clientId set) always stays DB-enforced below.
+  if (!input.clientId) {
+    await assertShiftOverlapAllowed(tx, tenantId, input.staffId, input.startTime, input.endTime);
   }
   try {
     return await tx.appointment.create({
@@ -77,9 +122,16 @@ export interface RescheduleInput {
 }
 
 /** Used for both a drag (time shift) and a resize (duration change) on the calendar - both are just a new [startTime, endTime). */
-export async function rescheduleAppointment(tx: Tx, { id, startTime, endTime }: RescheduleInput) {
+export async function rescheduleAppointment(tx: Tx, tenantId: string, { id, startTime, endTime }: RescheduleInput) {
   if (endTime <= startTime) {
     throw new Error("endTime must be after startTime");
+  }
+  const existing = await tx.appointment.findUniqueOrThrow({
+    where: { id },
+    select: { staffId: true, clientId: true },
+  });
+  if (!existing.clientId) {
+    await assertShiftOverlapAllowed(tx, tenantId, existing.staffId, startTime, endTime, id);
   }
   try {
     return await tx.appointment.update({
@@ -100,7 +152,14 @@ export async function cancelAppointment(tx: Tx, id: string) {
 }
 
 /** Reassigns a shift/appointment to a different staff member - goes through the same EXCLUDE-constraint-checked path as any other write. */
-export async function reassignAppointmentStaff(tx: Tx, id: string, staffId: string) {
+export async function reassignAppointmentStaff(tx: Tx, tenantId: string, id: string, staffId: string) {
+  const existing = await tx.appointment.findUniqueOrThrow({
+    where: { id },
+    select: { startTime: true, endTime: true, clientId: true },
+  });
+  if (!existing.clientId) {
+    await assertShiftOverlapAllowed(tx, tenantId, staffId, existing.startTime, existing.endTime, id);
+  }
   try {
     return await tx.appointment.update({ where: { id }, data: { staffId } });
   } catch (err) {

@@ -6,19 +6,17 @@ Day-to-day build status (what's done, what's verified) lives in `PROGRESS.md` �
 this file is just the backlog. For current API routes/data model/permissions,
 see `ARCHITECTURE.md`.
 
-## Bugs / UX fixes
+## Issues
 
-- **Layout shift when opening "+ Add appointment"/"+ Schedule shift".**
-  Reported 2026-10-01. First fix (`scrollbar-gutter: stable`) did **not**
-  resolve it - user confirmed still happening. Re-diagnosed: the "Cancel"
-  button was only mounted into the action-button row while `creating` was
-  set, growing that row's width and reflowing the settings box next to it -
-  correlates exactly with the reported trigger. **Second fix applied**:
-  Cancel is now always rendered (`invisible` class toggle instead of
-  conditional mount), so its appearance can never change the row's width.
-  Left the scrollbar-gutter fix in place too. **Still needs your browser
-  confirmation** - don't want to repeat declaring this fixed on code-reading
-  confidence alone twice in a row.
+Bugs, data-model problems, and known gaps now live in **`ISSUES.md`**, not
+here - this file is feature requests/backlog only. **High priority, at the
+top of that file:** service types wrongly shared between Appointments and
+Shifts; the color-tag settings card moved into Staff settings instead of
+Shifts/Appointments; no way to update a calendar event after it's created
+(e.g. log a no-show - `AppointmentStatus` already has `NO_SHOW`/`COMPLETED`
+but nothing can set them); and the manager no-show/shift reporting dashboard
+(plus its own new Staff-settings permission) that depends on that. See
+`ISSUES.md` for full detail.
 
 ## New feature requests (not started)
 
@@ -294,7 +292,7 @@ see `ARCHITECTURE.md`.
   split 2026-10-02 into a multi-page Settings nav (`SettingsNav.tsx`/
   `sections.ts`: Appointments/Shifts/Calendar/Company Profile/Staff/
   Permissions/Account, one page each), purely a navigation reorg, not a
-  permissions change. Every settings page is still hard-gated to ADMIN only
+  permissions change. ~~Every settings page is still hard-gated to ADMIN only
   (now one shared check in `getAdminTenant.ts` instead of each page's own
   redirect) - same as every other card there (`StaffManager`,
   `RolesAndPermissionsEditor`, etc.). A non-admin role granted
@@ -302,7 +300,32 @@ see `ARCHITECTURE.md`.
   at all, which is a pre-existing gap in the whole Settings access model,
   not something specific to this one card - flagging it rather than
   silently redesigning Settings-page access as a side effect of a
-  service-types request. The still-missing inline "+ Add new service type"
+  service-types request.~~ **Settings access model fixed 2026-10-02** - this
+  was the pre-existing gap flagged above, resolved as its own explicit
+  request ("move My account into Settings, everyone should reach Settings
+  but not all of it") rather than as a side effect of something else.
+  `getAdminTenant.ts` is gone; `admin/settings/access.ts`'s
+  `getSettingsContext`/`requireSettingsSection` replace it, and
+  `sections.ts` now carries a `requirement` per section (`"ALWAYS"` /
+  `"ADMIN"` / an existing `PermissionKey`) that both the nav (which sections
+  show up at all) and each section's own `page.tsx` (server-side 404 if
+  you're not entitled - the nav hiding a link was never real enforcement)
+  check. Appointments now shows `ServiceTypeManager` to anyone with
+  `VIEW_SERVICES` (the `AppointmentFormSettings` toggle card stays
+  admin-only-rendered since its API is still ADMIN-only); Staff is gated on
+  `VIEW_STAFF`. Shifts/Calendar/Company Profile/Permissions stay ADMIN-only
+  outright since every card in them is ADMIN-only at the API too (no
+  existing permission to delegate them through) - Permissions deliberately
+  stays a hardcoded ADMIN check forever, not a grantable permission, since a
+  role could otherwise grant itself more access. Account absorbed the
+  standalone `/app/[tenantSlug]/account` page that used to hold
+  `LanguageSettingsForm` (itself a pre-existing move of the language picker
+  out of the header's compact `LanguagePicker.tsx` dropdown, done earlier the
+  same day outside this request) - that route is deleted, `LanguageSettingsForm`
+  now renders alongside `ChangePasswordForm` on `/admin/settings/account`,
+  and the header's separate "My account" link is gone along with it. Account
+  stays open to everyone unconditionally. The still-missing inline
+  "+ Add new service type"
   in the calendar's create panel (mentioned for context in the original ask,
   not listed under "Needs:") also remains unbuilt.
   **Addendum 2026-10-02**: an explicit $0 price now displays the same as a
@@ -325,6 +348,21 @@ see `ARCHITECTURE.md`.
   see PROGRESS.md's "Shift form field toggles" entry: three real toggles
   (job type / job estimate / color key) plus a "Manage job types" link to
   the Service types card below it.
+- **A configurable visible time range for the calendar grid.** Raised
+  2026-10-02. `SchedulingCalendar` currently shows the full day (no
+  `slotMinTime`/`slotMaxTime`-style bound anywhere in the codebase); most
+  businesses only ever operate within a sub-range of that (e.g. 7am-7pm for a
+  day business, or an evening/overnight range for a night business), so a lot
+  of the grid is dead AM/PM space nobody needs to scroll past. Let a tenant
+  set a start/end time for the calendar's displayed range in Settings.
+  Distinct from the existing `WorkingHours` model (which isn't used anywhere
+  yet - see `ISSUES.md`) - that's about constraining *bookable* times
+  per staff member, this is purely about what the calendar *displays* by
+  default, though the two could end up sharing a settings UI later. Needs a
+  decision on whether out-of-range time should be hidden entirely or just
+  collapsed/scrollable, and whether it's one tenant-wide range or could vary
+  (e.g. different default per day of week) - probably one tenant-wide range
+  to start, same pattern as other Settings-level defaults.
 - **Time estimates in minutes or hours, interchangeably.** Job time estimates
   are currently a single "minutes" field - let the user enter/view in either
   unit.
@@ -420,14 +458,46 @@ see `ARCHITECTURE.md`.
   plan (Phase 2). Needs: a public, unauthenticated route (no tenant session)
   that reads real-time availability for a tenant, an actual
   availability-computation engine (not yet built - `WorkingHours` exists but
-  nothing reads it, see below), a booking flow that writes into the same
+  nothing reads it, see `ISSUES.md`), a booking flow that writes into the same
   `Appointment`/`EXCLUDE` constraint as admin-created bookings, and probably
   an embeddable widget/iframe or a hosted public page
   (`shiftup.app/<slug>/book`, matching what the signup form's "account URL"
   helper text already promises). Real design work needed before building -
   this is a meaningfully sized feature, not a quick add.
+- **Notes on an appointment.** Raised 2026-10-02. Let staff/admins attach
+  notes to an appointment (and presumably a shift too, same underlying
+  `Appointment` row) - part of the original architecture plan but never
+  built (see "Original roadmap phases not reached yet" below). Explicitly
+  flagged as wanting this **robust**, not a single plain-text afterthought -
+  needs a real design pass before building, including:
+  - **Multiple notes per appointment, not one field** - a running log (who
+    said what, when), not a single overwritable textarea.
+  - **Author + timestamp per note**, so it's clear who added what and when -
+    not anonymous/unattributed.
+  - **Edit/delete semantics** - can a note be edited or removed after the
+    fact, by whom (the author only? any admin?), and should an edit leave a
+    trace (edit history) or just overwrite silently.
+  - **Permissions** - likely new `VIEW_NOTES`/`CREATE_NOTES`/`EDIT_NOTES`/
+    `DELETE_NOTES` keys (same granular per-resource pattern already used for
+    staff/services/clients/appointments in `src/lib/permissions/catalog.ts`),
+    not just "whoever can already edit the appointment."
+  - **Visibility** - are all notes visible to every staff member who can see
+    the appointment, or is there an "internal only" vs. client-facing
+    distinction (relevant once the self-service booking portal/any
+    client-facing surface exists)?
+  - **Data model** - a new `AppointmentNote` table (`appointmentId`,
+    `authorId`, `body`, `createdAt`, maybe `editedAt`) rather than cramming
+    onto `Appointment` itself, to actually support the "multiple, attributed,
+    timestamped" shape above.
+  Needs these decisions made before implementation starts, not just a quick
+  schema add.
 - **README for GitHub.** Write/update a proper README and share it. (This one
   doesn't need live testing to do - worth picking off whenever.)
+- **Consider SEO.** Raised 2026-10-02. No decisions made yet - needs a pass on
+  the public-facing pages (`src/app/page.tsx`, `src/app/about/page.tsx`,
+  login/signup) for things like meta tags/Open Graph data, semantic
+  headings, sitemap.xml/robots.txt, and page load performance. Low priority
+  marketing/discoverability item, not a functional gap.
 - ~~Top-nav "Staff management" and "Appointment management" dropdown
   sections.~~ **Done 2026-10-01, later revised same day** - see PROGRESS.md's
   "Calendar layout-shift bug, actually fixed this time, and the nav bar split
@@ -487,77 +557,6 @@ see `ARCHITECTURE.md`.
   `hasPermission(..., "VIEW_ROSTER")` (ADMIN still always allowed) instead of
   a fixed role-name check - configurable per role like everything else now.
 
-## Known gaps in what's already built
-
-- **Roster could go blank for a role that holds `VIEW_ROSTER` without
-  `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`.** New interaction surfaced by the
-  shift/appointment visibility work (PROGRESS.md, 2026-10-02): `/calendar/roster`
-  (`RosterView.tsx`) is a manager-facing "see everyone's schedule, grouped by
-  person" tool, gated on `VIEW_ROSTER`, but it fetches its data from the same
-  `GET /api/appointments` the main calendar uses - which now scopes results to
-  the caller's own shifts/appointments unless they separately hold
-  `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`. The two defaults (Manager/
-  Supervisor get both `VIEW_ROSTER` and `VIEW_ALL_*`) keep this working out of
-  the box, but an admin who grants `VIEW_ROSTER` to a role without also
-  granting the `VIEW_ALL_*` pair would get a Roster page that only ever shows
-  that one person's own row - defeating the page's purpose. Not fixed here
-  deliberately - flagging rather than silently making `VIEW_ROSTER` imply full
-  visibility, since that conflates two permissions that are meant to be
-  independent.
-- **Checkout flow built, not yet live-tested.** `License.billingPlan` supports
-  `ONE_TIME` and `SUBSCRIPTION`, and real Stripe Checkout is wired up
-  (`src/lib/licensing/pricing.ts`, `POST /api/billing/checkout`,
-  `POST /api/billing/webhook`, `/app/[tenantSlug]/billing`) at the agreed
-  prices: Free (1 staff, 10 appointments/month, enforced), one-time $199/module
-  or $449 both, subscription $20/mo per module or $40/mo both. Billing lets a
-  tenant buy a different tier than whatever they're exploring for free.
-  PayPal is enabled for one-time purchases (Stripe-native, no separate
-  integration). **Not yet tested end-to-end** — needs a real Stripe test-mode
-  account (`STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` in `.env`), which
-  only you can provide. See PROGRESS.md for what's verified so far vs. not.
-  - Verify PayPal works for `SUBSCRIPTION` mode too once there's a live
-    account to test against — currently only enabled for `ONE_TIME`.
-  - **Not built at all**: the separate client-pays-business flow (Stripe
-    Connect, per-tenant accounts) — a different, larger piece tied to the
-    self-service booking portal. **Venmo was considered and deliberately not
-    built** — it needs its own Braintree/PayPal integration (separate from
-    Stripe entirely), not worth the complexity for a B2B software purchase.
-- ~~"Who can see who" isn't enforced yet.~~ **Done 2026-10-02, via a different
-  mechanism than the one this item originally pointed at** - see PROGRESS.md's
-  "Shift/appointment visibility: own-only by default, VIEW_ALL_SHIFTS/
-  VIEW_ALL_APPOINTMENTS to see everyone" entry. `RoleVisibility`/
-  `canViewRole()` (the per-role-pair "which roles can see which other roles"
-  matrix this item described) was a deliberate **not-chosen** option -
-  confirmed with the user, who picked two simple per-role booleans
-  (`VIEW_ALL_SHIFTS`, `VIEW_ALL_APPOINTMENTS`) instead, closer to "can see
-  outside your own" than a full role-to-role matrix. **`RoleVisibility`/
-  `canViewRole()` themselves remain exactly as unenforced as before** -
-  nothing in this change wires them up, and nothing currently plans to; if
-  that role-to-role granularity is wanted later it's still a separate,
-  unstarted piece of work, not a leftover bug in what shipped here.
-- **No part of `SchedulingCalendar`'s client-fetched UI can be confirmed by curl.**
-  Its permissions/staff/events all load via `useEffect` after hydration, so a
-  server-rendered curl check always sees `permissions = null` and skips every
-  block gated on it — the buttons, the staff filter, drag/resize, and the
-  color-coded events are all correct by code review and their underlying API
-  calls are genuinely tested, but none of their actual on-screen behavior has
-  been clicked through in a real browser (none available in the dev
-  environment). This is also why a future bug report in this area can't be
-  diagnosed from this side alone - a manual pass with specific symptoms helps a lot.
-- **`WorkingHours` isn't used anywhere yet.** The model exists but nothing
-  populates it or constrains bookable times to it — the calendar only
-  prevents literal double-booking, not booking outside a staff member's
-  actual hours. (This blocks the booking-widget feature above too.)
-- **No dedicated client manager.** Clients can now be searched/added inline
-  from the appointment form (name/email/phone/address, with confirm-address),
-  but there's still no standalone admin page to browse, edit, or delete an
-  existing client (`EDIT_CLIENTS`/`DELETE_CLIENTS` permissions already exist
-  in the catalog, just nothing in the UI calls them yet) - e.g. fixing a typo
-  in a client's phone number currently has no path except direct DB access.
-- ~~Calendar color key, custom color tags, and holidays: admin side is built,
-  the calendar itself isn't wired up yet.~~ **Done** - see PROGRESS.md's
-  "Calendar now consumes tenant colors, tags, and holidays" entry.
-
 ## Still-open Phase 0 infra (independent of app features)
 
 - CI workflow (`.github/workflows/ci.yml`) — lint/typecheck/test/build on push.
@@ -569,8 +568,9 @@ see `ARCHITECTURE.md`.
 ## Original roadmap phases not reached yet
 
 Per the architecture plan (now partly superseded by the pricing/role/permission
-changes, but the shape still holds): client/appointment notes (fully
-unbuilt), tenant holidays (built and wired into the calendar - see
+changes, but the shape still holds): client/appointment notes (fully unbuilt -
+now tracked as its own detailed entry above, under "New feature requests"),
+tenant holidays (built and wired into the calendar - see
 PROGRESS.md). (Tenant→platform Stripe payments
 are built - see PROGRESS.md; client-pays-business via Stripe Connect is the
 one payments piece still unbuilt, noted above under checkout; email

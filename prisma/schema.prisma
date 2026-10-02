@@ -120,6 +120,18 @@ model Tenant {
   showJobTypeOnShiftForm        Boolean  @default(true) @map("show_job_type_on_shift_form")
   showJobEstimateOnShiftForm    Boolean  @default(true) @map("show_job_estimate_on_shift_form")
   showColorKeyOnShiftForm       Boolean  @default(true) @map("show_color_key_on_shift_form")
+  /// Admin-configurable (Settings > "Shift form"): whether two shifts for the
+  /// same staff member are allowed to overlap in time (e.g. an overlapping
+  /// handoff, or someone covering two roles at once). Off by default - the
+  /// DB-level appointments_no_overlapping_staff_time EXCLUDE constraint only
+  /// ever covered client-having rows (real appointments) to begin with for
+  /// shifts this is enforced in application code (createAppointment/
+  /// rescheduleAppointment/reassignAppointmentStaff in
+  /// src/modules/scheduling/service.ts), not at the DB level, so it can be
+  /// switched per tenant. Never applies to appointments (clientId set) -
+  /// those stay always-no-overlap via the DB constraint, this setting only
+  /// relaxes the rule for clientless shift rows.
+  allowOverlappingShifts        Boolean  @default(false) @map("allow_overlapping_shifts")
   /// SUPERADMIN-only (dev console > Customers): blocks every user of this
   /// tenant from logging in. Checked in POST /api/auth/login only - an
   /// already-active session isn't revoked (sessions are stateless, see
@@ -198,18 +210,29 @@ model Role {
 /// eventColors overrides above, which only re-theme the 5 built-in
 /// categories rather than adding new ones.
 model EventTag {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id        String        @id @default(uuid())
+  tenantId  String        @map("tenant_id")
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String
   /// Hex color, e.g. "#2563eb".
   color     String
-  createdAt DateTime @default(now()) @map("created_at")
+  /// Which kind of entry this tag can be assigned to - BOTH (default) shows
+  /// up on every "Color key" picker, SHIFT/APPOINTMENT only on that one.
+  appliesTo EventTagScope @default(BOTH) @map("applies_to")
+  createdAt DateTime      @default(now()) @map("created_at")
 
   appointments Appointment[]
 
   @@index([tenantId])
   @@map("event_tags")
+}
+
+enum EventTagScope {
+  SHIFT
+  APPOINTMENT
+  BOTH
+
+  @@map("event_tag_scope")
 }
 
 /// A day the business is closed/observing, shown on the calendar. Federal

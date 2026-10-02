@@ -208,7 +208,11 @@ export default async function DashboardPage({
               )}
               {result.license && (
                 <span className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm">
-                  {result.license.billingPlan === "FREE" ? t("freePlan") : result.license.billingPlan}
+                  {result.license.billingPlan === "FREE"
+                    ? t("freePlan")
+                    : result.license.billingPlan === "ONE_TIME"
+                      ? t("oneTimePlan")
+                      : t("subscriptionPlan")}
                 </span>
               )}
             </div>

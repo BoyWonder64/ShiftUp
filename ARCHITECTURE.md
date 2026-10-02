@@ -60,14 +60,14 @@ Full detail (fields, relations, doc comments) lives in
 
 | Model | What it is |
 |---|---|
-| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `eventColors`, `showFederalHolidays`. |
+| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `eventColors`, `showFederalHolidays`, `allowOverlappingShifts`. |
 | `User` | Login-capable account. `tenantId` null only for SUPERADMIN. |
 | `License` | Entitlement (tier + billing plan), one per tenant. |
 | `StaffProfile` | A `User` who can be scheduled; has `WorkingHours` (modeled, **not yet enforced anywhere**). |
 | `ServiceType` | A bookable service (duration, price). |
 | `Client` | A customer/guest (name, email, phone, address). Guest-first, no login. |
 | `Appointment` | One scheduled visit/shift. `clientId` null = shift, not appointment (this is the *only* distinction between the two in the data model - no `kind` column). Has `tagId` → `EventTag` for custom coloring. |
-| `EventTag` | Tenant-defined custom color tag assignable to an `Appointment`. |
+| `EventTag` | Tenant-defined custom color tag assignable to an `Appointment`. `appliesTo` (`SHIFT`/`APPOINTMENT`/`BOTH`, default `BOTH`) scopes which calendar picker it shows up on. |
 | `Holiday` | Tenant-added custom holiday (name, date, recurring). Federal holidays are **computed, never stored** - see `src/lib/holidays/federal.ts`. |
 | `TimeOff` | Staff leave request + approval workflow. |
 | `RolePermission` / `RoleVisibility` | Per-tenant overrides of the hardcoded permission/visibility defaults. |
@@ -87,7 +87,7 @@ stay thin.
 | `tenancy` | Creating a `Tenant`. |
 | `identity` | Creating/finding `User`s. |
 | `licensing` | Creating a free `License` on signup. |
-| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError`), coverage-finder (`findCoverageCandidates`); `templates.ts` - schedule-template CRUD, apply-preview/apply (`planTemplateApply`/`applyTemplate`). |
+| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError` - DB-enforced for appointments with a client; for clientless shifts the constraint no longer applies and overlap is instead checked in app code, gated on `Tenant.allowOverlappingShifts`), coverage-finder (`findCoverageCandidates`); `templates.ts` - schedule-template CRUD, apply-preview/apply (`planTemplateApply`/`applyTemplate`). |
 | `timeoff` | Time-off request/approval, `staffOnApprovedLeave()` (feeds the coverage finder). |
 
 ## API routes (`src/app/api/**/route.ts`)
@@ -102,7 +102,7 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/me/permissions` | GET | session | Caller's own effective permission map - what the client UI gates on. |
 | `/api/admin/permissions` | GET, PUT | ADMIN | Read/edit the tenant's permission + visibility matrix. |
 | `/api/admin/logo` | POST, DELETE | ADMIN | Upload/remove the tenant logo (stored as a `data:` URL, no blob storage). |
-| `/api/tenant-settings` | GET, PUT | session (GET) / ADMIN (PUT) | `requireClientForAppointments`, `enableMapsNavigation`, `eventColors`, `showFederalHolidays` - one settings bucket, partial-update PUT. |
+| `/api/tenant-settings` | GET, PUT | session (GET) / ADMIN (PUT) | `requireClientForAppointments`, `enableMapsNavigation`, `eventColors`, `showFederalHolidays`, `allowOverlappingShifts` - one settings bucket, partial-update PUT. |
 | `/api/staff` | GET, POST | `VIEW_STAFF` / `CREATE_STAFF` | List/add staff (never serialize `passwordHash` - see PROGRESS.md for the bug this caused once). |
 | `/api/service-types` | GET, POST | `VIEW_SERVICES` / `CREATE_SERVICES` | |
 | `/api/clients` | GET, POST | `VIEW_CLIENTS` / `CREATE_CLIENTS` | |
@@ -137,13 +137,21 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
 - `billing` — plan display + pricing deck (`PricingDeck.tsx`).
 - `admin/settings` — Settings, split across a landing page of links
   (`page.tsx`) plus one page per section under a shared `layout.tsx`
-  (auth/tenant lookup + `AppHeader` + `SettingsNav` tabs, all ADMIN-only):
-  `appointments` (`AppointmentFormSettings`, `ServiceTypeManager`), `shifts`
-  (`ShiftFormSettings`), `calendar` (`EventColorSettings`/`EventTagManager`,
-  `HolidaySettings`), `company-profile` (`LogoSettings`), `staff`
-  (`StaffManager`), `permissions` (`RolesAndPermissionsEditor`, `RoleDetailPanel`),
-  `account` (`ChangePasswordForm`). Was one long page at `admin/users`
-  before 2026-10-02 - see PROGRESS.md.
+  (auth/tenant lookup + `AppHeader` + `SettingsNav` tabs). Reachable by any
+  signed-in tenant member (ADMIN or STAFF), not just ADMIN - which sections a
+  given member sees is decided per-section by `sections.ts`' `requirement`
+  (`"ALWAYS"`, `"ADMIN"`, or an existing `PermissionKey`) and enforced
+  server-side by `access.ts`'s `getSettingsContext`/`requireSettingsSection`,
+  not just hidden from the nav: `appointments` (`AppointmentFormSettings` -
+  ADMIN-only card, `ServiceTypeManager` - gated on `VIEW_SERVICES`), `shifts`
+  (`ShiftFormSettings` - ADMIN-only), `calendar`
+  (`EventColorSettings`/`EventTagManager`, `HolidaySettings` - ADMIN-only),
+  `company-profile` (`LogoSettings` - ADMIN-only), `staff` (`StaffManager` -
+  gated on `VIEW_STAFF`), `permissions` (`RolesAndPermissionsEditor`,
+  `RoleDetailPanel` - hardcoded ADMIN-only, never permission-delegable, since
+  a role could otherwise grant itself more permissions), `account`
+  (`ChangePasswordForm`, `LanguageSettingsForm` - every role, never gated).
+  Was one long page at `admin/users` before 2026-10-02 - see PROGRESS.md.
 
 ## Where the narrative detail lives
 

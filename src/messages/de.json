@@ -18,12 +18,19 @@
     "DE": "Deutsch",
     "FR": "Französisch"
   },
+  "AccountPage": {
+    "languageSectionTitle": "Sprache",
+    "languageSectionDescription": "Wähle die Sprache, die für dein gesamtes Konto verwendet wird.",
+    "saved": "Gespeichert."
+  },
   "Dashboard": {
     "signedInAs": "Angemeldet als <b>{role}</b>",
     "yourAccess": "Deine Berechtigungen",
     "yourAccessSubtitle": "Was deine Rolle in diesem Konto sehen und tun kann.",
     "plan": "Tarif",
     "freePlan": "Kostenloser Tarif",
+    "oneTimePlan": "Einmalzahlung",
+    "subscriptionPlan": "Abonnement",
     "shiftManagementBadge": "Schichtplanung",
     "appointmentManagerBadge": "Terminverwaltung",
     "fullAccess": "Als <b>{role}</b> hast du vollen Zugriff auf alles in diesem Konto.",

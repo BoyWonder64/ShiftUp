@@ -27,6 +27,10 @@ export async function GET() {
 const createSchema = z.object({
   name: z.string().min(1).max(60),
   color: z.string().refine(isValidHexColor, "Must be a #rrggbb hex color."),
+  // Defaults to BOTH for callers that don't care (e.g. the Settings "Your
+  // own" list) - the calendar's inline "+ Add new color key" flows pass the
+  // mode they're invented in (SHIFT/APPOINTMENT) explicitly instead.
+  appliesTo: z.enum(["SHIFT", "APPOINTMENT", "BOTH"]).default("BOTH"),
 });
 
 // Gated on CREATE_APPOINTMENTS, not an ADMIN-only check - a new tag is a
@@ -46,7 +50,12 @@ export async function POST(request: NextRequest) {
       const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS");
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.eventTag.create({
-        data: { tenantId: session.tenantId, name: parsed.data.name, color: parsed.data.color },
+        data: {
+          tenantId: session.tenantId,
+          name: parsed.data.name,
+          color: parsed.data.color,
+          appliesTo: parsed.data.appliesTo,
+        },
       });
     });
 

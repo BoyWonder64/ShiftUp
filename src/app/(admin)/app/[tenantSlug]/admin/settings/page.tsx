@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SETTINGS_SECTIONS } from "./sections";
+import { getSettingsContext } from "./access";
 
 export default async function SettingsIndexPage({
   params,
@@ -7,11 +7,12 @@ export default async function SettingsIndexPage({
   params: Promise<{ tenantSlug: string }>;
 }) {
   const { tenantSlug } = await params;
+  const { visibleSections } = await getSettingsContext(tenantSlug);
   const base = `/app/${tenantSlug}/admin/settings`;
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
-      {SETTINGS_SECTIONS.map((section) => (
+      {visibleSections.map((section) => (
         <Link
           key={section.slug}
           href={`${base}/${section.slug}`}

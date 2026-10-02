@@ -173,10 +173,10 @@ export function ServiceTypeManager() {
     <section id="service-types" className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Service types</h2>
       <p className="mt-1 text-sm text-gray-500">
-        The job types staff pick from when scheduling an appointment - name, default duration, and an
-        optional price. Leave price blank for work that doesn&apos;t have one (e.g. a police call-out); an
+        The job types staff pick from when scheduling an appointment or shift - name, default duration, and an
+        optional price. Leave price blank for work that doesn&apos;t have one (e.g. unbilled visits); an
         explicit $0 is stored separately but displays the same way - neither one shows a price. Turn a
-        service type off to hide it from new scheduling without losing it from past appointments.
+        service type off to hide it from new scheduling without losing it from past appointments or shifts.
       </p>
 
       {loading ? (
@@ -311,7 +311,7 @@ export function ServiceTypeManager() {
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Drain cleaning"
+                placeholder="e.g. Standard visit"
                 maxLength={200}
                 className="rounded-md border border-gray-300 px-2 py-1"
               />

@@ -1,5 +1,5 @@
 import { AppHeader } from "@/components/AppHeader";
-import { getAdminTenant } from "./getAdminTenant";
+import { getSettingsContext } from "./access";
 import { SettingsNav } from "./SettingsNav";
 
 export default async function SettingsLayout({
@@ -10,16 +10,17 @@ export default async function SettingsLayout({
   params: Promise<{ tenantSlug: string }>;
 }) {
   const { tenantSlug } = await params;
-  const tenant = await getAdminTenant(tenantSlug);
+  const { role, tenant, visibleSections, canViewRoster, canViewScheduleTemplates } =
+    await getSettingsContext(tenantSlug);
 
   return (
     <div className="flex flex-1 flex-col">
       <AppHeader
         tenantSlug={tenantSlug}
         businessName={tenant.name}
-        role="ADMIN"
-        canViewRoster
-        canViewScheduleTemplates
+        role={role}
+        canViewRoster={canViewRoster}
+        canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
       />
@@ -27,7 +28,7 @@ export default async function SettingsLayout({
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
         </div>
-        <SettingsNav tenantSlug={tenantSlug} />
+        <SettingsNav tenantSlug={tenantSlug} sections={visibleSections} />
         {children}
       </main>
     </div>

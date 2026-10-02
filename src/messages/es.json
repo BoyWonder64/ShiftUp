@@ -18,12 +18,19 @@
     "DE": "Alemán",
     "FR": "Francés"
   },
+  "AccountPage": {
+    "languageSectionTitle": "Idioma",
+    "languageSectionDescription": "Elige el idioma que se usará en toda tu cuenta.",
+    "saved": "Guardado."
+  },
   "Dashboard": {
     "signedInAs": "Conectado como <b>{role}</b>",
     "yourAccess": "Tu acceso",
     "yourAccessSubtitle": "Lo que tu rol puede ver y hacer en esta cuenta.",
     "plan": "Plan",
     "freePlan": "Plan gratuito",
+    "oneTimePlan": "Plan de pago único",
+    "subscriptionPlan": "Plan de suscripción",
     "shiftManagementBadge": "Gestión de turnos",
     "appointmentManagerBadge": "Gestión de citas",
     "fullAccess": "Como <b>{role}</b>, tienes acceso completo a todo en esta cuenta.",

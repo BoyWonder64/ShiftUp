@@ -56,8 +56,9 @@ export default async function ReadOnlyCalendarPage({
         canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
+        maxWidthClassName="max-w-[1600px]"
       />
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
+      <main className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-8">
         <div className="flex items-center gap-4">
           {tenant.logoDataUrl && (
             // eslint-disable-next-line @next/next/no-img-element -- per-tenant admin-uploaded data: URL, not a static/optimizable asset

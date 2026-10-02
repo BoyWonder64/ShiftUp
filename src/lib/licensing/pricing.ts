@@ -1,4 +1,4 @@
-import type { LicenseTier } from "@/generated/prisma/client";
+import type { BillingPlan, LicenseTier } from "@/generated/prisma/client";
 
 /**
  * Agreed price points (confirmed 2026-10-01), midpoints of the ranges
@@ -23,6 +23,20 @@ export const FEATURE_TIER_LABELS: Record<LicenseTier, string> = {
   SHIFT_MANAGEMENT: "Shift management",
   APPOINTMENT_MANAGER: "Appointment manager",
   BOTH: "Shift management + Appointment manager",
+};
+
+/** Human-readable labels for the raw BillingPlan enum values (FREE/ONE_TIME/SUBSCRIPTION) - used anywhere the plan is shown instead of printing the enum name directly. */
+export const BILLING_PLAN_LABELS: Record<BillingPlan, string> = {
+  FREE: "Free",
+  ONE_TIME: "One-time",
+  SUBSCRIPTION: "Subscription",
+};
+
+/** One-line explanation of what each billing plan actually means, for a tooltip/caption next to BILLING_PLAN_LABELS. */
+export const BILLING_PLAN_DESCRIPTIONS: Record<BillingPlan, string> = {
+  FREE: "No payment - limited to the free tier's usage caps.",
+  ONE_TIME: "Pays once for lifetime access to the module(s) - no recurring charge.",
+  SUBSCRIPTION: "Recurring monthly charge for the module(s), billed until cancelled.",
 };
 
 export function formatCents(cents: number): string {

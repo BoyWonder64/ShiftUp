@@ -33,6 +33,8 @@ export function StaffManager() {
   const [roleId, setRoleId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function loadStaff() {
     try {
@@ -84,6 +86,20 @@ export function StaffManager() {
       setFormError(err instanceof Error ? err.message : "Couldn't add staff.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleDelete(s: StaffRow) {
+    if (!window.confirm(`Remove ${s.displayName} from staff? This can't be undone.`)) return;
+    setDeleteError(null);
+    setDeletingId(s.id);
+    try {
+      await fetchJson(`/api/staff/${s.id}`, { method: "DELETE" });
+      await loadStaff();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Couldn't remove staff.");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -178,18 +194,19 @@ export function StaffManager() {
               <th className="px-4 py-2 font-medium">Username</th>
               <th className="px-4 py-2 font-medium">Email</th>
               <th className="px-4 py-2 font-medium">Role</th>
+              <th className="px-4 py-2 font-medium" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td className="px-4 py-3 text-gray-400" colSpan={4}>
+                <td className="px-4 py-3 text-gray-400" colSpan={5}>
                   Loading...
                 </td>
               </tr>
             ) : staff.length === 0 ? (
               <tr>
-                <td className="px-4 py-3 text-gray-400" colSpan={4}>
+                <td className="px-4 py-3 text-gray-400" colSpan={5}>
                   No staff yet.
                 </td>
               </tr>
@@ -200,12 +217,23 @@ export function StaffManager() {
                   <td className="px-4 py-2 text-gray-600">{s.user.username ?? "—"}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.email}</td>
                   <td className="px-4 py-2 text-gray-600">{s.user.customRole?.name ?? s.user.role}</td>
+                  <td className="px-4 py-2 text-right">
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(s)}
+                      disabled={deletingId === s.id}
+                      className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50"
+                    >
+                      {deletingId === s.id ? "Removing..." : "Remove"}
+                    </button>
+                  </td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+      {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
       {loadError && <p className="text-sm text-red-600">{loadError}</p>}
     </section>
   );

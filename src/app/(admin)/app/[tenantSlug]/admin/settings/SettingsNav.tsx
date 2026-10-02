@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { SETTINGS_SECTIONS } from "./sections";
+import type { SettingsSection } from "./sections";
 
-export function SettingsNav({ tenantSlug }: { tenantSlug: string }) {
+export function SettingsNav({ tenantSlug, sections }: { tenantSlug: string; sections: SettingsSection[] }) {
   const pathname = usePathname();
   const base = `/app/${tenantSlug}/admin/settings`;
 
   return (
     <nav className="flex flex-wrap gap-1 border-b border-gray-200 pb-3">
-      {SETTINGS_SECTIONS.map((section) => {
+      {sections.map((section) => {
         const href = `${base}/${section.slug}`;
         const active = pathname === href;
         return (

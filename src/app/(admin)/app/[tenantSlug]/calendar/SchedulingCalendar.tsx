@@ -6,7 +6,6 @@ import {
   dateFnsLocalizer,
   type SlotInfo,
   type View,
-  type ToolbarProps,
 } from "react-big-calendar";
 import withDragAndDrop, { type EventInteractionArgs } from "react-big-calendar/lib/addons/dragAndDrop";
 import { format, parse, startOfWeek, getDay } from "date-fns";
@@ -26,6 +25,9 @@ import {
   type EventColorKey,
 } from "@/lib/colors/eventColors";
 import { getCustomHolidaysInRange, getFederalHolidaysInRange, type ComputedHoliday } from "@/lib/holidays/federal";
+import { CalendarToolbar } from "./CalendarToolbar";
+import { CalendarLegend } from "./CalendarLegend";
+import { MiniMonthCalendar } from "./MiniMonthCalendar";
 
 // Pass date-fns's startOfWeek directly - dateFnsLocalizer only ever calls it
 // as startOfWeek(new Date(), { locale }) internally (see
@@ -41,156 +43,10 @@ const localizer = dateFnsLocalizer({
   locales: { "en-US": enUS },
 });
 
-const DnDCalendar = withDragAndDrop<CalendarEvent, object>(Calendar);
-
-const MONTH_NAMES = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
-];
-
-/**
- * Custom toolbar replacing react-big-calendar's default one, so the current
- * month/year label can be clicked to jump straight to an arbitrary month and
- * year instead of only stepping one view at a time via Back/Next. Calling
- * onNavigate("DATE", target) here goes through the same chain as the
- * library's own Back/Next/Today buttons, which bubbles up to the controlled
- * currentDate/currentView state in SchedulingCalendar.
- */
-function CalendarToolbar({
-  date,
-  view,
-  views,
-  label,
-  onNavigate,
-  onView,
-}: ToolbarProps<CalendarEvent, object>) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerMonth, setPickerMonth] = useState(date.getMonth());
-  const [pickerYear, setPickerYear] = useState(date.getFullYear());
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!pickerOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [pickerOpen]);
-
-  function openPicker() {
-    setPickerMonth(date.getMonth());
-    setPickerYear(date.getFullYear());
-    setPickerOpen(true);
-  }
-
-  function goToPicked() {
-    onNavigate("DATE", new Date(pickerYear, pickerMonth, 1));
-    setPickerOpen(false);
-  }
-
-  const viewList = Array.isArray(views) ? views : (Object.keys(views) as View[]);
-
-  return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-      <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1">
-        <button
-          type="button"
-          onClick={() => onNavigate("TODAY")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
-        >
-          Today
-        </button>
-        <button
-          type="button"
-          onClick={() => onNavigate("PREV")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
-        >
-          Back
-        </button>
-        <button
-          type="button"
-          onClick={() => onNavigate("NEXT")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
-        >
-          Next
-        </button>
-      </div>
-
-      <div className="relative inline-block">
-        <button
-          type="button"
-          onClick={openPicker}
-          className="cursor-pointer rounded-full px-3 py-1 text-lg font-bold tracking-wide text-gray-900 uppercase transition-colors duration-150 hover:text-primary-600"
-          title="Click to jump to a specific month and year"
-        >
-          {label}
-        </button>
-        {pickerOpen && (
-          <div
-            ref={popoverRef}
-            className="absolute top-full left-1/2 z-20 mt-1 flex -translate-x-1/2 flex-col gap-2 rounded-lg border border-gray-200 bg-white p-3 shadow-lg"
-          >
-            <div className="flex gap-2">
-              <select
-                value={pickerMonth}
-                onChange={(e) => setPickerMonth(Number(e.target.value))}
-                className="rounded-md border border-gray-300 px-2 py-1 text-sm font-normal normal-case"
-              >
-                {MONTH_NAMES.map((m, i) => (
-                  <option key={m} value={i}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                value={pickerYear}
-                onChange={(e) => setPickerYear(Number(e.target.value))}
-                className="w-20 rounded-md border border-gray-300 px-2 py-1 text-sm font-normal"
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setPickerOpen(false)}
-                className="rounded-md px-2 py-1 text-xs font-normal normal-case text-gray-500 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={goToPicked}
-                className="rounded-md bg-primary-500 px-2 py-1 text-xs font-normal normal-case text-white hover:bg-primary-600"
-              >
-                Go
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1">
-        {viewList.map((v) => (
-          <button
-            key={v}
-            type="button"
-            onClick={() => onView(v)}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold tracking-wide uppercase transition-all duration-150 ${
-              v === view
-                ? "bg-primary-500 text-white shadow-sm"
-                : "text-gray-600 hover:bg-white hover:text-primary-600 hover:shadow-sm"
-            }`}
-          >
-            {v}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
+// TResource = StaffOption - lets the resource-view props below
+// (resourceIdAccessor/resourceTitleAccessor/resourceAccessor) be typed
+// against the real staff shape instead of a bare `object`.
+const DnDCalendar = withDragAndDrop<CalendarEvent, StaffOption>(Calendar);
 
 /**
  * Fills the Week/Day time-grid's otherwise-blank top-left corner cell
@@ -270,6 +126,7 @@ export interface TagOption {
   id: string;
   name: string;
   color: string;
+  appliesTo: "SHIFT" | "APPOINTMENT" | "BOTH";
 }
 export interface HolidayOption {
   id: string;
@@ -297,7 +154,7 @@ export interface ApiAppointment {
   serviceType: ServiceTypeOption | null;
   staff: StaffOption;
 }
-interface CalendarEvent {
+export interface CalendarEvent {
   id: string;
   title: string;
   start: Date;
@@ -382,6 +239,12 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
 
 export function isShift(appt: ApiAppointment): boolean {
   return !appt.clientId;
+}
+
+/** A tag tagged BOTH shows on either picker; SHIFT/APPOINTMENT only shows on its own. */
+function tagsForMode(tags: TagOption[], mode: EntryMode): TagOption[] {
+  const scope = mode === "shift" ? "SHIFT" : "APPOINTMENT";
+  return tags.filter((t) => t.appliesTo === "BOTH" || t.appliesTo === scope);
 }
 
 /** Shared with RosterView.tsx, which renders the same chip label without the "(staff name)" suffix - each chip already sits under that staff member's row. */
@@ -544,7 +407,20 @@ export function SchedulingCalendar({
     return { start, end };
   });
   const [selected, setSelected] = useState<ApiAppointment | null>(null);
-  const [creating, setCreating] = useState<{ start: Date; end: Date; mode: EntryMode } | null>(null);
+  const [creating, setCreating] = useState<
+    { start: Date; end: Date; mode: EntryMode; defaultStaffId?: string } | null
+  >(null);
+  // Only populated when calendarType === "both" and a slot is selected - in
+  // that view there's no toggle state to infer the right mode from, so a
+  // tiny chooser asks once instead of guessing (see onSelectSlot below).
+  const [pendingSlot, setPendingSlot] = useState<{ start: Date; end: Date; defaultStaffId?: string } | null>(null);
+  // "Group by staff" - splits the Day view into one column per staff member
+  // (react-big-calendar's resource view) instead of cramming every shift
+  // into a single column as narrow slivers once there are more than a
+  // handful at once. Only meaningful for Day view (a resourced Week view
+  // would render staff x 7 columns, far too wide - see TimeGrid's
+  // renderResourcesFirst), so switching away from Day turns it back off.
+  const [groupByStaff, setGroupByStaff] = useState(false);
   // Whether the create panel has finished its entrance transition - kept
   // separate from `creating` itself so the panel doesn't just snap into
   // view the instant a slot is selected. The draft "ghost" event on the
@@ -567,15 +443,24 @@ export function SchedulingCalendar({
   // same as the time-grid granularity switcher above.
   const [amPmHalf, setAmPmHalf] = useState<"AM" | "PM">("AM");
   const [creationCount, setCreationCount] = useState(() => readCreationCount());
+  // Separate from the generic `error` state above (used by the unrelated
+  // staff/settings/reschedule loaders) so a retry button here can target
+  // just this one fetch without ambiguity over which failure it's retrying.
+  const [appointmentsLoading, setAppointmentsLoading] = useState(true);
+  const [appointmentsError, setAppointmentsError] = useState<string | null>(null);
 
   const loadAppointments = useCallback(async (r: { start: Date; end: Date }) => {
+    setAppointmentsLoading(true);
+    setAppointmentsError(null);
     try {
       const params = new URLSearchParams({ start: r.start.toISOString(), end: r.end.toISOString() });
       if (viewScope === "mine") params.set("view", "mine");
       const data = await fetchJson<{ appointments: ApiAppointment[] }>(`/api/appointments?${params.toString()}`);
       setEvents(data.appointments.map(toEvent));
     } catch {
-      setError("Couldn't load appointments.");
+      setAppointmentsError("Couldn't load appointments.");
+    } finally {
+      setAppointmentsLoading(false);
     }
   }, [viewScope]);
 
@@ -694,6 +579,16 @@ export function SchedulingCalendar({
     }
   }, [panelVisible]);
 
+  // Leaving Day view (via the toolbar's Week/Month/Agenda buttons, or
+  // onView below) turns "Group by staff" back off, since it only renders as
+  // resource columns there (see groupByStaff's declaration) - done in this
+  // handler rather than an effect so it's a direct response to the nav
+  // click, not a synchronized derived-state update.
+  const handleViewChange = useCallback((view: View) => {
+    setCurrentView(view);
+    if (view !== "day") setGroupByStaff(false);
+  }, []);
+
   const handleRangeChange = useCallback((r: Date[] | { start: Date; end: Date }) => {
     if (Array.isArray(r)) {
       if (r.length === 0) return;
@@ -703,12 +598,19 @@ export function SchedulingCalendar({
     }
   }, []);
 
-  async function applyReschedule(id: string, start: Date, end: Date) {
+  // staffId is only passed in "Group by staff" Day view, when a drag lands
+  // in a different person's column than the event started in - reassigns in
+  // the same request as the reschedule, rather than two round trips.
+  async function applyReschedule(id: string, start: Date, end: Date, staffId?: string) {
     try {
       await fetchJson(`/api/appointments/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startTime: start.toISOString(), endTime: end.toISOString() }),
+        body: JSON.stringify({
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          ...(staffId ? { staffId } : {}),
+        }),
       });
       await loadAppointments(range);
     } catch (err) {
@@ -720,13 +622,23 @@ export function SchedulingCalendar({
   // Dragging/resizing the draft event just adjusts the pending creation's
   // start/end in place - nothing to persist until the form is submitted.
   // Dragging/resizing a real event reschedules it immediately, as before.
+  // `resourceId` is only present in "Group by staff" Day view - dragging a
+  // shift into another person's column reassigns it to them.
   const handleEventDrop = useCallback(
-    ({ event, start, end }: EventInteractionArgs<CalendarEvent>) => {
+    ({ event, start, end, resourceId }: EventInteractionArgs<CalendarEvent>) => {
+      const newStaffId = typeof resourceId === "string" ? resourceId : undefined;
       if (event.id === DRAFT_EVENT_ID) {
-        setCreating((prev) => (prev ? { ...prev, start: start as Date, end: end as Date } : prev));
+        setCreating((prev) =>
+          prev ? { ...prev, start: start as Date, end: end as Date, defaultStaffId: newStaffId ?? prev.defaultStaffId } : prev
+        );
         return;
       }
-      void applyReschedule(event.id, start as Date, end as Date);
+      void applyReschedule(
+        event.id,
+        start as Date,
+        end as Date,
+        newStaffId && newStaffId !== event.resource.staffId ? newStaffId : undefined
+      );
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [range]
@@ -785,10 +697,23 @@ export function SchedulingCalendar({
       title: creating.mode === "shift" ? "New shift" : "New appointment",
       start: creating.start,
       end: creating.end,
-      resource: DRAFT_RESOURCE,
+      // In "Group by staff" Day view, resourceAccessor reads staffId off
+      // this to place the draft in the right column - whichever column was
+      // clicked/dragged into (see onSelectSlot/handleEventDrop), falling
+      // back to DRAFT_RESOURCE's empty id (no column) otherwise.
+      resource: creating.defaultStaffId ? { ...DRAFT_RESOURCE, staffId: creating.defaultStaffId } : DRAFT_RESOURCE,
     };
     return [...visibleEvents, draft];
   }, [visibleEvents, creating]);
+
+  // Day view only (see groupByStaff's declaration above for why) - the
+  // staff filter dropdown still narrows which column(s) show, same as it
+  // narrows the normal combined view.
+  const resourceViewActive = groupByStaff && currentView === "day" && staff.length > 1;
+  const resourceStaff = useMemo(
+    () => (staffFilter === "all" ? staff : staff.filter((s) => s.id === staffFilter)),
+    [staff, staffFilter]
+  );
 
   const eventPropGetter = useCallback(
     (event: CalendarEvent) => {
@@ -853,7 +778,14 @@ export function SchedulingCalendar({
         (calendarType !== "shift" || key !== "appointment") &&
         (calendarType !== "appointment" || key !== "shift")
     ).map((key) => ({ key, label: EVENT_COLOR_LABELS[key], color: colorTriples[key].bg }));
-    const tagItems = tags.map((t) => ({ key: t.id, label: t.name, color: t.color }));
+    const tagItems = tags
+      .filter(
+        (t) =>
+          t.appliesTo === "BOTH" ||
+          (calendarType !== "shift" && t.appliesTo === "APPOINTMENT") ||
+          (calendarType !== "appointment" && t.appliesTo === "SHIFT")
+      )
+      .map((t) => ({ key: t.id, label: t.name, color: t.color }));
     return [...base, ...tagItems];
   }, [calendarType, colorTriples, tags]);
 
@@ -949,6 +881,38 @@ export function SchedulingCalendar({
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {/* Splits the Day view into one column per staff member so it stays
+              readable once there are more than a handful of shifts at once,
+              and makes it easy to spot who's working alongside whom. Only
+              wired up for Day view (see groupByStaff's declaration) - the
+              button still shows elsewhere so switching views doesn't hide
+              the control, but clicking it jumps to Day view too. */}
+          {staff.length > 1 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Layout</span>
+              <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+                {(["combined", "staff"] as const).map((layout) => (
+                  <button
+                    key={layout}
+                    type="button"
+                    onClick={() => {
+                      if (layout === "staff") setCurrentView("day");
+                      setGroupByStaff(layout === "staff");
+                    }}
+                    title={layout === "staff" ? "One column per staff member (Day view)" : "Everyone in one combined view"}
+                    className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                      (layout === "staff") === groupByStaff
+                        ? "bg-primary-500 text-white shadow-sm"
+                        : "text-gray-600 hover:text-primary-600"
+                    }`}
+                  >
+                    {layout === "staff" ? "By staff" : "Combined"}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1059,7 +1023,9 @@ export function SchedulingCalendar({
           <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
             {features.appointmentManager && (
               <button
-                onClick={() => setCreating({ ...nextHourSlot(), mode: "appointment" })}
+                onClick={() =>
+                  setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
+                }
                 className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
               >
                 + Add appointment
@@ -1067,7 +1033,7 @@ export function SchedulingCalendar({
             )}
             {features.shiftManagement && (
               <button
-                onClick={() => setCreating({ ...nextHourSlot(), mode: "shift" })}
+                onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
                 className="rounded-lg bg-shift-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-shift-500)_0%,var(--color-shift-700)_100%)] hover:shadow-md"
               >
                 + Schedule shift
@@ -1091,81 +1057,168 @@ export function SchedulingCalendar({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-2.5">
-        {legendItems.map((item) => (
-          <div key={item.key} className="flex items-center gap-1.5 text-xs text-gray-600">
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: item.color }}
-            />
-            {item.label}
+      <div className="flex flex-col gap-4 lg:flex-row">
+        <div className="flex min-w-0 flex-1 flex-col gap-4">
+          <div
+            ref={calendarWrapperRef}
+            style={{ height: 650 }}
+            className="relative rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+          >
+            {appointmentsLoading && events.length === 0 ? (
+              <div className="flex h-full animate-pulse flex-col gap-3 p-2">
+                <div className="h-8 w-full rounded-md bg-gray-100" />
+                <div className="h-full w-full rounded-md bg-gray-100" />
+              </div>
+            ) : appointmentsError && events.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                <p className="text-sm text-gray-600">{appointmentsError}</p>
+                <button
+                  type="button"
+                  onClick={() => void loadAppointments(range)}
+                  className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-primary-600"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                {appointmentsError && (
+                  <p className="mb-2 rounded-md bg-red-50 px-3 py-1.5 text-xs text-red-700">
+                    {appointmentsError} Showing the last loaded data.{" "}
+                    <button
+                      type="button"
+                      onClick={() => void loadAppointments(range)}
+                      className="font-medium underline hover:no-underline"
+                    >
+                      Retry
+                    </button>
+                  </p>
+                )}
+                <DnDCalendar
+                  localizer={localizer}
+                  events={calendarEvents}
+                  startAccessor="start"
+                  endAccessor="end"
+                  date={currentDate}
+                  view={currentView}
+                  onNavigate={(date) => setCurrentDate(date)}
+                  onView={handleViewChange}
+                  views={["month", "week", "day", "agenda"]}
+                  components={{ toolbar: CalendarToolbar, event: EventContent, timeGutterHeader: TimeGutterHeader }}
+                  step={timeStep}
+                  timeslots={1}
+                  min={gridMinTime}
+                  max={gridMaxTime}
+                  scrollToTime={initialScrollToTime}
+                  // "Group by staff" Day view only - one column per staff
+                  // member instead of the combined single-column grid. Never
+                  // passed in any other view/mode, which keeps every other
+                  // view's plain (non-resourced) rendering exactly as before.
+                  {...(resourceViewActive
+                    ? {
+                        resources: resourceStaff,
+                        resourceIdAccessor: "id" as const,
+                        resourceTitleAccessor: "displayName" as const,
+                        resourceAccessor: (event: CalendarEvent) => event.resource.staffId,
+                      }
+                    : {})}
+                  // "ignoreEvents" lets a new selection be drawn starting on top of
+                  // an existing event instead of the existing event capturing the
+                  // click/drag - this is what lets overlapping bookings be created
+                  // deliberately rather than being blocked by whatever's already
+                  // there.
+                  selectable={canCreate ? "ignoreEvents" : false}
+                  resizable={canEdit || canCreate}
+                  draggableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
+                  resizableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
+                  onRangeChange={handleRangeChange}
+                  onSelectSlot={(slot: SlotInfo) => {
+                    if (!canCreate) return;
+                    // Only set in "Group by staff" Day view - which column
+                    // was clicked/dragged into becomes the new entry's
+                    // default staff member.
+                    const defaultStaffId = typeof slot.resourceId === "string" ? slot.resourceId : undefined;
+                    // A fresh click-drag while the chooser popup is still up just
+                    // repositions the pending slot rather than stacking a second
+                    // popup on top of it.
+                    if (pendingSlot) {
+                      setPendingSlot({ start: slot.start, end: slot.end, defaultStaffId });
+                      return;
+                    }
+                    // If a creation is already in progress, a fresh click-drag just
+                    // repositions it (same mode) rather than discarding it - the
+                    // draft event itself can also be dragged/resized directly, this
+                    // is just the other way to move it.
+                    setCreating((prev) => {
+                      if (prev) return { ...prev, start: slot.start, end: slot.end, defaultStaffId: defaultStaffId ?? prev.defaultStaffId };
+                      // The grid itself only reflects one calendarType at a time, so
+                      // a click/drag there should create whichever type is being
+                      // viewed - "both" has no single answer to infer, hence the
+                      // popup instead of defaulting silently.
+                      if (calendarType === "both") {
+                        setPendingSlot({ start: slot.start, end: slot.end, defaultStaffId });
+                        return prev;
+                      }
+                      return {
+                        start: slot.start,
+                        end: slot.end,
+                        mode: calendarType === "shift" ? "shift" : "appointment",
+                        defaultStaffId,
+                      };
+                    });
+                  }}
+                  onSelectEvent={(event: CalendarEvent) => {
+                    if (event.id === DRAFT_EVENT_ID) return;
+                    setSelected(event.resource);
+                  }}
+                  onEventDrop={handleEventDrop}
+                  onEventResize={handleEventResize}
+                  eventPropGetter={eventPropGetter}
+                  dayPropGetter={dayPropGetter}
+                />
+              </>
+            )}
           </div>
-        ))}
+        </div>
+
+        <div className="flex w-full flex-col gap-4 lg:w-[280px] lg:shrink-0">
+          <MiniMonthCalendar currentDate={currentDate} range={range} onNavigateToDate={setCurrentDate} />
+          <CalendarLegend legendItems={legendItems} holidaysInView={holidaysInView} />
+        </div>
       </div>
 
-      {holidaysInView.length > 0 && (
-        <p className="text-xs text-gray-500">
-          <span className="font-medium text-gray-600">Holidays in view:</span>{" "}
-          {holidaysInView.map((h, i) => (
-            <span key={`${h.name}-${h.date.toISOString()}`}>
-              {i > 0 && ", "}
-              {h.name} ({h.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })})
-            </span>
-          ))}
-        </p>
+      {pendingSlot && (
+        <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+          <span className="text-sm font-medium text-gray-600">Add as:</span>
+          <button
+            type="button"
+            onClick={() => {
+              setCreating({ ...pendingSlot, mode: "appointment" });
+              setPendingSlot(null);
+            }}
+            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
+          >
+            Appointment
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreating({ ...pendingSlot, mode: "shift" });
+              setPendingSlot(null);
+            }}
+            className="rounded-lg bg-shift-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-shift-500)_0%,var(--color-shift-700)_100%)] hover:shadow-md"
+          >
+            Shift
+          </button>
+          <button
+            type="button"
+            onClick={() => setPendingSlot(null)}
+            className="ml-auto text-sm text-gray-500 hover:text-gray-700"
+          >
+            Cancel
+          </button>
+        </div>
       )}
-
-      <div
-        ref={calendarWrapperRef}
-        style={{ height: 650 }}
-        className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
-      >
-        <DnDCalendar
-          localizer={localizer}
-          events={calendarEvents}
-          startAccessor="start"
-          endAccessor="end"
-          date={currentDate}
-          view={currentView}
-          onNavigate={(date) => setCurrentDate(date)}
-          onView={(view) => setCurrentView(view)}
-          views={["month", "week", "day"]}
-          components={{ toolbar: CalendarToolbar, event: EventContent, timeGutterHeader: TimeGutterHeader }}
-          step={timeStep}
-          timeslots={1}
-          min={gridMinTime}
-          max={gridMaxTime}
-          scrollToTime={initialScrollToTime}
-          // "ignoreEvents" lets a new selection be drawn starting on top of
-          // an existing event instead of the existing event capturing the
-          // click/drag - this is what lets overlapping bookings be created
-          // deliberately rather than being blocked by whatever's already
-          // there.
-          selectable={canCreate ? "ignoreEvents" : false}
-          resizable={canEdit || canCreate}
-          draggableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
-          resizableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
-          onRangeChange={handleRangeChange}
-          onSelectSlot={(slot: SlotInfo) => {
-            if (!canCreate) return;
-            // If a creation is already in progress, a fresh click-drag just
-            // repositions it (same mode) rather than discarding it - the
-            // draft event itself can also be dragged/resized directly, this
-            // is just the other way to move it.
-            setCreating((prev) =>
-              prev ? { ...prev, start: slot.start, end: slot.end } : { start: slot.start, end: slot.end, mode: "appointment" }
-            );
-          }}
-          onSelectEvent={(event: CalendarEvent) => {
-            if (event.id === DRAFT_EVENT_ID) return;
-            setSelected(event.resource);
-          }}
-          onEventDrop={handleEventDrop}
-          onEventResize={handleEventResize}
-          eventPropGetter={eventPropGetter}
-          dayPropGetter={dayPropGetter}
-        />
-      </div>
 
       {creating && (
         // Selecting a slot shouldn't snap the form into view instantly - the
@@ -1183,6 +1236,7 @@ export function SchedulingCalendar({
             start={creating.start}
             end={creating.end}
             mode={creating.mode}
+            defaultStaffId={creating.defaultStaffId}
             onRangeChange={(start, end) =>
               setCreating((prev) => (prev ? { ...prev, start, end } : prev))
             }
@@ -1309,6 +1363,8 @@ function AppointmentDetailPanel({
   );
   const [value, setValue] = useState(appointment.estimatedValue ?? "");
   const [saving, setSaving] = useState(false);
+  const entryMode: EntryMode = isShift(appointment) ? "shift" : "appointment";
+  const visibleTags = tagsForMode(tags, entryMode);
   const [tagId, setTagId] = useState(appointment.tagId ?? "");
   const [savingTag, setSavingTag] = useState(false);
   const [showNewTagForm, setShowNewTagForm] = useState(false);
@@ -1340,7 +1396,11 @@ function AppointmentDetailPanel({
     const { tag } = await fetchJson<{ tag: TagOption }>("/api/event-tags", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newTagName.trim(), color: newTagColor }),
+      body: JSON.stringify({
+        name: newTagName.trim(),
+        color: newTagColor,
+        appliesTo: entryMode === "shift" ? "SHIFT" : "APPOINTMENT",
+      }),
     });
     onTagCreated();
     setShowNewTagForm(false);
@@ -1487,7 +1547,7 @@ function AppointmentDetailPanel({
             className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">No color key</option>
-            {tags.map((t) => (
+            {visibleTags.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
               </option>
@@ -1670,6 +1730,7 @@ function CreateEntryPanel({
   start: startTime,
   end: endTime,
   mode,
+  defaultStaffId,
   onRangeChange,
   staff,
   serviceTypes,
@@ -1693,6 +1754,10 @@ function CreateEntryPanel({
   start: Date;
   end: Date;
   mode: EntryMode;
+  // Set when the slot that opened this panel was selected inside a specific
+  // staff member's column ("Group by staff" Day view) - preselects that
+  // staff member instead of defaulting to the first one in the list.
+  defaultStaffId?: string;
   // Lifted to the parent (rather than local state seeded from a one-time
   // `slot` prop) so dragging/resizing the draft event on the calendar and
   // editing these datetime inputs both read/write the same value and stay
@@ -1723,7 +1788,7 @@ function CreateEntryPanel({
   onCreated: () => void;
 }) {
   const [staffId, setStaffId] = useState(
-    staff[0]?.id ?? (canCreateStaff ? NEW_STAFF_VALUE : "")
+    defaultStaffId ?? staff[0]?.id ?? (canCreateStaff ? NEW_STAFF_VALUE : "")
   );
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffEmail, setNewStaffEmail] = useState("");
@@ -1731,6 +1796,7 @@ function CreateEntryPanel({
   const [newStaffPassword, setNewStaffPassword] = useState("");
   const [newStaffRoleId, setNewStaffRoleId] = useState(() => roles[0]?.id ?? "");
   const [serviceTypeId, setServiceTypeId] = useState("");
+  const visibleTags = tagsForMode(tags, mode);
   const [tagId, setTagId] = useState("");
   const [showNewTagForm, setShowNewTagForm] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -1874,7 +1940,11 @@ function CreateEntryPanel({
           const { tag } = await fetchJson<{ tag: { id: string } }>("/api/event-tags", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: newTagName.trim(), color: newTagColor }),
+            body: JSON.stringify({
+              name: newTagName.trim(),
+              color: newTagColor,
+              appliesTo: mode === "shift" ? "SHIFT" : "APPOINTMENT",
+            }),
           });
           resolvedTagId = tag.id;
           onTagCreated();
@@ -1983,12 +2053,12 @@ function CreateEntryPanel({
         </label>
       </div>
 
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Staff
         <select
           value={staffId}
           onChange={(e) => setStaffId(e.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1"
+          className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
           {staff.map((s) => (
             <option key={s.id} value={s.id}>
@@ -2061,12 +2131,12 @@ function CreateEntryPanel({
       )}
 
       {(mode !== "shift" || showJobType) && (
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         {mode === "shift" ? "Job type (optional)" : "Service (optional)"}
         <select
           value={serviceTypeId}
           onChange={(e) => setServiceTypeId(e.target.value)}
-          className="rounded-md border border-gray-300 px-2 py-1"
+          className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
           <option value="">—</option>
           {serviceTypes.map((s) => (
@@ -2079,7 +2149,7 @@ function CreateEntryPanel({
       )}
 
       {(mode !== "shift" || showColorKey) && (
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Color key (optional)
         <select
           value={tagId}
@@ -2088,10 +2158,10 @@ function CreateEntryPanel({
             setTagId(next);
             setShowNewTagForm(next === NEW_TAG_VALUE);
           }}
-          className="rounded-md border border-gray-300 px-2 py-1"
+          className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
           <option value="">—</option>
-          {tags.map((t) => (
+          {visibleTags.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
             </option>
@@ -2124,7 +2194,7 @@ function CreateEntryPanel({
       )}
 
       {mode === "appointment" && (
-        <div ref={clientBoxRef} className="relative flex flex-col gap-1 text-sm">
+        <div ref={clientBoxRef} className="relative flex w-full max-w-xs flex-col gap-1 text-sm">
           Client{requireClient ? "" : " (optional)"}
           <input
             value={clientQuery}
@@ -2137,7 +2207,7 @@ function CreateEntryPanel({
             onFocus={() => setClientDropdownOpen(true)}
             placeholder="Search clients by name..."
             autoComplete="off"
-            className="rounded-md border border-gray-300 px-2 py-1"
+            className="w-full rounded-md border border-gray-300 px-2 py-1"
           />
           {selectedClientId && (
             <p className="text-xs text-primary-700">Selected: {clientQuery}</p>
@@ -2267,13 +2337,13 @@ function CreateEntryPanel({
         </div>
       </div>
 
-      <label className="flex flex-col gap-1 text-sm">
+      <label className="flex w-full max-w-sm flex-col gap-1 text-sm">
         {locationType === "ONLINE" ? "Meeting link" : "Address (optional)"}
         <input
           value={location}
           onChange={(e) => setLocation(e.target.value)}
           placeholder={locationType === "ONLINE" ? "https://..." : "123 Main St"}
-          className="rounded-md border border-gray-300 px-2 py-1"
+          className="w-full rounded-md border border-gray-300 px-2 py-1"
         />
       </label>
 

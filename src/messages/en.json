@@ -18,12 +18,19 @@
     "DE": "German",
     "FR": "French"
   },
+  "AccountPage": {
+    "languageSectionTitle": "Language",
+    "languageSectionDescription": "Choose the language used across your account.",
+    "saved": "Saved."
+  },
   "Dashboard": {
     "signedInAs": "Signed in as <b>{role}</b>",
     "yourAccess": "Your access",
     "yourAccessSubtitle": "What your role can see and do in this account.",
     "plan": "Plan",
     "freePlan": "Free plan",
+    "oneTimePlan": "One-time plan",
+    "subscriptionPlan": "Subscription plan",
     "shiftManagementBadge": "Shift management",
     "appointmentManagerBadge": "Appointment manager",
     "fullAccess": "As <b>{role}</b>, you have full access to everything in this account.",

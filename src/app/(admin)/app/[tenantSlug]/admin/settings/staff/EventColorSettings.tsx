@@ -8,11 +8,20 @@ import {
   type EventColorKey,
 } from "@/lib/colors/eventColors";
 
+type TagScope = "SHIFT" | "APPOINTMENT" | "BOTH";
+
 interface EventTag {
   id: string;
   name: string;
   color: string;
+  appliesTo: TagScope;
 }
+
+const SCOPE_LABELS: Record<TagScope, string> = {
+  SHIFT: "Shift only",
+  APPOINTMENT: "Appointment only",
+  BOTH: "Both",
+};
 
 /**
  * One unified "Color key" settings card - previously two separate cards
@@ -22,7 +31,8 @@ interface EventTag {
  * built-in entries up top (status-driven, can't be removed, just recolored),
  * your own below (add as many as you want, assign one to an individual
  * appointment/shift's "Color key" field when scheduling it - same field
- * that used to be labeled "Tag").
+ * that used to be labeled "Tag"). Lives on the Staff settings page (moved
+ * from Calendar) since color keys/tags are a staff-scheduling concern.
  */
 export function EventColorSettings() {
   const [colors, setColors] = useState<Record<EventColorKey, string> | null>(null);
@@ -34,6 +44,7 @@ export function EventColorSettings() {
   const [loadingTags, setLoadingTags] = useState(true);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("#2563eb");
+  const [newScope, setNewScope] = useState<TagScope>("BOTH");
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tagError, setTagError] = useState<string | null>(null);
@@ -99,13 +110,14 @@ export function EventColorSettings() {
       const res = await fetch("/api/event-tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName.trim(), color: newColor }),
+        body: JSON.stringify({ name: newName.trim(), color: newColor, appliesTo: newScope }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to create");
       setTags((prev) => [...prev, data.tag].sort((a, b) => a.name.localeCompare(b.name)));
       setNewName("");
       setNewColor("#2563eb");
+      setNewScope("BOTH");
     } catch (err) {
       setTagError(err instanceof Error ? err.message : "Couldn't add that color key.");
     } finally {
@@ -137,7 +149,9 @@ export function EventColorSettings() {
         appointment/shift&apos;s status. Add your own below that - anyone can
         then pick one from the &quot;Color key&quot; field when creating or
         editing an individual appointment or shift, to color-code it however
-        you like (e.g. &quot;VIP&quot;, &quot;Consultation&quot;).
+        you like (e.g. &quot;VIP&quot;, &quot;Consultation&quot;). Each one can
+        be scoped to shifts only, appointments only, or both - a scoped tag
+        only shows up on that picker.
       </p>
 
       <h3 className="mt-5 text-xs font-semibold tracking-wide text-gray-500 uppercase">Built in</h3>
@@ -184,6 +198,11 @@ export function EventColorSettings() {
                 >
                   <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
                   {tag.name}
+                  {tag.appliesTo !== "BOTH" && (
+                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                      {SCOPE_LABELS[tag.appliesTo]}
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => void handleDeleteTag(tag.id)}
@@ -217,6 +236,18 @@ export function EventColorSettings() {
                 onChange={(e) => setNewColor(e.target.value)}
                 className="h-9 w-14 cursor-pointer rounded-md border border-gray-300"
               />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Applies to
+              <select
+                value={newScope}
+                onChange={(e) => setNewScope(e.target.value as TagScope)}
+                className="rounded-md border border-gray-300 px-2 py-1.5"
+              >
+                <option value="BOTH">Both</option>
+                <option value="SHIFT">Shift only</option>
+                <option value="APPOINTMENT">Appointment only</option>
+              </select>
             </label>
             <button
               type="submit"

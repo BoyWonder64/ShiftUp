@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { LanguagePicker } from "./LanguagePicker";
 import { companyNameFontFamily } from "@/lib/fonts/companyNameFonts";
 
 interface AppHeaderProps {
@@ -27,6 +26,9 @@ interface AppHeaderProps {
   // admin/settings/company-profile/CompanyNameFontSettings.tsx). Null/unset
   // falls back to the default body font.
   companyNameFont?: string | null;
+  // Overrides the nav bar's max-width so it can line up with a page whose own
+  // content wrapper isn't the usual max-w-6xl (e.g. the wider calendar pages).
+  maxWidthClassName?: string;
 }
 
 interface NavItem {
@@ -64,7 +66,7 @@ function NavDropdown({
         type="button"
         onClick={() => setOpen((o) => !o)}
         className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-          active ? "bg-white text-primary-700 shadow-sm" : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+          active ? "bg-white text-primary-700 shadow-sm" : "text-primary-100 hover:bg-white/10 hover:text-white"
         }`}
       >
         {label}
@@ -100,6 +102,7 @@ export function AppHeader({
   canViewScheduleTemplates,
   logoUrl,
   companyNameFont,
+  maxWidthClassName = "max-w-6xl",
 }: AppHeaderProps) {
   const t = useTranslations("AppHeader");
   const pathname = usePathname();
@@ -130,15 +133,12 @@ export function AppHeader({
   }
 
   return (
-    <header className="sticky top-0 z-10 border-b border-primary-100 bg-primary-50">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
+    <header className="sticky top-0 z-10 border-b border-primary-700/40 bg-primary-600/95 shadow-sm backdrop-blur-sm">
+      <div className={`mx-auto flex items-center justify-between gap-4 px-6 py-3 ${maxWidthClassName}`}>
         <div className="flex items-center gap-6">
           <Link href={`${base}/dashboard`} className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-linear-to-br from-primary-500 to-primary-700 text-sm font-bold text-white shadow-sm">
-              S
-            </span>
-            <span className="font-display text-lg font-bold tracking-tight">
-              Shift<span className="text-primary-500">Up</span>
+            <span className="font-display text-lg font-bold tracking-tight text-white">
+              Shift<span className="text-primary-100">Up</span>
             </span>
           </Link>
           <span className="hidden items-center gap-2 sm:flex">
@@ -151,7 +151,7 @@ export function AppHeader({
               />
             )}
             <span
-              className="text-sm text-gray-400"
+              className="text-sm text-primary-100"
               style={{ fontFamily: companyNameFontFamily(companyNameFont) }}
             >
               {businessName}
@@ -165,7 +165,7 @@ export function AppHeader({
             className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
               pathname === `${base}/dashboard`
                 ? "bg-white text-primary-700 shadow-sm"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+                : "text-primary-100 hover:bg-white/10 hover:text-white"
             }`}
           >
             {t("dashboard")}
@@ -176,7 +176,7 @@ export function AppHeader({
             className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
               pathname === `${base}/calendar`
                 ? "bg-white text-primary-700 shadow-sm"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+                : "text-primary-100 hover:bg-white/10 hover:text-white"
             }`}
           >
             {t("calendar")}
@@ -187,7 +187,7 @@ export function AppHeader({
             className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
               pathname === `${base}/calendar/view`
                 ? "bg-white text-primary-700 shadow-sm"
-                : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+                : "text-primary-100 hover:bg-white/10 hover:text-white"
             }`}
           >
             {t("viewOnly")}
@@ -195,18 +195,16 @@ export function AppHeader({
 
           <NavDropdown label={t("staffPages")} active={staffActive} currentHref={currentHref} items={staffItems} />
 
-          {role === "ADMIN" && (
-            <Link
-              href={`${base}/admin/settings`}
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                pathname.startsWith(`${base}/admin/settings`)
-                  ? "bg-white text-primary-700 shadow-sm"
-                  : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
-              }`}
-            >
-              {t("settings")}
-            </Link>
-          )}
+          <Link
+            href={`${base}/admin/settings`}
+            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              pathname.startsWith(`${base}/admin/settings`)
+                ? "bg-white text-primary-700 shadow-sm"
+                : "text-primary-100 hover:bg-white/10 hover:text-white"
+            }`}
+          >
+            {t("settings")}
+          </Link>
 
           {role === "ADMIN" && (
             <Link
@@ -214,18 +212,16 @@ export function AppHeader({
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
                 pathname === `${base}/billing`
                   ? "bg-white text-primary-700 shadow-sm"
-                  : "text-gray-600 hover:bg-white/60 hover:text-gray-900"
+                  : "text-primary-100 hover:bg-white/10 hover:text-white"
               }`}
             >
               {t("billing")}
             </Link>
           )}
 
-          <LanguagePicker />
-
           <button
             onClick={handleSignOut}
-            className="ml-2 rounded-full px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-white/60 hover:text-gray-900"
+            className="ml-2 rounded-full px-3 py-1.5 text-sm font-medium text-primary-100 hover:bg-white/10 hover:text-white"
           >
             {t("signOut")}
           </button>

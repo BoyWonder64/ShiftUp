@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import Link from "next/link";
+import { SiteHeader } from "@/components/SiteHeader";
 
 function slugify(value: string): string {
   return value
@@ -79,17 +80,10 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center bg-linear-to-b from-primary-50 via-white to-white p-8">
+    <>
+      <SiteHeader />
+      <main className="flex flex-1 items-center justify-center bg-linear-to-b from-primary-50 via-white to-white p-8">
       <div className="flex w-full max-w-md flex-col items-center gap-6">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-linear-to-br from-primary-500 to-primary-700 text-sm font-bold text-white shadow-sm">
-            S
-          </span>
-          <span className="text-xl font-semibold tracking-tight">
-            Shift<span className="text-primary-500">Up</span>
-          </span>
-        </Link>
-
         <form
           onSubmit={handleSubmit}
           className="flex w-full flex-col gap-4 rounded-xl border border-gray-200 bg-white p-8 shadow-md"
@@ -228,6 +222,7 @@ export default function SignupPage() {
           </p>
         </form>
       </div>
-    </main>
+      </main>
+    </>
   );
 }

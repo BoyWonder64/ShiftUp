@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  BILLING_PLAN_LABELS,
   FEATURE_TIER_LABELS,
   ONE_TIME_PRICE_CENTS,
   SUBSCRIPTION_PRICE_CENTS_PER_MONTH,
@@ -141,7 +142,7 @@ export function RevenueOverview() {
                     <div className="text-xs text-gray-400">/{r.slug}</div>
                   </td>
                   <td className="py-2 pr-3 text-gray-600">{r.tierLabel}</td>
-                  <td className="py-2 pr-3 text-gray-600">{r.plan}</td>
+                  <td className="py-2 pr-3 text-gray-600">{BILLING_PLAN_LABELS[r.plan]}</td>
                   <td className="py-2 pr-3 text-gray-600">{r.status}</td>
                   <td className="py-2 pr-3 font-medium text-gray-900">
                     {r.excludeFromIncome ? (

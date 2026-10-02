@@ -113,11 +113,11 @@ export async function PATCH(
         }
 
         if (wantsReassign) {
-          await reassignAppointmentStaff(tx, id, data.staffId!);
+          await reassignAppointmentStaff(tx, session.tenantId, id, data.staffId!);
         }
 
         if (wantsReschedule) {
-          await rescheduleAppointment(tx, {
+          await rescheduleAppointment(tx, session.tenantId, {
             id,
             startTime: new Date(data.startTime!),
             endTime: new Date(data.endTime!),

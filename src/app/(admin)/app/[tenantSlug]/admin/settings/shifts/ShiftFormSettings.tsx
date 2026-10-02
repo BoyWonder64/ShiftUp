@@ -6,6 +6,7 @@ interface Settings {
   showJobTypeOnShiftForm: boolean;
   showJobEstimateOnShiftForm: boolean;
   showColorKeyOnShiftForm: boolean;
+  allowOverlappingShifts: boolean;
 }
 
 export function ShiftFormSettings() {
@@ -121,6 +122,27 @@ export function ShiftFormSettings() {
               <span className="text-gray-500">
                 Lets staff tag a shift with a custom color key for the
                 calendar.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={settings.allowOverlappingShifts}
+              onChange={() => toggle("allowOverlappingShifts")}
+              disabled={savingKey === "allowOverlappingShifts"}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm">
+              <span className="font-medium text-gray-900">Allow overlapping shifts</span>
+              <br />
+              <span className="text-gray-500">
+                Lets a staff member be scheduled on two shifts that overlap in
+                time (e.g. a handoff, or covering two roles at once). Off by
+                default - a staff member&apos;s shifts can&apos;t overlap each
+                other. Appointments with a client attached never overlap for
+                the same staff member either way.
               </span>
             </span>
           </label>
