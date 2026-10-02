@@ -17,14 +17,21 @@ export default async function TimeOffPage({
     redirect("/login");
   }
 
-  const { tenant, canViewRoster } = await runInTenantContext(
+  const { tenant, canViewRoster, canViewScheduleTemplates } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
-      return { tenant, canViewRoster };
+      const canViewScheduleTemplates = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SCHEDULE_TEMPLATES"
+      );
+      return { tenant, canViewRoster, canViewScheduleTemplates };
     }
   );
 
@@ -39,6 +46,7 @@ export default async function TimeOffPage({
         businessName={tenant.name}
         role={session.role}
         canViewRoster={canViewRoster}
+        canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
       />

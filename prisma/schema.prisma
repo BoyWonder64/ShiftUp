@@ -120,6 +120,18 @@ model Tenant {
   showJobTypeOnShiftForm        Boolean  @default(true) @map("show_job_type_on_shift_form")
   showJobEstimateOnShiftForm    Boolean  @default(true) @map("show_job_estimate_on_shift_form")
   showColorKeyOnShiftForm       Boolean  @default(true) @map("show_color_key_on_shift_form")
+  /// SUPERADMIN-only (dev console > Customers): blocks every user of this
+  /// tenant from logging in. Checked in POST /api/auth/login only - an
+  /// already-active session isn't revoked (sessions are stateless, see
+  /// src/lib/auth/session.ts), so a disabled tenant's logged-in users keep
+  /// working until their session naturally expires or they log out, same
+  /// limitation already flagged for password-reset in TODO.md.
+  disabled                       Boolean  @default(false) @map("disabled")
+  /// SUPERADMIN-only (dev console > Customers): leaves this tenant's License
+  /// out of the Income page's revenue totals/counts - for test/demo/internal
+  /// accounts that shouldn't skew real revenue numbers even if they carry a
+  /// paid License for feature-testing purposes.
+  excludeFromIncome              Boolean  @default(false) @map("exclude_from_income")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -137,6 +149,8 @@ model Tenant {
   timeOffs         TimeOff[]
   eventTags        EventTag[]
   holidays         Holiday[]
+  scheduleTemplates ScheduleTemplate[]
+  scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@map("tenants")
 }
@@ -365,6 +379,7 @@ model StaffProfile {
   workingHours WorkingHours[]
   appointments Appointment[]
   timeOffs     TimeOff[]
+  scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@index([tenantId])
   @@map("staff_profiles")
@@ -442,6 +457,7 @@ model ServiceType {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   appointments Appointment[]
+  scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@index([tenantId])
   @@map("service_types")
@@ -557,4 +573,53 @@ model RoleVisibility {
   @@unique([tenantId, viewerRoleId, targetRoleId])
   @@index([tenantId])
   @@map("role_visibilities")
+}
+
+/// A reusable shift pattern (TODO.md's "reusable shift-schedule templates") -
+/// built once, then applied to any target week to generate real Appointment
+/// rows (shifts - clientId null), instead of rebuilding the same weekly
+/// pattern from scratch every time. periodLengthDays is per-template (e.g. a
+/// 7-day vs. 14-day rotation), not a tenant-wide default - each template
+/// defines its own rotation length.
+model ScheduleTemplate {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  periodLengthDays Int     @map("period_length_days")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  shifts ScheduleTemplateShift[]
+
+  @@index([tenantId])
+  @@map("schedule_templates")
+}
+
+/// One shift within a ScheduleTemplate's rotation - relative to the period
+/// (dayOffset, 0-indexed) rather than tied to a real calendar date, so the
+/// same template can be applied starting from any week. start/endMinute are
+/// minutes since local midnight on that offset day, same convention as
+/// WorkingHours.start/endMinute. Applying the template (see
+/// src/modules/scheduling/templates.ts) turns each row into a real
+/// Appointment with clientId null.
+model ScheduleTemplateShift {
+  id             String        @id @default(uuid())
+  tenantId       String        @map("tenant_id")
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId     String        @map("template_id")
+  template       ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  staffId        String        @map("staff_id")
+  staff          StaffProfile  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOffset      Int           @map("day_offset")
+  startMinute    Int           @map("start_minute")
+  endMinute      Int           @map("end_minute")
+  serviceTypeId  String?       @map("service_type_id")
+  serviceType    ServiceType?  @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([templateId])
+  @@map("schedule_template_shifts")
 }

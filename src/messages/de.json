@@ -6,6 +6,7 @@
     "staffPages": "Mitarbeiterseiten",
     "roster": "Dienstplan",
     "timeOff": "Abwesenheit",
+    "scheduleTemplates": "Dienstplanvorlagen",
     "settings": "Einstellungen",
     "billing": "Abrechnung",
     "signOut": "Abmelden"
@@ -42,7 +43,8 @@
       "services": "Leistungen",
       "clients": "Kunden",
       "appointments": "Termine",
-      "jobEstimates": "Auftragsschätzungen"
+      "jobEstimates": "Auftragsschätzungen",
+      "scheduleTemplates": "Dienstplanvorlagen"
     },
     "actions": {
       "view": "ansehen",
@@ -51,7 +53,8 @@
       "remove": "entfernen",
       "create": "erstellen",
       "reschedule": "verschieben",
-      "cancel": "stornieren"
+      "cancel": "stornieren",
+      "apply": "anwenden"
     }
   }
 }

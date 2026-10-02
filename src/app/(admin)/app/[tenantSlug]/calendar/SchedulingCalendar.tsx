@@ -925,8 +925,15 @@ export function SchedulingCalendar({
             calendar type, time-grid granularity) - grouped under one bordered
             panel with a micro-label per control, rather than loose buttons
             floating next to the create buttons, so it reads as one cohesive
-            settings panel. */}
-        <div className="flex flex-wrap items-end gap-5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+            settings panel. Stretched full-width when there's no create-buttons
+            box beside it (readOnly or lacking create permission) so it matches
+            the full-width legend/holiday bars below instead of sitting as a
+            narrow card with dead space to its right. */}
+        <div
+          className={`flex flex-wrap items-end gap-5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 ${
+            canCreate ? "" : "w-full"
+          }`}
+        >
           {staff.length > 1 && (
             <div className="flex flex-col gap-1">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Staff</span>

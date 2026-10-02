@@ -71,6 +71,7 @@ Full detail (fields, relations, doc comments) lives in
 | `Holiday` | Tenant-added custom holiday (name, date, recurring). Federal holidays are **computed, never stored** - see `src/lib/holidays/federal.ts`. |
 | `TimeOff` | Staff leave request + approval workflow. |
 | `RolePermission` / `RoleVisibility` | Per-tenant overrides of the hardcoded permission/visibility defaults. |
+| `ScheduleTemplate` / `ScheduleTemplateShift` | Reusable shift pattern (paid feature - see `assertScheduleTemplatesEnabled`), applied to any week to generate real `Appointment` rows. Shift is relative to the period (`dayOffset`), not a calendar date. |
 
 Every tenant-scoped table has an RLS policy (see migrations named
 `*_enable_rls`/`*_add_restricted_app_role`, and the RLS block appended by
@@ -86,7 +87,7 @@ stay thin.
 | `tenancy` | Creating a `Tenant`. |
 | `identity` | Creating/finding `User`s. |
 | `licensing` | Creating a free `License` on signup. |
-| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError`), coverage-finder (`findCoverageCandidates`). |
+| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError`), coverage-finder (`findCoverageCandidates`); `templates.ts` - schedule-template CRUD, apply-preview/apply (`planTemplateApply`/`applyTemplate`). |
 | `timeoff` | Time-off request/approval, `staffOnApprovedLeave()` (feeds the coverage finder). |
 
 ## API routes (`src/app/api/**/route.ts`)
@@ -111,6 +112,9 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/time-off`, `/api/time-off/[id]` | GET/POST, PATCH | session / `APPROVE_TIME_OFF` | Request + approve/deny. |
 | `/api/event-tags`, `/api/event-tags/[id]` | GET/POST, DELETE | session+`CREATE_APPOINTMENTS` / ADMIN | Custom color tags - **not yet consumed by the calendar UI**, see TODO.md. |
 | `/api/holidays`, `/api/holidays/[id]` | GET/POST, DELETE | session / ADMIN | Custom holidays - **not yet consumed by the calendar UI**, see TODO.md. |
+| `/api/schedule-templates`, `/[id]`, `/[id]/clone` | GET/POST, GET/PATCH/DELETE, POST | `VIEW`/`CREATE`/`EDIT`/`DELETE_SCHEDULE_TEMPLATES` | Template CRUD + clone. Paid feature - every route also calls `assertScheduleTemplatesEnabled` (403s on `FREE`). |
+| `/api/schedule-templates/[id]/shifts`, `/[shiftId]` | POST, PATCH/DELETE | `EDIT_SCHEDULE_TEMPLATES` | A template's shift rows. |
+| `/api/schedule-templates/[id]/apply` | POST | `APPLY_SCHEDULE_TEMPLATES` | `{periodStart, dryRun}` - preview or real apply (see `planTemplateApply`/`applyTemplate`). |
 | `/api/billing/checkout` | POST | ADMIN | Stripe Checkout session (one-time or subscription). |
 | `/api/billing/webhook` | POST | Stripe signature | Confirms payment, updates `License`. |
 
@@ -127,6 +131,9 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
 - `calendar/roster` — manager-facing per-employee drill-down (ADMIN/MANAGER/
   SUPERVISOR only, role-hardcoded not permission-key-gated - see TODO.md).
 - `time-off` — request/approve UI.
+- `schedule-templates` — reusable shift-pattern builder + apply-to-a-week UI
+  (`ScheduleTemplatesView.tsx`), gated on `VIEW_SCHEDULE_TEMPLATES` and a
+  paid `License.billingPlan` (shows an upgrade card instead on `FREE`).
 - `billing` — plan display + pricing deck (`PricingDeck.tsx`).
 - `admin/settings` — Settings, split across a landing page of links
   (`page.tsx`) plus one page per section under a shared `layout.tsx`

@@ -43,6 +43,11 @@ export const PERMISSION_KEYS = [
   "VIEW_CALENDAR_TOGGLE",
   "VIEW_ALL_SHIFTS",
   "VIEW_ALL_APPOINTMENTS",
+  "VIEW_SCHEDULE_TEMPLATES",
+  "CREATE_SCHEDULE_TEMPLATES",
+  "EDIT_SCHEDULE_TEMPLATES",
+  "DELETE_SCHEDULE_TEMPLATES",
+  "APPLY_SCHEDULE_TEMPLATES",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -72,6 +77,11 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   VIEW_CALENDAR_TOGGLE: "Switch the calendar between Appointments/Shifts/Both",
   VIEW_ALL_SHIFTS: "See shifts outside your own",
   VIEW_ALL_APPOINTMENTS: "See appointments outside your own",
+  VIEW_SCHEDULE_TEMPLATES: "View reusable shift-schedule templates",
+  CREATE_SCHEDULE_TEMPLATES: "Create shift-schedule templates",
+  EDIT_SCHEDULE_TEMPLATES: "Edit shift-schedule templates",
+  DELETE_SCHEDULE_TEMPLATES: "Delete shift-schedule templates",
+  APPLY_SCHEDULE_TEMPLATES: "Apply a template to generate real shifts",
 };
 
 /** Plain starter role names every new tenant gets at signup - a starting point, not a fixed list; the admin can rename, delete, or add to them freely from day one. */
@@ -107,6 +117,11 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     VIEW_CALENDAR_TOGGLE: true,
     VIEW_ALL_SHIFTS: true,
     VIEW_ALL_APPOINTMENTS: true,
+    VIEW_SCHEDULE_TEMPLATES: true,
+    CREATE_SCHEDULE_TEMPLATES: true,
+    EDIT_SCHEDULE_TEMPLATES: true,
+    DELETE_SCHEDULE_TEMPLATES: true,
+    APPLY_SCHEDULE_TEMPLATES: true,
   },
   Supervisor: {
     VIEW_STAFF: true,
@@ -133,6 +148,16 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     VIEW_CALENDAR_TOGGLE: true,
     VIEW_ALL_SHIFTS: true,
     VIEW_ALL_APPOINTMENTS: true,
+    // Supervisor can already create/edit/cancel appointments and shifts
+    // directly (see CREATE_APPOINTMENTS above) - applying a template is just
+    // a bulk convenience for that same action, so it's granted here too.
+    // Redefining the templates themselves is a Manager-only call, same
+    // split as VIEW_SERVICES (true) vs CREATE/EDIT/DELETE_SERVICES (false).
+    VIEW_SCHEDULE_TEMPLATES: true,
+    CREATE_SCHEDULE_TEMPLATES: false,
+    EDIT_SCHEDULE_TEMPLATES: false,
+    DELETE_SCHEDULE_TEMPLATES: false,
+    APPLY_SCHEDULE_TEMPLATES: true,
   },
   Employee: {
     VIEW_STAFF: true,
@@ -159,6 +184,11 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     VIEW_CALENDAR_TOGGLE: false,
     VIEW_ALL_SHIFTS: false,
     VIEW_ALL_APPOINTMENTS: false,
+    VIEW_SCHEDULE_TEMPLATES: false,
+    CREATE_SCHEDULE_TEMPLATES: false,
+    EDIT_SCHEDULE_TEMPLATES: false,
+    DELETE_SCHEDULE_TEMPLATES: false,
+    APPLY_SCHEDULE_TEMPLATES: false,
   },
   Customer: {
     VIEW_STAFF: false,
@@ -185,6 +215,11 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     VIEW_CALENDAR_TOGGLE: false,
     VIEW_ALL_SHIFTS: false,
     VIEW_ALL_APPOINTMENTS: false,
+    VIEW_SCHEDULE_TEMPLATES: false,
+    CREATE_SCHEDULE_TEMPLATES: false,
+    EDIT_SCHEDULE_TEMPLATES: false,
+    DELETE_SCHEDULE_TEMPLATES: false,
+    APPLY_SCHEDULE_TEMPLATES: false,
   },
 };
 

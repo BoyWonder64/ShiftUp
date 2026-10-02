@@ -6,6 +6,7 @@
     "staffPages": "Staff pages",
     "roster": "Roster",
     "timeOff": "Time off",
+    "scheduleTemplates": "Schedule templates",
     "settings": "Settings",
     "billing": "Billing",
     "signOut": "Sign out"
@@ -42,7 +43,8 @@
       "services": "Services",
       "clients": "Clients",
       "appointments": "Appointments",
-      "jobEstimates": "Job estimates"
+      "jobEstimates": "Job estimates",
+      "scheduleTemplates": "Schedule templates"
     },
     "actions": {
       "view": "view",
@@ -51,7 +53,8 @@
       "remove": "remove",
       "create": "create",
       "reschedule": "reschedule",
-      "cancel": "cancel"
+      "cancel": "cancel",
+      "apply": "apply"
     }
   }
 }

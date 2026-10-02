@@ -15,6 +15,10 @@ interface AppHeaderProps {
   // VIEW_ROSTER permission (roles are tenant-defined now, not a fixed enum,
   // so this can't be decided from `role` alone the way it used to be).
   canViewRoster: boolean;
+  // Same convention for the Schedule templates link, gated on
+  // VIEW_SCHEDULE_TEMPLATES - a separate permission from VIEW_ROSTER, so
+  // computed independently rather than implied by it.
+  canViewScheduleTemplates: boolean;
   // The tenant's own company logo (admin-controlled, see
   // admin/settings/company-profile/LogoSettings.tsx) - distinct from the ShiftUp platform mark
   // below, which always shows regardless of whether a tenant has set one.
@@ -88,7 +92,15 @@ function NavDropdown({
   );
 }
 
-export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoUrl, companyNameFont }: AppHeaderProps) {
+export function AppHeader({
+  tenantSlug,
+  businessName,
+  role,
+  canViewRoster,
+  canViewScheduleTemplates,
+  logoUrl,
+  companyNameFont,
+}: AppHeaderProps) {
   const t = useTranslations("AppHeader");
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -101,10 +113,16 @@ export function AppHeader({ tenantSlug, businessName, role, canViewRoster, logoU
   const staffItems: NavItem[] = [
     ...(role === "ADMIN" || canViewRoster ? [{ href: `${base}/calendar/roster`, label: t("roster") }] : []),
     { href: `${base}/time-off`, label: t("timeOff") },
+    ...(role === "ADMIN" || canViewScheduleTemplates
+      ? [{ href: `${base}/schedule-templates`, label: t("scheduleTemplates") }]
+      : []),
   ];
 
   // A dropdown's trigger reads "active" whenever the current page is any of its own items.
-  const staffActive = pathname === `${base}/calendar/roster` || pathname === `${base}/time-off`;
+  const staffActive =
+    pathname === `${base}/calendar/roster` ||
+    pathname === `${base}/time-off` ||
+    pathname === `${base}/schedule-templates`;
 
   async function handleSignOut() {
     await fetch("/api/auth/logout", { method: "POST" });

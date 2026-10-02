@@ -129,51 +129,93 @@ see `ARCHITECTURE.md`.
   Needs a decision on the control (a few preset sizes vs. a free-drag
   resize handle) and whether the choice persists (localStorage, per-browser)
   or is just a one-off per session.
-- **Reusable shift-schedule templates, a new page for the staff manager.**
-  Raised 2026-10-01: build a schedule once (who works which hours on which
-  day), then re-apply that same pattern to a different week instead of
-  rebuilding it from scratch each time. A real new data model, not a reuse
-  of `Appointment`:
-  - **`ScheduleTemplate`** (tenantId, name, periodLengthDays) +
-    **`ScheduleTemplateShift`** (templateId, staffId, dayOffset within the
-    period, startTime/endTime, optional serviceTypeId) - a template shift is
-    relative to the period, not tied to a real calendar date, so the same
-    template can be applied starting from any week.
-  - **The "setting that asks for the time length of this schedule"** -
-    `periodLengthDays` above, read as a per-template field (set when
-    creating that template, e.g. a 7-day vs. 14-day rotation), not a single
-    tenant-wide default - worth confirming that reading is right before
-    building.
-  - **Applying a template to a week** generates real `Appointment` rows
-    (shifts - `clientId` null) for the target period. Needs a decision on
-    conflicts: what happens when a generated shift would double-book a staff
-    member already scheduled that day (the `EXCLUDE` constraint will reject
-    it) - block the whole apply, skip just the conflicting ones and report
-    which failed, or show a conflict preview before confirming.
-  - **New permission keys needed** (same granular VIEW/CREATE/EDIT/DELETE
-    pattern as staff/services/clients/appointments in
-    `src/lib/permissions/catalog.ts`), plus a separate "apply a template"
-    permission distinct from "edit a template's definition" - applying
-    actually creates real scheduled shifts, a bigger-stakes action than
-    editing a draft pattern.
-  - **Additional manager-useful features worth considering** (asked for by
-    name, not yet decided): a preview/diff before applying showing exactly
-    what would be created and flagging conflicts; cloning an existing
-    template as a starting point for a new one; named templates so a manager
-    can keep several patterns (e.g. "Summer schedule" vs. "Holiday
-    schedule"); an "undo this apply" action to remove everything one
-    apply-run generated, in case of a mistake; tracking which `Appointment`
-    rows came from which template+apply-run to make that undo possible.
-  
-  Sizable enough to warrant its own page, data model, and permission work -
-  treat as a dedicated effort, not a quick add onto `SchedulingCalendar.tsx`.
+- ~~Reusable shift-schedule templates, a new page for the staff manager.~~
+  **Done 2026-10-02** - new `/app/[tenantSlug]/schedule-templates` page
+  (`ScheduleTemplatesView.tsx`), linked from `AppHeader`'s "Staff pages"
+  dropdown, gated on the new `VIEW_SCHEDULE_TEMPLATES` permission.
+  - **Data model, as originally specced**: `ScheduleTemplate` (tenantId,
+    name, `periodLengthDays`) + `ScheduleTemplateShift` (templateId,
+    staffId, `dayOffset` 0-indexed within the period, `startMinute`/
+    `endMinute` - same minutes-since-midnight convention as `WorkingHours`,
+    optional serviceTypeId) - relative to the period, not a real calendar
+    date, so the same template applies starting from any week.
+    `periodLengthDays` confirmed as a per-template field, not a tenant-wide
+    default - set once when creating a template (e.g. 7-day vs. 14-day
+    rotation), enforced on shrink (`PATCH` rejects a smaller value than an
+    existing shift's `dayOffset` needs).
+  - **Conflict handling, decided 2026-10-02**: preview before applying - the
+    admin picked this explicitly over "skip and report after" or "block the
+    whole apply." `POST /api/schedule-templates/:id/apply` with
+    `dryRun: true` computes exactly what would be created and flags any
+    shift that would double-book a staff member (against an existing
+    appointment, or against another row in the same template), without
+    writing anything; the real apply (`dryRun: false`) then creates every
+    non-conflicting shift and skips just the flagged ones, reported back as
+    `{created, skipped}` - the admin sees the full picture before committing,
+    and a conflict only costs that one shift, not the whole run.
+  - **Permission keys**: `VIEW/CREATE/EDIT/DELETE_SCHEDULE_TEMPLATES` (same
+    granular pattern as staff/services/clients/appointments) plus a separate
+    `APPLY_SCHEDULE_TEMPLATES` - applying creates real scheduled shifts, a
+    bigger-stakes action than editing a draft pattern, so a role can be
+    allowed to apply existing templates without being able to redefine them.
+    Starter defaults: Manager gets all five; Supervisor gets
+    `VIEW`/`APPLY` (mirrors it already holding `CREATE_APPOINTMENTS` - same
+    split as `VIEW_SERVICES` true / `CREATE_SERVICES` false) but not
+    `CREATE`/`EDIT`/`DELETE`; Employee/Customer get none.
+  - **Of the "additional features worth considering" list, built**: a
+    preview/diff before applying (see conflict handling above) and cloning
+    an existing template (`POST /api/schedule-templates/:id/clone` - copies
+    name, period length, and every shift). **Not built**: an "undo this
+    apply" action and tracking which `Appointment` rows came from which
+    apply-run - both still require a real `ApplyRun`-style model, left for
+    later if an actual mistaken-apply incident makes it worth the schema
+    addition.
+  - **Decided paid feature** (per the line above, confirmed before
+    building): gated by a new `assertScheduleTemplatesEnabled` in
+    `src/lib/licensing/limits.ts` - `FREE` plan blocked entirely (not a
+    usage cap like the staff/appointment limits, a whole-feature gate),
+    `ONE_TIME`/`SUBSCRIPTION` unrestricted. Enforced in every
+    `/api/schedule-templates/**` route, not just hidden in the UI; the page
+    itself shows an "Upgrade to use this" card in place of the tool for a
+    `FREE` tenant. **Judgment call, flagging rather than silently deciding**:
+    gated *all* actions including viewing/deleting a tenant's own
+    already-existing templates after a hypothetical downgrade from paid back
+    to `FREE`, not just creating new ones or applying - simplest reading of
+    "paid feature," but means a downgraded tenant can't even clean up old
+    templates without re-upgrading. Low-stakes today since Stripe checkout
+    isn't live yet (every signup is `FREE`; the only way to reach a paid
+    plan pre-checkout is the SUPERADMIN console's manual override), but
+    worth revisiting once real downgrades can happen.
+  - **Verified live** via curl against two fresh signups: created a template
+    with two shifts for one staff member, confirmed `GET .../apply` with
+    `dryRun: true` computed the right `startTime`/`endTime` for both and
+    flagged neither as a conflict; applied for real and confirmed two
+    `Appointment` rows were created with `clientId: null`; re-applied the
+    *same* template to the *same* week and confirmed both were now correctly
+    flagged and skipped as `CONFLICT`; cloned the template and confirmed the
+    copy carried over both shifts; confirmed a day-offset outside the
+    period's length 400s, and shrinking the period below an existing shift's
+    offset 400s with `PERIOD_TOO_SHORT`; confirmed an Employee (lacking
+    `VIEW_SCHEDULE_TEMPLATES`) gets 403 on every route; confirmed a second,
+    separate `FREE`-plan tenant's ADMIN gets 403 with the paid-feature
+    message on every route including plain `GET`, and that the page itself
+    renders the upgrade card instead of the tool. `tsc --noEmit`, `eslint`,
+    the full `vitest` suite (15/15), and `next build` all clean. **Not
+    browser-click-tested** - same standing caveat as the rest of this app's
+    client-rendered UI; the shift-add form, preview table, and apply/confirm
+    buttons are correct by code review and their underlying API calls are
+    genuinely tested, but the on-screen interaction hasn't been clicked
+    through in a real browser.
 - **Two-factor authentication**, possibly via Google (Sign in with Google, or
   TOTP-style Google Authenticator support). Raised 2026-10-01. Needs a
   decision: OAuth-based "Sign in with Google" (adds a third-party auth
   dependency, no shared secret to store) vs. TOTP 2FA where Google
   Authenticator is just one compatible app among several (needs a stored
   per-user secret + backup codes) - these are different features with
-  different scope, not two options for the same thing.
+  different scope, not two options for the same thing. **Decided
+  2026-10-02: not a paid-gated feature, free plan included** - basic account
+  security shouldn't be paywalled; see the rate-limiting item under Security
+  below for the same reasoning.
 - **Password reset workflow - half done.** Raised 2026-10-02. **Done
   2026-10-02**: a logged-in user can now change their own password -
   `PATCH /api/me/password` (verifies `currentPassword` via `verifyPassword`,
@@ -205,7 +247,8 @@ see `ARCHITECTURE.md`.
   (not just OS-detected auto-dark) and a parallel dark token set for every
   `--color-primary-*`/`--color-shift-*` value plus `--background`/
   `--foreground`, not just inverting backgrounds - a real design pass, not a
-  quick CSS flip.
+  quick CSS flip. **Decided 2026-10-02: not a paid-gated feature** - a basic
+  display preference, not a usage driver, free plan included.
 - ~~Settings: a "Company name" card with a font dropdown.~~ **Font half done
   2026-10-02** - new `Tenant.companyNameFont` column, `src/lib/fonts/
   companyNameFonts.ts` (8 curated Google Fonts loaded via `next/font/google`
@@ -289,7 +332,9 @@ see `ARCHITECTURE.md`.
   can upload/replace/remove one from User manager, shown in `AppHeader` next
   to the business name - see PROGRESS.md). Individual staff profile pictures
   are still unbuilt.
-- **Anonymized shareable calendar links.** Reaffirmed 2026-10-01 with the
+- **Anonymized shareable calendar links.** **Decided 2026-10-02: paid
+  feature** - an external-facing convenience, cheap to gate. Reaffirmed
+  2026-10-01 with the
   same shape as originally raised - two distinct links (one for appointments,
   one for shifts), each shareable via a plain URL, different from the
   existing `/calendar/view` (which still shows full client/staff detail,
@@ -322,7 +367,10 @@ see `ARCHITECTURE.md`.
   - Gating: paid-tier feature, but also admin-toggleable in Settings (so a
     paying tenant can still turn the widget off if they don't want it) -
     two separate gates, not one.
-- **Overlapping-PTO alert for managers.** Detect when two or more staff have
+- **Overlapping-PTO alert for managers.** **Decided 2026-10-02: paid
+  feature** - bundle into the same paid-notifications bucket as the
+  email-reminders item above rather than building it free-standing. Detect
+  when two or more staff have
   approved (or requested?) time off covering the same day, and notify the
   manager. Raised 2026-10-01. Needs decisions before building:
   - **When to check**: at request time (warn the approver before they
@@ -347,9 +395,14 @@ see `ARCHITECTURE.md`.
   current time, and a brief summary. Needs a decision before building: whose
   time is "yours" to diff against - the viewing admin's own timezone, the
   tenant's business timezone, or whoever's calendar is being looked at -
-  this wasn't specified and changes the implementation.
-- **Let users customize their brand colors from the admin window.** Still
-  open and distinct from the calendar color-key personalization below - this
+  this wasn't specified and changes the implementation. **Decided
+  2026-10-02: not a paid-gated feature** - a basic usability preference, not
+  a usage driver, free plan included.
+- **Let users customize their brand colors from the admin window.**
+  **Decided 2026-10-02: paid feature** - white-labeling the app's chrome is
+  a classic Pro/Business-tier feature, no cost-driver reason either way.
+  Still open and distinct from the calendar color-key personalization
+  below - this
   one is the app's own UI chrome palette (dodger-blue/Rockies-purple,
   `--color-primary-*`/`--color-shift-*` in `src/app/globals.css`, used for
   buttons/nav/branding throughout), not the calendar's event colors. Would
@@ -357,7 +410,10 @@ see `ARCHITECTURE.md`.
   that value at render time instead of the fixed CSS custom properties - a
   real feature, not a quick tweak, since nearly every page references these
   tokens.
-- **External website integration / public booking widget.** Let a business
+- **External website integration / public booking widget.** **Decided
+  2026-10-02: paid feature** - the single biggest upsell lever in this file;
+  competitors (Jobber, Housecall Pro) charge extra tiers for exactly this.
+  Let a business
   embed or link to a public-facing calendar on their own website where
   clients can see free time slots and book themselves, without logging in.
   This is the "self-service booking portal" from the original architecture
@@ -411,7 +467,9 @@ see `ARCHITECTURE.md`.
   source - password hashing is sound, but nothing throttles brute-force
   volume against it. Needs a decision on mechanism (in-memory/per-instance
   vs. a shared store like Redis, which this stack doesn't have yet) and
-  threshold before building.
+  threshold before building. **Decided 2026-10-02: not a paid-gated
+  feature** - baseline security, applies to every tenant regardless of plan;
+  same reasoning as 2FA above.
 
 ## Confirm/decide
 

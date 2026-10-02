@@ -21,7 +21,7 @@ export default async function CalendarPage({
     redirect("/login");
   }
 
-  const { tenant, license, canViewRoster, canToggleCalendarType } = await runInTenantContext(
+  const { tenant, license, canViewRoster, canViewScheduleTemplates, canToggleCalendarType } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
@@ -29,6 +29,13 @@ export default async function CalendarPage({
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
       const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      const canViewScheduleTemplates = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SCHEDULE_TEMPLATES"
+      );
       const canToggleCalendarType = await hasPermission(
         tx,
         session.tenantId!,
@@ -36,7 +43,7 @@ export default async function CalendarPage({
         session.roleId,
         "VIEW_CALENDAR_TOGGLE"
       );
-      return { tenant, license, canViewRoster, canToggleCalendarType };
+      return { tenant, license, canViewRoster, canViewScheduleTemplates, canToggleCalendarType };
     }
   );
 
@@ -51,11 +58,12 @@ export default async function CalendarPage({
         businessName={tenant.name}
         role={session.role}
         canViewRoster={canViewRoster}
+        canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
       />
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-4 p-8">
-        <div className="flex items-center justify-center gap-4">
+        <div className="flex items-center gap-4">
           {tenant.logoDataUrl && (
             // eslint-disable-next-line @next/next/no-img-element -- per-tenant admin-uploaded data: URL, not a static/optimizable asset
             <img

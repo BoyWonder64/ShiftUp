@@ -17,7 +17,7 @@ export default async function RosterPage({
     redirect("/login");
   }
 
-  const { tenant, canView } = await runInTenantContext(
+  const { tenant, canView, canViewScheduleTemplates } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
@@ -31,7 +31,14 @@ export default async function RosterPage({
       // names; now that roles are tenant-defined, a real permission key is
       // the only way to express "manager-ish" - see TODO.md's note on this.
       const canView = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
-      return { tenant, canView };
+      const canViewScheduleTemplates = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SCHEDULE_TEMPLATES"
+      );
+      return { tenant, canView, canViewScheduleTemplates };
     }
   );
 
@@ -50,6 +57,7 @@ export default async function RosterPage({
         businessName={tenant.name}
         role={session.role}
         canViewRoster
+        canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
       />

@@ -6,6 +6,7 @@
     "staffPages": "Pages du personnel",
     "roster": "Planning",
     "timeOff": "Congés",
+    "scheduleTemplates": "Modèles d'horaires",
     "settings": "Paramètres",
     "billing": "Facturation",
     "signOut": "Déconnexion"
@@ -42,7 +43,8 @@
       "services": "Services",
       "clients": "Clients",
       "appointments": "Rendez-vous",
-      "jobEstimates": "Devis de travaux"
+      "jobEstimates": "Devis de travaux",
+      "scheduleTemplates": "Modèles d'horaires"
     },
     "actions": {
       "view": "voir",
@@ -51,7 +53,8 @@
       "remove": "retirer",
       "create": "créer",
       "reschedule": "replanifier",
-      "cancel": "annuler"
+      "cancel": "annuler",
+      "apply": "appliquer"
     }
   }
 }

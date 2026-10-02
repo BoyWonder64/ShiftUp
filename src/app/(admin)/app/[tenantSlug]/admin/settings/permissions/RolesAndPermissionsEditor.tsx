@@ -40,6 +40,17 @@ export const PERMISSION_GROUPS: Array<{ label: string; note?: string; keys: Perm
     ],
   },
   { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
+  {
+    label: "Schedule templates",
+    note: "Applying a template creates real shifts, so it's a separate permission from editing a template's definition - a role can be allowed to apply existing templates without being able to redefine them.",
+    keys: [
+      "VIEW_SCHEDULE_TEMPLATES",
+      "CREATE_SCHEDULE_TEMPLATES",
+      "EDIT_SCHEDULE_TEMPLATES",
+      "DELETE_SCHEDULE_TEMPLATES",
+      "APPLY_SCHEDULE_TEMPLATES",
+    ],
+  },
   { label: "Clients", keys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
   { label: "Staff", keys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
   { label: "Services", keys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },

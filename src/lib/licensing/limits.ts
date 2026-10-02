@@ -37,6 +37,20 @@ export async function assertCanAddStaffProfile(tx: Tx, tenantId: string): Promis
   }
 }
 
+/**
+ * Schedule templates (TODO.md: "decided 2026-10-02: paid feature" - a
+ * manager-efficiency feature with no cost-driver reason to be free, a
+ * natural upsell) - unlike the usage caps above, this isn't a count limit,
+ * it's a whole-feature gate: FREE tenants can't use it at all, ONE_TIME/
+ * SUBSCRIPTION can regardless of usage.
+ */
+export async function assertScheduleTemplatesEnabled(tx: Tx, tenantId: string): Promise<void> {
+  const plan = await getBillingPlan(tx, tenantId);
+  if (plan === "FREE") {
+    throw new PlanLimitError("Schedule templates are a paid feature. Upgrade to use them.");
+  }
+}
+
 /** Throws PlanLimitError if creating one more Appointment would exceed the FREE plan's rolling-30-day cap. */
 export async function assertCanAddAppointment(tx: Tx, tenantId: string): Promise<void> {
   const plan = await getBillingPlan(tx, tenantId);

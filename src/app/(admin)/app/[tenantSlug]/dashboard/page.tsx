@@ -21,6 +21,16 @@ const ACCESS_CATEGORIES: Array<{ key: string; permissionKeys: PermissionKey[] }>
     permissionKeys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
   },
   { key: "jobEstimates", permissionKeys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
+  {
+    key: "scheduleTemplates",
+    permissionKeys: [
+      "VIEW_SCHEDULE_TEMPLATES",
+      "CREATE_SCHEDULE_TEMPLATES",
+      "EDIT_SCHEDULE_TEMPLATES",
+      "DELETE_SCHEDULE_TEMPLATES",
+      "APPLY_SCHEDULE_TEMPLATES",
+    ],
+  },
 ];
 
 const ACTION_KEYS: Record<PermissionKey, string> = {
@@ -51,6 +61,11 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   // an entry here to satisfy Record<PermissionKey, string>'s exhaustiveness.
   VIEW_ALL_SHIFTS: "view",
   VIEW_ALL_APPOINTMENTS: "view",
+  VIEW_SCHEDULE_TEMPLATES: "view",
+  CREATE_SCHEDULE_TEMPLATES: "add",
+  EDIT_SCHEDULE_TEMPLATES: "edit",
+  DELETE_SCHEDULE_TEMPLATES: "remove",
+  APPLY_SCHEDULE_TEMPLATES: "apply",
 };
 
 async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId: string | null) {
@@ -96,10 +111,26 @@ export default async function DashboardPage({
       });
       const accessSummary = await buildAccessSummary(tx, session.tenantId!, session.role, session.roleId);
       const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      const canViewScheduleTemplates = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SCHEDULE_TEMPLATES"
+      );
       // The tenant's own name for this user's role (e.g. "Plumber"), or null
       // for ADMIN/SUPERADMIN, which aren't tenant-defined roles.
       const customRole = session.roleId ? await tx.role.findUnique({ where: { id: session.roleId } }) : null;
-      return { tenant, license, staffCount, upcomingCount, accessSummary, canViewRoster, customRole };
+      return {
+        tenant,
+        license,
+        staffCount,
+        upcomingCount,
+        accessSummary,
+        canViewRoster,
+        canViewScheduleTemplates,
+        customRole,
+      };
     }
   );
 
@@ -126,6 +157,7 @@ export default async function DashboardPage({
         businessName={result.tenant.name}
         role={session.role}
         canViewRoster={result.canViewRoster}
+        canViewScheduleTemplates={result.canViewScheduleTemplates}
         logoUrl={result.tenant.logoDataUrl}
         companyNameFont={result.tenant.companyNameFont}
       />

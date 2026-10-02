@@ -47,6 +47,7 @@ export default async function BillingPage({
         businessName={tenant.name}
         role="ADMIN"
         canViewRoster
+        canViewScheduleTemplates
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
       />

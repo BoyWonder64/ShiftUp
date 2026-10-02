@@ -29,6 +29,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid email/username or password." }, { status: 401 });
   }
 
+  if (user.tenantId) {
+    const tenant = await runInSystemContext((tx) =>
+      tx.tenant.findUnique({ where: { id: user.tenantId! }, select: { disabled: true } })
+    );
+    if (tenant?.disabled) {
+      return NextResponse.json({ error: "This account has been disabled." }, { status: 403 });
+    }
+  }
+
   const token = createSessionToken({
     userId: user.id,
     tenantId: user.tenantId,

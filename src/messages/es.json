@@ -6,6 +6,7 @@
     "staffPages": "Páginas de personal",
     "roster": "Plantilla",
     "timeOff": "Tiempo libre",
+    "scheduleTemplates": "Plantillas de horario",
     "settings": "Configuración",
     "billing": "Facturación",
     "signOut": "Cerrar sesión"
@@ -42,7 +43,8 @@
       "services": "Servicios",
       "clients": "Clientes",
       "appointments": "Citas",
-      "jobEstimates": "Presupuestos de trabajo"
+      "jobEstimates": "Presupuestos de trabajo",
+      "scheduleTemplates": "Plantillas de horario"
     },
     "actions": {
       "view": "ver",
@@ -51,7 +53,8 @@
       "remove": "eliminar",
       "create": "crear",
       "reschedule": "reprogramar",
-      "cancel": "cancelar"
+      "cancel": "cancelar",
+      "apply": "aplicar"
     }
   }
 }
