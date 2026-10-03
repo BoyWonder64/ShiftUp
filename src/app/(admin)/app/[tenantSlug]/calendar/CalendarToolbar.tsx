@@ -55,26 +55,26 @@ export function CalendarToolbar({
   const viewList = Array.isArray(views) ? views : (Object.keys(views) as View[]);
 
   return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-      <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1">
+    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <div className="inline-flex gap-0.5 rounded-full bg-gray-100 p-0.5">
         <button
           type="button"
           onClick={() => onNavigate("TODAY")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
+          className="rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
         >
           Today
         </button>
         <button
           type="button"
           onClick={() => onNavigate("PREV")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
+          className="rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
         >
           Back
         </button>
         <button
           type="button"
           onClick={() => onNavigate("NEXT")}
-          className="rounded-full px-4 py-1.5 text-xs font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
+          className="rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide text-gray-600 uppercase transition-all duration-150 hover:bg-white hover:text-primary-600 hover:shadow-sm"
         >
           Next
         </button>
@@ -84,7 +84,7 @@ export function CalendarToolbar({
         <button
           type="button"
           onClick={openPicker}
-          className="cursor-pointer rounded-full px-3 py-1 text-lg font-bold tracking-wide text-gray-900 uppercase transition-colors duration-150 hover:text-primary-600"
+          className="cursor-pointer rounded-full px-2 py-0.5 text-sm font-bold tracking-wide text-gray-900 uppercase transition-colors duration-150 hover:text-primary-600"
           title="Click to jump to a specific month and year"
         >
           {label}
@@ -133,13 +133,13 @@ export function CalendarToolbar({
         )}
       </div>
 
-      <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1">
+      <div className="inline-flex gap-0.5 rounded-full bg-gray-100 p-0.5">
         {viewList.map((v) => (
           <button
             key={v}
             type="button"
             onClick={() => onView(v)}
-            className={`rounded-full px-4 py-1.5 text-xs font-bold tracking-wide uppercase transition-all duration-150 ${
+            className={`rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase transition-all duration-150 ${
               v === view
                 ? "bg-primary-500 text-white shadow-sm"
                 : "text-gray-600 hover:bg-white hover:text-primary-600 hover:shadow-sm"

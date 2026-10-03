@@ -33,10 +33,12 @@ const createSchema = z.object({
   appliesTo: z.enum(["SHIFT", "APPOINTMENT", "BOTH"]).default("BOTH"),
 });
 
-// Gated on CREATE_APPOINTMENTS, not an ADMIN-only check - a new tag is a
-// lightweight label invented on the fly while scheduling (same pattern as
-// the inline "+ Add new client"), not tenant-wide branding like the 5
-// built-in event colors or the logo, which stay ADMIN-only.
+// Gated on CREATE_SHIFTS/CREATE_APPOINTMENTS (matching the tag's own
+// `appliesTo` scope - either one for a BOTH-scoped tag), not an ADMIN-only
+// check - a new tag is a lightweight label invented on the fly while
+// scheduling (same pattern as the inline "+ Add new client"), not
+// tenant-wide branding like the 5 built-in event colors or the logo, which
+// stay ADMIN-only.
 export async function POST(request: NextRequest) {
   try {
     const session = await requireTenantSession();
@@ -47,7 +49,13 @@ export async function POST(request: NextRequest) {
     }
 
     const tag = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS");
+      const allowed =
+        parsed.data.appliesTo === "SHIFT"
+          ? await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_SHIFTS")
+          : parsed.data.appliesTo === "APPOINTMENT"
+            ? await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS")
+            : (await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_SHIFTS")) ||
+              (await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS"));
       if (!allowed) throw new Error("FORBIDDEN");
       return tx.eventTag.create({
         data: {

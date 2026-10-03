@@ -67,6 +67,7 @@ export async function POST(request: NextRequest) {
         username,
         password,
         role: "ADMIN",
+        isOwner: true,
       });
 
       return { tenant, user };

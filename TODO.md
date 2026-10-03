@@ -4,19 +4,22 @@ Things that have been raised but deliberately **not** built yet, kept here so
 they don't get lost. Discuss/prioritize before picking any of these up.
 Day-to-day build status (what's done, what's verified) lives in `PROGRESS.md` —
 this file is just the backlog. For current API routes/data model/permissions,
-see `ARCHITECTURE.md`.
+see `ARCHITECTURE.md`. **Anything marked "Done"/"Resolved" below has been
+pulled out into `VERIFY.md`** — a checklist for you to confirm in the running
+app — rather than left here as done-but-unconfirmed clutter.
 
 ## Issues
 
 Bugs, data-model problems, and known gaps now live in **`ISSUES.md`**, not
-here - this file is feature requests/backlog only. **High priority, at the
-top of that file:** service types wrongly shared between Appointments and
-Shifts; the color-tag settings card moved into Staff settings instead of
-Shifts/Appointments; no way to update a calendar event after it's created
-(e.g. log a no-show - `AppointmentStatus` already has `NO_SHOW`/`COMPLETED`
-but nothing can set them); and the manager no-show/shift reporting dashboard
-(plus its own new Staff-settings permission) that depends on that. See
-`ISSUES.md` for full detail.
+here - this file is feature requests/backlog only. **Still open, at the top
+of that file (as of 2026-10-02):** service types wrongly shared between
+Appointments and Shifts (#1); no way to update a calendar event after it's
+created (e.g. log a no-show - `AppointmentStatus` already has
+`NO_SHOW`/`COMPLETED` but nothing can set them, #3); the manager no-show/shift
+reporting dashboard that depends on #3 (#4, design proposed but not built);
+and appointment payment status having no way to actually update it (#5).
+**Resolved** (#2, #6) — moved to `VERIFY.md` for you to confirm. See
+`ISSUES.md` for full detail on the open ones.
 
 ## New feature requests (not started)
 
@@ -52,16 +55,8 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   established from the Dashboard page, so each additional page is a smaller
   lift than the first one was.
 - ~~Custom roles — let a tenant define its own named roles instead of being
-  limited to the 4 fixed configurable ones.~~ **Done 2026-10-01** - see
-  PROGRESS.md's "Full custom-roles system" entry. `User.role` is now a
-  3-value enum (`SUPERADMIN`/`ADMIN`/`STAFF`) plus a real per-tenant `Role`
-  table (name, description, nullable `reportsTo` hierarchy) that
-  `RolePermission`/`RoleVisibility` key off of instead of a fixed enum.
-  Roles can be created, renamed, described, given a reports-to, and deleted
-  (blocked while anyone holds them) from Settings. The pre-existing 4
-  defaults (Manager/Supervisor/Employee/Customer) were preserved as real,
-  editable/deletable rows, not replaced. Supersedes the `Tenant.roleLabels`
-  rename-only stopgap mentioned below, which has been removed.
+  limited to the 4 fixed configurable ones.~~ **Done 2026-10-01 — moved to
+  `VERIFY.md`.**
 - **Onboarding: a step where the tenant creates its own roles and decides
   what each one can do.** Raised 2026-10-01. Now unblocked - the real
   `Role` table custom roles depended on is built (see above) - this is just
@@ -128,82 +123,7 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   resize handle) and whether the choice persists (localStorage, per-browser)
   or is just a one-off per session.
 - ~~Reusable shift-schedule templates, a new page for the staff manager.~~
-  **Done 2026-10-02** - new `/app/[tenantSlug]/schedule-templates` page
-  (`ScheduleTemplatesView.tsx`), linked from `AppHeader`'s "Staff pages"
-  dropdown, gated on the new `VIEW_SCHEDULE_TEMPLATES` permission.
-  - **Data model, as originally specced**: `ScheduleTemplate` (tenantId,
-    name, `periodLengthDays`) + `ScheduleTemplateShift` (templateId,
-    staffId, `dayOffset` 0-indexed within the period, `startMinute`/
-    `endMinute` - same minutes-since-midnight convention as `WorkingHours`,
-    optional serviceTypeId) - relative to the period, not a real calendar
-    date, so the same template applies starting from any week.
-    `periodLengthDays` confirmed as a per-template field, not a tenant-wide
-    default - set once when creating a template (e.g. 7-day vs. 14-day
-    rotation), enforced on shrink (`PATCH` rejects a smaller value than an
-    existing shift's `dayOffset` needs).
-  - **Conflict handling, decided 2026-10-02**: preview before applying - the
-    admin picked this explicitly over "skip and report after" or "block the
-    whole apply." `POST /api/schedule-templates/:id/apply` with
-    `dryRun: true` computes exactly what would be created and flags any
-    shift that would double-book a staff member (against an existing
-    appointment, or against another row in the same template), without
-    writing anything; the real apply (`dryRun: false`) then creates every
-    non-conflicting shift and skips just the flagged ones, reported back as
-    `{created, skipped}` - the admin sees the full picture before committing,
-    and a conflict only costs that one shift, not the whole run.
-  - **Permission keys**: `VIEW/CREATE/EDIT/DELETE_SCHEDULE_TEMPLATES` (same
-    granular pattern as staff/services/clients/appointments) plus a separate
-    `APPLY_SCHEDULE_TEMPLATES` - applying creates real scheduled shifts, a
-    bigger-stakes action than editing a draft pattern, so a role can be
-    allowed to apply existing templates without being able to redefine them.
-    Starter defaults: Manager gets all five; Supervisor gets
-    `VIEW`/`APPLY` (mirrors it already holding `CREATE_APPOINTMENTS` - same
-    split as `VIEW_SERVICES` true / `CREATE_SERVICES` false) but not
-    `CREATE`/`EDIT`/`DELETE`; Employee/Customer get none.
-  - **Of the "additional features worth considering" list, built**: a
-    preview/diff before applying (see conflict handling above) and cloning
-    an existing template (`POST /api/schedule-templates/:id/clone` - copies
-    name, period length, and every shift). **Not built**: an "undo this
-    apply" action and tracking which `Appointment` rows came from which
-    apply-run - both still require a real `ApplyRun`-style model, left for
-    later if an actual mistaken-apply incident makes it worth the schema
-    addition.
-  - **Decided paid feature** (per the line above, confirmed before
-    building): gated by a new `assertScheduleTemplatesEnabled` in
-    `src/lib/licensing/limits.ts` - `FREE` plan blocked entirely (not a
-    usage cap like the staff/appointment limits, a whole-feature gate),
-    `ONE_TIME`/`SUBSCRIPTION` unrestricted. Enforced in every
-    `/api/schedule-templates/**` route, not just hidden in the UI; the page
-    itself shows an "Upgrade to use this" card in place of the tool for a
-    `FREE` tenant. **Judgment call, flagging rather than silently deciding**:
-    gated *all* actions including viewing/deleting a tenant's own
-    already-existing templates after a hypothetical downgrade from paid back
-    to `FREE`, not just creating new ones or applying - simplest reading of
-    "paid feature," but means a downgraded tenant can't even clean up old
-    templates without re-upgrading. Low-stakes today since Stripe checkout
-    isn't live yet (every signup is `FREE`; the only way to reach a paid
-    plan pre-checkout is the SUPERADMIN console's manual override), but
-    worth revisiting once real downgrades can happen.
-  - **Verified live** via curl against two fresh signups: created a template
-    with two shifts for one staff member, confirmed `GET .../apply` with
-    `dryRun: true` computed the right `startTime`/`endTime` for both and
-    flagged neither as a conflict; applied for real and confirmed two
-    `Appointment` rows were created with `clientId: null`; re-applied the
-    *same* template to the *same* week and confirmed both were now correctly
-    flagged and skipped as `CONFLICT`; cloned the template and confirmed the
-    copy carried over both shifts; confirmed a day-offset outside the
-    period's length 400s, and shrinking the period below an existing shift's
-    offset 400s with `PERIOD_TOO_SHORT`; confirmed an Employee (lacking
-    `VIEW_SCHEDULE_TEMPLATES`) gets 403 on every route; confirmed a second,
-    separate `FREE`-plan tenant's ADMIN gets 403 with the paid-feature
-    message on every route including plain `GET`, and that the page itself
-    renders the upgrade card instead of the tool. `tsc --noEmit`, `eslint`,
-    the full `vitest` suite (15/15), and `next build` all clean. **Not
-    browser-click-tested** - same standing caveat as the rest of this app's
-    client-rendered UI; the shift-add form, preview table, and apply/confirm
-    buttons are correct by code review and their underlying API calls are
-    genuinely tested, but the on-screen interaction hasn't been clicked
-    through in a real browser.
+  **Done 2026-10-02 — moved to `VERIFY.md`.**
 - **Two-factor authentication**, possibly via Google (Sign in with Google, or
   TOTP-style Google Authenticator support). Raised 2026-10-01. Needs a
   decision: OAuth-based "Sign in with Google" (adds a third-party auth
@@ -214,12 +134,9 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   2026-10-02: not a paid-gated feature, free plan included** - basic account
   security shouldn't be paywalled; see the rate-limiting item under Security
   below for the same reasoning.
-- **Password reset workflow - half done.** Raised 2026-10-02. **Done
-  2026-10-02**: a logged-in user can now change their own password -
-  `PATCH /api/me/password` (verifies `currentPassword` via `verifyPassword`,
-  then re-hashes) plus a new `ChangePasswordForm.tsx` card on the Account
-  settings page (`/admin/settings/account`), works for ADMIN/STAFF/
-  SUPERADMIN alike. **Still open**: there's still no way for a *locked-out*
+- **Password reset workflow - half done.** Raised 2026-10-02. The
+  change-your-own-password half is done - moved to `VERIFY.md`. **Still
+  open**: there's still no way for a *locked-out*
   user (one who can't log in at all, so can't reach Settings) to reset their
   password. That needs: a "Forgot password?" link on the login page, a
   `POST /api/auth/password-reset/request` endpoint that generates a
@@ -248,121 +165,28 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   quick CSS flip. **Decided 2026-10-02: not a paid-gated feature** - a basic
   display preference, not a usage driver, free plan included.
 - ~~Settings: a "Company name" card with a font dropdown.~~ **Font half done
-  2026-10-02** - new `Tenant.companyNameFont` column, `src/lib/fonts/
-  companyNameFonts.ts` (8 curated Google Fonts loaded via `next/font/google`
-  in `layout.tsx`, not a raw font-file upload), `POST /api/admin/
-  company-name-font` (ADMIN-only), and a new `CompanyNameFontSettings.tsx`
-  card on the Company Profile settings page (`/admin/settings/
-  company-profile`) - admin picks a font and it applies to the business name
-  everywhere it renders (`AppHeader`, the Dashboard heading). The scope
-  question is resolved as just the business-name text, not customizable
-  fonts for the overall page too (the bigger version from the original ask)
-  - deliberately not built. **Still open**: part (a) of the original ask,
-  actually editing the business's display name - `Tenant.name` is still set
+  2026-10-02 — moved to `VERIFY.md`.** **Still open**: part (a) of the
+  original ask, actually editing the business's display name - `Tenant.name`
+  is still set
   once at signup with no rename path anywhere in Settings; the new font card
   only picks a font for whatever `Tenant.name` already is, it doesn't let
   you change the text itself.
-- ~~Give the app's font more of a "racing" feel - thicker overall.~~ **Done**
-  2026-10-01 - Orbitron on headings and the nav brand, body text left alone,
-  colors unchanged (see PROGRESS.md). User reviewed live: liked it overall
-  but not on the calendar toolbar's month/year heading specifically - that
-  one spot was reverted to the plain body font (no display face at all, not
-  a third font) per "basic professional" feedback.
+- ~~Give the app's font more of a "racing" feel - thicker overall.~~ **Done
+  2026-10-01 — moved to `VERIFY.md`.**
 - ~~**Dev role** Add a dev role that is only for me with an account that I setup. It
   allows me to review all accounts and determine if their is an issue that needs
   to be resolved. It has an account dashboard, displays billing, and allows
-  me to setup discount codes.~~ **Done 2026-10-02** - see PROGRESS.md's
-  "SUPERADMIN dev console" entry. `UserRole.SUPERADMIN` already existed in the
-  data model but had no account-creation path or console; both are now built:
-  `POST /api/superadmin/bootstrap` (secret-gated, self-disables after the
-  first account) creates the account, and `/superadmin` is the dashboard -
-  a platform-wide tenant list with counts, a direct `License.billingPlan`/
-  `status` override per tenant (bypasses Stripe entirely, the explicit "real
-  write action" ask), and discount-code CRUD. **One thing still open**:
-  discount codes are record-keeping only so far, not yet wired into the
-  actual Stripe checkout redemption flow - noted in the UI copy itself.
+  me to setup discount codes.~~ **Done 2026-10-02 — moved to `VERIFY.md`.**
+  One thing still genuinely open: discount codes are record-keeping only so
+  far, not yet wired into the actual Stripe checkout redemption flow.
 - ~~Let Manager and Admin add job types (service types) from Settings.~~
-  **Done 2026-10-02** - see PROGRESS.md's "Service types Settings card"
-  entry. New `ServiceTypeManager.tsx` card (list + add/edit/delete) and a new
-  `src/app/api/service-types/[id]/route.ts` (PATCH/DELETE, gated by
-  `EDIT_SERVICES`/`DELETE_SERVICES` - not a hardcoded role check, same as the
-  existing GET/POST). **One caveat on the "accessible to whichever role(s)
-  hold those permissions" part**: the card now lives on
-  `/admin/settings/appointments` - the old single `/admin/users` page was
-  split 2026-10-02 into a multi-page Settings nav (`SettingsNav.tsx`/
-  `sections.ts`: Appointments/Shifts/Calendar/Company Profile/Staff/
-  Permissions/Account, one page each), purely a navigation reorg, not a
-  permissions change. ~~Every settings page is still hard-gated to ADMIN only
-  (now one shared check in `getAdminTenant.ts` instead of each page's own
-  redirect) - same as every other card there (`StaffManager`,
-  `RolesAndPermissionsEditor`, etc.). A non-admin role granted
-  `CREATE_SERVICES` from the permission matrix still can't reach this page
-  at all, which is a pre-existing gap in the whole Settings access model,
-  not something specific to this one card - flagging it rather than
-  silently redesigning Settings-page access as a side effect of a
-  service-types request.~~ **Settings access model fixed 2026-10-02** - this
-  was the pre-existing gap flagged above, resolved as its own explicit
-  request ("move My account into Settings, everyone should reach Settings
-  but not all of it") rather than as a side effect of something else.
-  `getAdminTenant.ts` is gone; `admin/settings/access.ts`'s
-  `getSettingsContext`/`requireSettingsSection` replace it, and
-  `sections.ts` now carries a `requirement` per section (`"ALWAYS"` /
-  `"ADMIN"` / an existing `PermissionKey`) that both the nav (which sections
-  show up at all) and each section's own `page.tsx` (server-side 404 if
-  you're not entitled - the nav hiding a link was never real enforcement)
-  check. Appointments now shows `ServiceTypeManager` to anyone with
-  `VIEW_SERVICES` (the `AppointmentFormSettings` toggle card stays
-  admin-only-rendered since its API is still ADMIN-only); Staff is gated on
-  `VIEW_STAFF`. Shifts/Calendar/Company Profile/Permissions stay ADMIN-only
-  outright since every card in them is ADMIN-only at the API too (no
-  existing permission to delegate them through) - Permissions deliberately
-  stays a hardcoded ADMIN check forever, not a grantable permission, since a
-  role could otherwise grant itself more access. Account absorbed the
-  standalone `/app/[tenantSlug]/account` page that used to hold
-  `LanguageSettingsForm` (itself a pre-existing move of the language picker
-  out of the header's compact `LanguagePicker.tsx` dropdown, done earlier the
-  same day outside this request) - that route is deleted, `LanguageSettingsForm`
-  now renders alongside `ChangePasswordForm` on `/admin/settings/account`,
-  and the header's separate "My account" link is gone along with it. Account
-  stays open to everyone unconditionally. The still-missing inline
-  "+ Add new service type"
+  **Done 2026-10-02, including the Settings-access rework it surfaced —
+  moved to `VERIFY.md`.** The still-missing inline "+ Add new service type"
   in the calendar's create panel (mentioned for context in the original ask,
-  not listed under "Needs:") also remains unbuilt.
-  **Addendum 2026-10-02**: an explicit $0 price now displays the same as a
-  blank/unset one (nothing shown) instead of printing "$0.00" - the two
-  remain distinct values in the database (`price: null` vs `price: 0`,
-  `ServiceTypeManager.tsx`'s own comment still explains why), this only
-  changed how `$0` renders in the list.
+  not listed under "Needs:") remains unbuilt.
 - ~~Split the single "Appointment & shift form" Settings card into separate
-  appointment-form and shift-form sections.~~ **Done 2026-10-01** - went with
-  the "at minimum" option noted below, since no shift-specific settings exist
-  yet to populate a real second section. `AppointmentFormSettings.tsx` is now
-  titled "Appointment form" and its description/toggles are unchanged
-  (`requireClientForAppointments`, `enableMapsNavigation`) - no behavior
-  change, just relabeled as appointment-specific. New `ShiftFormSettings.tsx`
-  is a second card titled "Shift form" with no settings yet, just a
-  placeholder description explaining shifts have no client/location to
-  configure - reserved for future shift-only settings. Both render as
-  separate cards on the User Manager page (`page.tsx`), same pattern as every
-  other settings card there. ~~Placeholder now filled~~ **Done 2026-10-02** -
-  see PROGRESS.md's "Shift form field toggles" entry: three real toggles
-  (job type / job estimate / color key) plus a "Manage job types" link to
-  the Service types card below it.
-- **A configurable visible time range for the calendar grid.** Raised
-  2026-10-02. `SchedulingCalendar` currently shows the full day (no
-  `slotMinTime`/`slotMaxTime`-style bound anywhere in the codebase); most
-  businesses only ever operate within a sub-range of that (e.g. 7am-7pm for a
-  day business, or an evening/overnight range for a night business), so a lot
-  of the grid is dead AM/PM space nobody needs to scroll past. Let a tenant
-  set a start/end time for the calendar's displayed range in Settings.
-  Distinct from the existing `WorkingHours` model (which isn't used anywhere
-  yet - see `ISSUES.md`) - that's about constraining *bookable* times
-  per staff member, this is purely about what the calendar *displays* by
-  default, though the two could end up sharing a settings UI later. Needs a
-  decision on whether out-of-range time should be hidden entirely or just
-  collapsed/scrollable, and whether it's one tenant-wide range or could vary
-  (e.g. different default per day of week) - probably one tenant-wide range
-  to start, same pattern as other Settings-level defaults.
+  appointment-form and shift-form sections.~~ **Done 2026-10-01, placeholder
+  filled 2026-10-02 — moved to `VERIFY.md`.**
 - **Time estimates in minutes or hours, interchangeably.** Job time estimates
   are currently a single "minutes" field - let the user enter/view in either
   unit.
@@ -385,6 +209,24 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   link" logic), and a real shareable-link mechanism (a per-tenant token in
   the URL, not just the tenant slug, so it can be revoked/rotated
   independently of the tenant's own login).
+- **Shareable calendar link.** Raised 2026-10-02. Flagging for scope
+  clarification rather than assuming: there's already an **"Anonymized
+  shareable calendar links"** entry above (busy/free only, identifying data
+  stripped, paid feature) - unclear whether this new ask is the same request
+  restated, or a plain (non-anonymized, full-detail) shareable link distinct
+  from that one. Needs a decision on which before building; if it's the
+  latter, also needs a decision on who could open it (anyone with the link,
+  no login at all?) since that's a bigger exposure than the anonymized
+  version.
+- **Full-screen mode for the calendar.** Raised 2026-10-02. Let the user
+  expand `SchedulingCalendar` to fill the whole viewport (hiding
+  `AppHeader`/surrounding page chrome) rather than it always rendering inside
+  the normal app layout. Related to, but distinct from, the existing "A
+  configurable visible time range for the calendar grid" and "A toggle to
+  adjust the calendar's overall size" items above - those are about the
+  grid's own dimensions/time bounds, this is about the surrounding page
+  layout. Needs a decision on the trigger (a button in the calendar's toolbar
+  vs. a browser-fullscreen API call) and whether it persists across reloads.
 - **Paid-only email reminders.** Email reminder/schedule-for-the-day
   notifications for appointments, gated to paying tenants.
 - **Paid, Settings-toggleable "staff status" counts** - on-duty, on-call, and
@@ -464,6 +306,22 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   (`shiftup.app/<slug>/book`, matching what the signup form's "account URL"
   helper text already promises). Real design work needed before building -
   this is a meaningfully sized feature, not a quick add.
+  - **Reaffirmed 2026-10-02, same feature restated as "a customer portal
+    where the customer can book their own event"** - flagging as the same
+    request rather than a separate one, since the shape matches exactly.
+    Came with an explicit admin-side requirement this time: managers/admins
+    need a real way to **set which time slots are open to be booked at
+    all** (the user's own example: don't want a customer able to book 1 AM)
+    - not just staff availability/double-booking prevention, but the
+    business's own bookable hours as a hard constraint on the public
+    booking flow. This is exactly the `WorkingHours` gap already flagged in
+    `ISSUES.md` ("isn't used anywhere yet - the model exists but nothing
+    populates it or constrains bookable times to it"), plus it likely needs
+    a real Settings UI for an admin to actually define/edit those hours
+    (per day of week, since "no 1 AM" implies a daily open/close range, not
+    just one tenant-wide flag) - none of which exists yet either. Confirms
+    this piece isn't optional/deferrable within the booking-widget build -
+    the public flow can't safely ship without it.
 - **Notes on an appointment.** Raised 2026-10-02. Let staff/admins attach
   notes to an appointment (and presumably a shift too, same underlying
   `Appointment` row) - part of the original architecture plan but never
@@ -499,35 +357,15 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
   headings, sitemap.xml/robots.txt, and page load performance. Low priority
   marketing/discoverability item, not a functional gap.
 - ~~Top-nav "Staff management" and "Appointment management" dropdown
-  sections.~~ **Done 2026-10-01, later revised same day** - see PROGRESS.md's
-  "Calendar layout-shift bug, actually fixed this time, and the nav bar split
-  into Appointment/Staff dropdowns" entry for the original build. **Revised**:
-  the "Appointment pages" dropdown was removed - `Calendar` (now a single
-  plain link to `/calendar`, no `?type=` pre-filter) and `View only` are both
-  plain top-level nav links instead of being duplicated inside the
-  Appointment/Staff dropdowns. "Staff pages" dropdown keeps Roster/Time off.
-  Settings and Billing stay as separate plain top-level links; Dashboard/Sign
-  out stay general nav too.
+  sections.~~ **Done 2026-10-01, revised twice since — moved to
+  `VERIFY.md`.**
 - ~~A per-role permission for the calendar's Appointments/Shifts/Both
-  switcher.~~ **Done 2026-10-01** - new `VIEW_CALENDAR_TOGGLE` permission key
-  in `src/lib/permissions/catalog.ts` (default: on for Manager/Supervisor,
-  off for Employee/Customer), editable per-role from the Settings permission
-  matrix ("Scheduling" group). Without it, a role's calendar still defaults
-  to "Both" (or whatever the license tier allows) - the permission only gates
-  whether the switcher buttons themselves are shown, not what's visible. The
-  always-permission-agnostic `/calendar/view` route is unaffected (switcher
-  still shows there for everyone, same as before).
+  switcher.~~ **Done 2026-10-01 — moved to `VERIFY.md`.**
 
 ## Security
 
 - ~~A detailed, honest explanation of this software's security posture~~
-  **Done 2026-10-01** - see `SECURITY.md` (new file) and PROGRESS.md's
-  "Security posture review" entry. Covers what's actually true today
-  (RLS-enforced tenant isolation with the automated proof test, scrypt
-  password hashing, HMAC-signed sessions, the non-superuser DB role fix,
-  Stripe handling all card data) and what's not yet true (no CI, no security
-  audit, no penetration test, no rate limiting/lockout on auth routes - the
-  single highest-value gap identified).
+  **Done 2026-10-01 — moved to `VERIFY.md`.**
 - **Advertise its safety** - now unblocked (`SECURITY.md` exists and is
   accurate) - turn the real parts of it into actual landing-page/marketing
   copy.
@@ -543,19 +381,12 @@ but nothing can set them); and the manager no-show/shift reporting dashboard
 
 ## Confirm/decide
 
-- **Role hierarchy ordering.** Built on the assumption `MANAGER` outranks
-  `SUPERVISOR`, and that job-estimate visibility defaults to
-  `ADMIN`/`MANAGER` only (not `SUPERVISOR`). Never explicitly confirmed —
-  flagged multiple times, no correction given, so this is what's live.
-- **PTO approval workflow + "hours worked" definition** (self-service request
-  + manager/admin approval; "hours worked" = the calendar week containing the
-  shift) - built with standard defaults, not explicitly confirmed by you.
+Two built-on-an-assumption items (role hierarchy ordering, PTO "hours worked"
+definition) moved to `VERIFY.md` — they're not bugs, just need your yes/no.
+
 - ~~Roster page access is hardcoded to ADMIN/MANAGER/SUPERVISOR, not run
-  through the tenant's configurable permission matrix.~~ **Done 2026-10-01**
-  - resolved as a side effect of the custom-roles build: a real `VIEW_ROSTER`
-  permission key now exists in the catalog and the Roster page gates on
-  `hasPermission(..., "VIEW_ROSTER")` (ADMIN still always allowed) instead of
-  a fixed role-name check - configurable per role like everything else now.
+  through the tenant's configurable permission matrix.~~ **Done 2026-10-01 —
+  moved to `VERIFY.md`.**
 
 ## Still-open Phase 0 infra (independent of app features)
 

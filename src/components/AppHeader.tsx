@@ -113,6 +113,12 @@ export function AppHeader({
   const qs = searchParams.toString();
   const currentHref = qs ? `${pathname}?${qs}` : pathname;
 
+  const calendarItems: NavItem[] = [
+    { href: `${base}/calendar`, label: t("fullCalendar") },
+    { href: `${base}/calendar/view`, label: t("viewOnly") },
+  ];
+  const calendarActive = pathname === `${base}/calendar` || pathname === `${base}/calendar/view`;
+
   const staffItems: NavItem[] = [
     ...(role === "ADMIN" || canViewRoster ? [{ href: `${base}/calendar/roster`, label: t("roster") }] : []),
     { href: `${base}/time-off`, label: t("timeOff") },
@@ -171,27 +177,7 @@ export function AppHeader({
             {t("dashboard")}
           </Link>
 
-          <Link
-            href={`${base}/calendar`}
-            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-              pathname === `${base}/calendar`
-                ? "bg-white text-primary-700 shadow-sm"
-                : "text-primary-100 hover:bg-white/10 hover:text-white"
-            }`}
-          >
-            {t("calendar")}
-          </Link>
-
-          <Link
-            href={`${base}/calendar/view`}
-            className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-              pathname === `${base}/calendar/view`
-                ? "bg-white text-primary-700 shadow-sm"
-                : "text-primary-100 hover:bg-white/10 hover:text-white"
-            }`}
-          >
-            {t("viewOnly")}
-          </Link>
+          <NavDropdown label={t("calendar")} active={calendarActive} currentHref={currentHref} items={calendarItems} />
 
           <NavDropdown label={t("staffPages")} active={staffActive} currentHref={currentHref} items={staffItems} />
 

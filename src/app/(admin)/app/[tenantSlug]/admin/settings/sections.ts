@@ -35,7 +35,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     slug: "calendar",
     label: "Calendar",
-    description: "Which holidays show on the calendar.",
+    description: "Which holidays show on the calendar, and the color key for appointments/shifts.",
     requirement: "ADMIN",
   },
   {
@@ -47,7 +47,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     slug: "staff",
     label: "Staff",
-    description: "Add, edit, and remove staff accounts, and the color key for appointments/shifts.",
+    description: "Add, edit, and remove staff accounts.",
     requirement: "VIEW_STAFF",
   },
   {

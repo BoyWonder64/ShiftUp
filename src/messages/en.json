@@ -2,6 +2,7 @@
   "AppHeader": {
     "dashboard": "Dashboard",
     "calendar": "Calendar",
+    "fullCalendar": "Full calendar",
     "viewOnly": "View only",
     "staffPages": "Staff pages",
     "roster": "Roster",
@@ -18,9 +19,18 @@
     "DE": "German",
     "FR": "French"
   },
+  "CalendarTextSizePicker": {
+    "label": "Calendar text size",
+    "SMALL": "Small",
+    "MEDIUM": "Default",
+    "LARGE": "Large",
+    "XLARGE": "Extra large"
+  },
   "AccountPage": {
     "languageSectionTitle": "Language",
     "languageSectionDescription": "Choose the language used across your account.",
+    "calendarTextSizeSectionTitle": "Calendar text size",
+    "calendarTextSizeSectionDescription": "Choose how large event text appears on the calendar.",
     "saved": "Saved."
   },
   "Dashboard": {

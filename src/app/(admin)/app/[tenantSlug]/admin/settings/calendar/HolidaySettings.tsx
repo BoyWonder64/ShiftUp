@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { getHolidayCatalog, type HolidayRegion } from "@/lib/holidays/catalog";
 
 interface Holiday {
   id: string;
@@ -8,6 +9,11 @@ interface Holiday {
   date: string;
   recurring: boolean;
 }
+
+const REGION_LABELS: Record<HolidayRegion, string> = {
+  US: "United States",
+  EU: "Europe",
+};
 
 function formatHolidayDate(iso: string): string {
   // Stored as a plain UTC-midnight date - format from the UTC fields
@@ -17,9 +23,15 @@ function formatHolidayDate(iso: string): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(d);
 }
 
+/** Catalog dates are plain local-time `Date`s (see catalog.ts) - no UTC adjustment needed, unlike `formatHolidayDate` above. */
+function formatCatalogDate(d: Date): string {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
+}
+
 export function HolidaySettings() {
-  const [showFederal, setShowFederal] = useState<boolean | null>(null);
-  const [savingToggle, setSavingToggle] = useState(false);
+  const [enabledNames, setEnabledNames] = useState<string[] | null>(null);
+  const [savingName, setSavingName] = useState<string | null>(null);
+  const [savingRegion, setSavingRegion] = useState<HolidayRegion | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
@@ -28,6 +40,18 @@ export function HolidaySettings() {
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // This year's date for every known holiday - just a reference point shown
+  // next to its checkbox, since most of these shift year to year (see
+  // catalog.ts); doesn't affect which actual occurrences get shown.
+  const catalog = useMemo(() => getHolidayCatalog(new Date().getFullYear()), []);
+  const catalogByRegion = useMemo(() => {
+    const byRegion = new Map<HolidayRegion, typeof catalog>();
+    for (const h of catalog) {
+      byRegion.set(h.region, [...(byRegion.get(h.region) ?? []), h]);
+    }
+    return byRegion;
+  }, [catalog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +66,7 @@ export function HolidaySettings() {
         if (!settingsRes.ok) throw new Error(settingsData.error ?? "Failed to load");
         if (!holidaysRes.ok) throw new Error(holidaysData.error ?? "Failed to load");
         if (!cancelled) {
-          setShowFederal(settingsData.settings.showFederalHolidays);
+          setEnabledNames(settingsData.settings.enabledHolidayNames);
           setHolidays(holidaysData.holidays);
         }
       } catch {
@@ -56,25 +80,52 @@ export function HolidaySettings() {
     };
   }, []);
 
-  async function toggleFederal() {
-    if (showFederal === null) return;
-    const next = !showFederal;
-    setShowFederal(next);
-    setSavingToggle(true);
+  async function toggleHoliday(holidayName: string) {
+    if (enabledNames === null) return;
+    const isEnabled = enabledNames.includes(holidayName);
+    const next = isEnabled ? enabledNames.filter((n) => n !== holidayName) : [...enabledNames, holidayName];
+    setEnabledNames(next);
+    setSavingName(holidayName);
     setError(null);
     try {
       const res = await fetch("/api/tenant-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ showFederalHolidays: next }),
+        body: JSON.stringify({ enabledHolidayNames: next }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to save");
     } catch {
-      setShowFederal(!next);
+      setEnabledNames(enabledNames);
       setError("Couldn't save - try again.");
     } finally {
-      setSavingToggle(false);
+      setSavingName(null);
+    }
+  }
+
+  async function toggleRegion(region: HolidayRegion) {
+    if (enabledNames === null) return;
+    const regionNames = (catalogByRegion.get(region) ?? []).map((h) => h.name);
+    const allEnabled = regionNames.length > 0 && regionNames.every((n) => enabledNames.includes(n));
+    const next = allEnabled
+      ? enabledNames.filter((n) => !regionNames.includes(n))
+      : [...enabledNames, ...regionNames.filter((n) => !enabledNames.includes(n))];
+    setEnabledNames(next);
+    setSavingRegion(region);
+    setError(null);
+    try {
+      const res = await fetch("/api/tenant-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabledHolidayNames: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+    } catch {
+      setEnabledNames(enabledNames);
+      setError("Couldn't save - try again.");
+    } finally {
+      setSavingRegion(null);
     }
   }
 
@@ -123,33 +174,61 @@ export function HolidaySettings() {
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Holidays</h2>
       <p className="mt-1 text-sm text-gray-500">
-        Shown as highlighted days on the calendar for everyone on your team.
+        Shown as highlighted days on the calendar for everyone on your team. Check which ones apply to
+        your business - US and European holidays never share a name, so it&apos;s safe to turn on any mix
+        of both.
       </p>
 
-      {loading ? (
+      {loading || enabledNames === null ? (
         <p className="mt-4 text-sm text-gray-400">Loading...</p>
       ) : (
         <>
-          <label className="mt-4 flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={showFederal ?? false}
-              onChange={toggleFederal}
-              disabled={savingToggle}
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-            <span className="text-sm">
-              <span className="font-medium text-gray-900">Show US federal holidays</span>
-              <br />
-              <span className="text-gray-500">
-                New Year&apos;s Day, MLK Day, Independence Day, Thanksgiving, Christmas, and the rest of
-                the standard 11.
-              </span>
-            </span>
-          </label>
+          <div className="mt-4 flex flex-wrap gap-6">
+            {(["US", "EU"] as const).map((region) => {
+              const regionHolidays = catalogByRegion.get(region) ?? [];
+              const allEnabled =
+                regionHolidays.length > 0 && regionHolidays.every((h) => enabledNames.includes(h.name));
+              return (
+                <div key={region} className="min-w-[16rem] flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
+                      {REGION_LABELS[region]}
+                    </h3>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                      <input
+                        type="checkbox"
+                        checked={allEnabled}
+                        onChange={() => void toggleRegion(region)}
+                        disabled={savingRegion === region || regionHolidays.length === 0}
+                        className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      Select all
+                    </label>
+                  </div>
+                  <ul className="mt-2 flex flex-col gap-1.5">
+                    {regionHolidays.map((h) => (
+                      <li key={h.name}>
+                        <label className="flex items-center gap-2.5 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={enabledNames.includes(h.name)}
+                            onChange={() => void toggleHoliday(h.name)}
+                            disabled={savingName === h.name || savingRegion === region}
+                            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                          />
+                          <span className="text-gray-900">{h.name}</span>
+                          <span className="text-gray-400">{formatCatalogDate(h.date)}</span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
 
           {holidays.length > 0 && (
-            <ul className="mt-4 flex flex-col gap-1.5">
+            <ul className="mt-5 flex flex-col gap-1.5">
               {holidays.map((h) => (
                 <li
                   key={h.id}

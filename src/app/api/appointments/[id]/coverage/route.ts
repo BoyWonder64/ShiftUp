@@ -4,7 +4,7 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { findCoverageCandidates } from "@/modules/scheduling/service";
 
-/** Who could cover this shift - gated by EDIT_APPOINTMENTS since reassigning is an edit action. */
+/** Who could cover this shift - gated by EDIT_SHIFTS/EDIT_APPOINTMENTS (whichever matches this event) since reassigning is an edit action. */
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,7 +17,14 @@ export async function GET(
       session.userId,
       session.role,
       async (tx) => {
-        const canEdit = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_APPOINTMENTS");
+        const target = await tx.appointment.findUniqueOrThrow({ where: { id }, select: { clientId: true } });
+        const canEdit = await hasPermission(
+          tx,
+          session.tenantId,
+          session.role,
+          session.roleId,
+          target.clientId ? "EDIT_APPOINTMENTS" : "EDIT_SHIFTS"
+        );
         if (!canEdit) throw new Error("FORBIDDEN");
         return findCoverageCandidates(tx, session.tenantId, id);
       }

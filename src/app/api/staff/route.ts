@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
-import { hasPermission } from "@/lib/permissions/service";
+import { hasPermission, canManageRoleAssignment } from "@/lib/permissions/service";
 import { createUser, findUserByEmail, findUserByUsername, isValidUsername } from "@/modules/identity/service";
 import { assertCanAddStaffProfile, PlanLimitError } from "@/lib/licensing/limits";
 
@@ -16,7 +16,7 @@ export async function GET() {
         // Never select passwordHash - this response goes straight to the client.
         include: {
           user: {
-            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true } } },
+            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true, level: true } } },
           },
         },
         orderBy: { displayName: "asc" },
@@ -62,6 +62,13 @@ export async function POST(request: NextRequest) {
 
       const role = await tx.role.findUnique({ where: { id: data.roleId } });
       if (!role || role.tenantId !== session.tenantId) throw new Error("INVALID_ROLE");
+
+      // CREATE_STAFF alone says nothing about which role the new account gets
+      // - without this, any role holding that one ordinary permission could
+      // onboard a brand-new staff member pre-assigned to the most-privileged
+      // custom role in the tenant.
+      const canAssign = await canManageRoleAssignment(tx, session.tenantId, session.role, session.roleId, null, data.roleId);
+      if (!canAssign) throw new Error("RANK_TOO_LOW");
 
       const existing = await findUserByEmail(tx, data.email);
       if (existing) throw new Error("EMAIL_TAKEN");
@@ -111,6 +118,12 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof Error && err.message === "INVALID_ROLE") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === "RANK_TOO_LOW") {
+      return NextResponse.json(
+        { error: "Your role doesn't outrank the role you're trying to assign." },
+        { status: 403 }
+      );
     }
     if (err instanceof PlanLimitError) {
       return NextResponse.json({ error: err.message }, { status: 403 });

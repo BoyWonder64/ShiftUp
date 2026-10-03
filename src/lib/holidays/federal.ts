@@ -42,17 +42,6 @@ export function getFederalHolidays(year: number): ComputedHoliday[] {
   ];
 }
 
-/** Federal holidays falling within [start, end) - spans the boundary years if the range crosses Dec 31. */
-export function getFederalHolidaysInRange(start: Date, end: Date): ComputedHoliday[] {
-  const holidays: ComputedHoliday[] = [];
-  for (let year = start.getFullYear(); year <= end.getFullYear(); year++) {
-    for (const h of getFederalHolidays(year)) {
-      if (h.date >= start && h.date < end) holidays.push(h);
-    }
-  }
-  return holidays;
-}
-
 export interface StoredHoliday {
   name: string;
   /// Stored as a full date at UTC midnight (see the Holiday model's doc
@@ -63,10 +52,10 @@ export interface StoredHoliday {
 }
 
 /**
- * Tenant-added custom holidays falling within [start, end), same shape as
- * `getFederalHolidaysInRange`'s result so the two can be merged for display.
- * A `recurring` holiday repeats every year on its stored month/day; a
- * one-off only occurs on its exact stored date.
+ * Tenant-added custom holidays falling within [start, end), same `ComputedHoliday`
+ * shape as `getEnabledHolidaysInRange` (see catalog.ts) so the two can be
+ * merged for display. A `recurring` holiday repeats every year on its stored
+ * month/day; a one-off only occurs on its exact stored date.
  */
 export function getCustomHolidaysInRange(
   holidays: StoredHoliday[],

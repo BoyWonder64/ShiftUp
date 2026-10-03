@@ -8,11 +8,13 @@ const SETTINGS_SELECT = {
   requireClientForAppointments: true,
   enableMapsNavigation: true,
   eventColors: true,
-  showFederalHolidays: true,
+  enabledHolidayNames: true,
   showJobTypeOnShiftForm: true,
   showJobEstimateOnShiftForm: true,
   showColorKeyOnShiftForm: true,
   allowOverlappingShifts: true,
+  calendarStartMinute: true,
+  calendarEndMinute: true,
 } as const;
 
 // Readable by any signed-in tenant member (not just ADMIN) - this drives
@@ -46,11 +48,17 @@ const updateSchema = z
   .object({
     requireClientForAppointments: z.boolean(),
     enableMapsNavigation: z.boolean(),
-    showFederalHolidays: z.boolean(),
+    enabledHolidayNames: z.array(z.string()),
     showJobTypeOnShiftForm: z.boolean(),
     showJobEstimateOnShiftForm: z.boolean(),
     showColorKeyOnShiftForm: z.boolean(),
     allowOverlappingShifts: z.boolean(),
+    // Minutes-from-midnight bounds on the calendar grid's displayed range
+    // (see Tenant.calendarStartMinute/calendarEndMinute) - always sent as a
+    // pair (see CalendarHoursSettings.tsx), checked together below since
+    // neither bound means anything validated alone.
+    calendarStartMinute: z.number().int().min(0).max(1440),
+    calendarEndMinute: z.number().int().min(0).max(1440),
     // Sparse - only the keys being changed need be present; merged onto the
     // existing stored overrides below rather than replacing them wholesale,
     // so changing one color doesn't require resending all five.
@@ -61,7 +69,15 @@ const updateSchema = z
       .partialRecord(z.enum(EVENT_COLOR_KEYS), z.string())
       .refine((obj) => Object.values(obj).every(isValidHexColor), "Colors must be #rrggbb hex values."),
   })
-  .partial();
+  .partial()
+  .refine(
+    (data) =>
+      (data.calendarStartMinute === undefined && data.calendarEndMinute === undefined) ||
+      (data.calendarStartMinute !== undefined &&
+        data.calendarEndMinute !== undefined &&
+        data.calendarEndMinute > data.calendarStartMinute),
+    { message: "End time must be after start time." }
+  );
 
 // Changing how the form/calendar behaves for everyone else is an ADMIN-only
 // action - same reasoning as the permission matrix.

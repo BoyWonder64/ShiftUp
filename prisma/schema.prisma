@@ -76,10 +76,10 @@ enum BillingPlan {
 /// All tenant-scoped data carries a tenantId and is additionally isolated at the
 /// database level via Postgres Row-Level Security (see prisma/migrations for the RLS policies).
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  slug      String   @unique
-  timezone  String   @default("UTC")
+  id                           String   @id @default(uuid())
+  name                         String
+  slug                         String   @unique
+  timezone                     String   @default("UTC")
   /// Admin-configurable: whether a client must be attached when creating an
   /// appointment. Off by default for tenants that book clientless work
   /// (internal-only visits, pure shift scheduling that still uses the
@@ -89,37 +89,40 @@ model Tenant {
   /// "Open in Google Maps" navigation link. On by default - toggled off for
   /// tenants that don't want that link shown (e.g. privacy preference, or
   /// addresses that aren't real navigable locations).
-  enableMapsNavigation          Boolean  @default(true) @map("enable_maps_navigation")
+  enableMapsNavigation         Boolean  @default(true) @map("enable_maps_navigation")
   /// The tenant's company logo, stored as a data: URL (e.g.
   /// "data:image/png;base64,...") rather than a file path - there's no blob
   /// storage wired up in this stack (see PROGRESS.md), and a small logo
   /// comfortably fits in a TEXT column. Null = no logo set. Admin-only to
   /// change (src/app/api/admin/logo/route.ts); shown in AppHeader for
   /// everyone in the tenant.
-  logoDataUrl                   String?  @map("logo_data_url")
+  logoDataUrl                  String?  @map("logo_data_url")
   /// Admin-configurable: which font the tenant's business name is rendered
   /// in (AppHeader, dashboard heading) - one of the keys in
   /// src/lib/fonts/companyNameFonts.ts. Null = the default body font (no
   /// override). Admin-only to change (src/app/api/admin/company-name-font/route.ts).
-  companyNameFont                String?  @map("company_name_font")
+  companyNameFont              String?  @map("company_name_font")
   /// Admin-configurable overrides for the 5 built-in event-type colors
   /// (appointment/shift/completed/noShow/cancelled), stored as a flat
   /// {key: "#rrggbb"} JSON object - only keys actually overridden need be
   /// present; `src/lib/colors/eventColors.ts` fills in the rest from the
   /// hardcoded defaults. Kept as JSON rather than 5 separate columns since
   /// it's always read/written as one unit and never queried by individual key.
-  eventColors                   Json?    @map("event_colors")
-  /// Admin-configurable: show the standard US federal holidays
-  /// (src/lib/holidays/federal.ts - computed, not stored) on the calendar.
-  showFederalHolidays           Boolean  @default(true) @map("show_federal_holidays")
+  eventColors                  Json?    @map("event_colors")
+  /// Admin-configurable: names of the computed holidays (US federal + major
+  /// European, see src/lib/holidays/catalog.ts - computed, not stored) that
+  /// show on the calendar, one checkbox per holiday rather than one toggle
+  /// per region. Defaults to just the 11 US federal names - keep in sync
+  /// with catalog.ts's `DEFAULT_ENABLED_HOLIDAY_NAMES`.
+  enabledHolidayNames          String[] @default(["New Year's Day", "Martin Luther King Jr. Day", "Washington's Birthday", "Memorial Day", "Juneteenth", "Independence Day", "Labor Day", "Columbus Day", "Veterans Day", "Thanksgiving Day", "Christmas Day"]) @map("enabled_holiday_names")
   /// Admin-configurable (Settings > "Shift form"): whether the shift
   /// create/detail forms show the job type (ServiceType), job estimate, and
   /// color key fields. On by default (today's existing behavior). Only
   /// affects shift mode - the appointment form's equivalent fields are
   /// unaffected by these.
-  showJobTypeOnShiftForm        Boolean  @default(true) @map("show_job_type_on_shift_form")
-  showJobEstimateOnShiftForm    Boolean  @default(true) @map("show_job_estimate_on_shift_form")
-  showColorKeyOnShiftForm       Boolean  @default(true) @map("show_color_key_on_shift_form")
+  showJobTypeOnShiftForm       Boolean  @default(true) @map("show_job_type_on_shift_form")
+  showJobEstimateOnShiftForm   Boolean  @default(true) @map("show_job_estimate_on_shift_form")
+  showColorKeyOnShiftForm      Boolean  @default(true) @map("show_color_key_on_shift_form")
   /// Admin-configurable (Settings > "Shift form"): whether two shifts for the
   /// same staff member are allowed to overlap in time (e.g. an overlapping
   /// handoff, or someone covering two roles at once). Off by default - the
@@ -131,37 +134,48 @@ model Tenant {
   /// switched per tenant. Never applies to appointments (clientId set) -
   /// those stay always-no-overlap via the DB constraint, this setting only
   /// relaxes the rule for clientless shift rows.
-  allowOverlappingShifts        Boolean  @default(false) @map("allow_overlapping_shifts")
+  allowOverlappingShifts       Boolean  @default(false) @map("allow_overlapping_shifts")
+  /// Admin-configurable (Settings > Calendar): the Week/Day time gutter's
+  /// displayed range, as minutes-from-midnight (0-1440, end > start).
+  /// Defaults to the full day (0/1440 - today's existing behavior, no visual
+  /// change for tenants that never touch this). Purely a *display* bound on
+  /// `SchedulingCalendar`'s grid - distinct from the `WorkingHours` model
+  /// (which isn't used anywhere yet, see ISSUES.md) and from whether a slot
+  /// is actually bookable; this only controls how much of the 24-hour grid
+  /// renders at all, so most businesses can hide the dead overnight space
+  /// they never use.
+  calendarStartMinute          Int      @default(0) @map("calendar_start_minute")
+  calendarEndMinute            Int      @default(1440) @map("calendar_end_minute")
   /// SUPERADMIN-only (dev console > Customers): blocks every user of this
   /// tenant from logging in. Checked in POST /api/auth/login only - an
   /// already-active session isn't revoked (sessions are stateless, see
   /// src/lib/auth/session.ts), so a disabled tenant's logged-in users keep
   /// working until their session naturally expires or they log out, same
   /// limitation already flagged for password-reset in TODO.md.
-  disabled                       Boolean  @default(false) @map("disabled")
+  disabled                     Boolean  @default(false) @map("disabled")
   /// SUPERADMIN-only (dev console > Customers): leaves this tenant's License
   /// out of the Income page's revenue totals/counts - for test/demo/internal
   /// accounts that shouldn't skew real revenue numbers even if they carry a
   /// paid License for feature-testing purposes.
-  excludeFromIncome              Boolean  @default(false) @map("exclude_from_income")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  excludeFromIncome            Boolean  @default(false) @map("exclude_from_income")
+  createdAt                    DateTime @default(now()) @map("created_at")
+  updatedAt                    DateTime @updatedAt @map("updated_at")
 
   license License?
   users   User[]
 
-  staffProfiles    StaffProfile[]
-  workingHours     WorkingHours[]
-  serviceTypes     ServiceType[]
-  clients          Client[]
-  appointments     Appointment[]
-  roles            Role[]
-  rolePermissions  RolePermission[]
-  roleVisibilities RoleVisibility[]
-  timeOffs         TimeOff[]
-  eventTags        EventTag[]
-  holidays         Holiday[]
-  scheduleTemplates ScheduleTemplate[]
+  staffProfiles          StaffProfile[]
+  workingHours           WorkingHours[]
+  serviceTypes           ServiceType[]
+  clients                Client[]
+  appointments           Appointment[]
+  roles                  Role[]
+  rolePermissions        RolePermission[]
+  roleVisibilities       RoleVisibility[]
+  timeOffs               TimeOff[]
+  eventTags              EventTag[]
+  holidays               Holiday[]
+  scheduleTemplates      ScheduleTemplate[]
   scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@map("tenants")
@@ -174,24 +188,34 @@ model Tenant {
 /// entirely (see UserRole). Deleting a role is blocked at the DB level
 /// (User.roleId's onDelete: Restrict) while any user still holds it.
 model Role {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
   /// Free-text explanation of what this role is for - shown alongside the
   /// name in Settings. Purely informational, like reportsToId below - it
   /// doesn't affect what the role can actually do (that's RolePermission).
-  description String? @map("description")
+  description String?  @map("description")
   /// The role immediately above this one in the tenant's org chart, if any -
   /// null means nothing is above it. Purely organizational/informational:
   /// permissions are never inherited through this chain, only ever granted
   /// directly via RolePermission. SetNull (not Restrict) on delete - removing
   /// a role just clears anything that reported to it, rather than blocking
   /// the delete or cascading further up the chain.
-  reportsToId String? @map("reports_to_id")
-  reportsTo   Role?   @relation("RoleHierarchy", fields: [reportsToId], references: [id], onDelete: SetNull)
-  reports     Role[]  @relation("RoleHierarchy")
-  createdAt DateTime @default(now()) @map("created_at")
+  reportsToId String?  @map("reports_to_id")
+  reportsTo   Role?    @relation("RoleHierarchy", fields: [reportsToId], references: [id], onDelete: SetNull)
+  reports     Role[]   @relation("RoleHierarchy")
+  /// Seniority rank used for authorization, NOT display - higher outranks
+  /// lower. Unlike reportsToId above, this one IS enforced: a STAFF user may
+  /// only assign/reassign someone to a role whose level is strictly lower
+  /// than their own role's level, and may only act on staff currently
+  /// holding a strictly-lower-level role (see canManageRoleAssignment in
+  /// src/lib/permissions/service.ts). ADMIN/SUPERADMIN bypass this
+  /// entirely and outrank every level. Defaults to 0 (bottom rank) for new
+  /// roles so an admin must deliberately raise a role's rank before anyone
+  /// holding it can manage other roles' assignment.
+  level       Int      @default(0) @map("level")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   users       User[]
   permissions RolePermission[]
@@ -320,32 +344,55 @@ enum Locale {
   @@map("locale")
 }
 
+/// A user's own calendar event text-size preference (Settings > Account) -
+/// per-user, not per-tenant, same rationale as Locale above. Applied as a CSS
+/// variable in SchedulingCalendar.tsx; MEDIUM is the calendar's default
+/// (small, dense-by-default) size, with SMALL/LARGE/XLARGE for anyone who
+/// wants it smaller still or bigger for readability.
+enum CalendarTextSize {
+  SMALL
+  MEDIUM
+  LARGE
+  XLARGE
+
+  @@map("calendar_text_size")
+}
+
 /// A login-capable user. Platform superadmins have tenantId = null;
 /// every other user belongs to exactly one tenant.
 model User {
-  id           String        @id @default(uuid())
-  tenantId     String?       @map("tenant_id")
-  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  email        String        @unique
-  locale       Locale        @default(EN)
+  id               String           @id @default(uuid())
+  tenantId         String?          @map("tenant_id")
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email            String           @unique
+  locale           Locale           @default(EN)
+  calendarTextSize CalendarTextSize @default(MEDIUM) @map("calendar_text_size")
   /// Admin-set at account creation (signup, or whoever adds a staff member) -
   /// nullable only because it was added after email-only login already
   /// existed; every new account is required to set one (see isValidUsername
   /// in src/modules/identity/service.ts). Lets login accept either.
-  username     String?       @unique
-  passwordHash String        @map("password_hash")
-  role         UserRole      @default(STAFF)
+  username         String?          @unique
+  passwordHash     String           @map("password_hash")
+  role             UserRole         @default(STAFF)
   /// The tenant's custom Role this user holds - set (and required, enforced
   /// in application code, not a DB constraint - same convention as ADMIN's
   /// other code-enforced invariants) whenever `role` is STAFF; always null
   /// for ADMIN/SUPERADMIN, which are fixed roles outside this table.
   /// onDelete: Restrict - a role can't be deleted while anyone still holds
   /// it, by design (the admin must reassign those users first).
-  roleId       String?       @map("role_id")
-  customRole   Role?         @relation(fields: [roleId], references: [id], onDelete: Restrict)
-  createdAt    DateTime      @default(now()) @map("created_at")
-  updatedAt    DateTime      @updatedAt @map("updated_at")
-  staffProfile StaffProfile?
+  roleId           String?          @map("role_id")
+  customRole       Role?            @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  /// True only for the account that originally signed up/created the tenant.
+  /// Set once at signup, never exposed for write by any route. Not itself
+  /// checked at runtime: the owner is created with no StaffProfile and is
+  /// never assigned one, so they can never be a `staffProfile.id` target of
+  /// the staff promote/demote/delete routes in the first place - this flag
+  /// just records who that account is (e.g. for an "Owner" badge), it isn't
+  /// load-bearing for that protection.
+  isOwner          Boolean          @default(false) @map("is_owner")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  staffProfile     StaffProfile?
 
   @@index([tenantId])
   @@index([roleId])
@@ -399,9 +446,9 @@ model StaffProfile {
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
-  workingHours WorkingHours[]
-  appointments Appointment[]
-  timeOffs     TimeOff[]
+  workingHours           WorkingHours[]
+  appointments           Appointment[]
+  timeOffs               TimeOff[]
   scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@index([tenantId])
@@ -479,7 +526,7 @@ model ServiceType {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  appointments Appointment[]
+  appointments           Appointment[]
   scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@index([tenantId])
@@ -605,13 +652,13 @@ model RoleVisibility {
 /// 7-day vs. 14-day rotation), not a tenant-wide default - each template
 /// defines its own rotation length.
 model ScheduleTemplate {
-  id              String   @id @default(uuid())
-  tenantId        String   @map("tenant_id")
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name            String
-  periodLengthDays Int     @map("period_length_days")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name             String
+  periodLengthDays Int      @map("period_length_days")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   shifts ScheduleTemplateShift[]
 
@@ -627,20 +674,20 @@ model ScheduleTemplate {
 /// src/modules/scheduling/templates.ts) turns each row into a real
 /// Appointment with clientId null.
 model ScheduleTemplateShift {
-  id             String        @id @default(uuid())
-  tenantId       String        @map("tenant_id")
-  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  templateId     String        @map("template_id")
-  template       ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  staffId        String        @map("staff_id")
-  staff          StaffProfile  @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  dayOffset      Int           @map("day_offset")
-  startMinute    Int           @map("start_minute")
-  endMinute      Int           @map("end_minute")
-  serviceTypeId  String?       @map("service_type_id")
-  serviceType    ServiceType?  @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  id            String           @id @default(uuid())
+  tenantId      String           @map("tenant_id")
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId    String           @map("template_id")
+  template      ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  staffId       String           @map("staff_id")
+  staff         StaffProfile     @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOffset     Int              @map("day_offset")
+  startMinute   Int              @map("start_minute")
+  endMinute     Int              @map("end_minute")
+  serviceTypeId String?          @map("service_type_id")
+  serviceType   ServiceType?     @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([templateId])

@@ -9,13 +9,21 @@ import { PERMISSION_KEYS } from "@/lib/permissions/catalog";
 export async function GET() {
   try {
     const session = await requireTenantSession();
-    const grants = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
+    const { grants, level } = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
       const entries = await Promise.all(
         PERMISSION_KEYS.map(async (key) => [key, await hasPermission(tx, session.tenantId, session.role, session.roleId, key)] as const)
       );
-      return Object.fromEntries(entries);
+      // null means "outranks every role" (ADMIN - SUPERADMIN never reaches
+      // here, requireTenantSession rejects it) - used by clients like
+      // StaffManager to decide which roles are offerable in a dropdown.
+      let level: number | null = null;
+      if (session.role !== "ADMIN" && session.roleId) {
+        const role = await tx.role.findUnique({ where: { id: session.roleId }, select: { level: true } });
+        level = role?.level ?? 0;
+      }
+      return { grants: Object.fromEntries(entries), level };
     });
-    return NextResponse.json({ role: session.role, permissions: grants });
+    return NextResponse.json({ role: session.role, permissions: grants, level });
   } catch (err) {
     if (err instanceof Error && (err.message === "UNAUTHENTICATED" || err.message === "FORBIDDEN")) {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });

@@ -38,6 +38,8 @@ export async function createUser(
     role: "SUPERADMIN" | "ADMIN" | "STAFF";
     /** Required when role is "STAFF" - the tenant's custom Role this user holds. Always null for ADMIN/SUPERADMIN. */
     roleId?: string | null;
+    /** Only ever true for the signup/tenant-creation call site - see User.isOwner in schema.prisma. */
+    isOwner?: boolean;
   }
 ) {
   const passwordHash = await hashPassword(data.password);
@@ -49,6 +51,7 @@ export async function createUser(
       passwordHash,
       role: data.role,
       roleId: data.roleId ?? null,
+      isOwner: data.isOwner ?? false,
     },
   });
 }

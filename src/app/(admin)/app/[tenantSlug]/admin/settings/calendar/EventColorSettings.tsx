@@ -29,10 +29,12 @@ const SCOPE_LABELS: Record<TagScope, string> = {
  * that both did the same underlying thing (set a color an appointment/shift
  * renders in), which read as two unrelated features. Now one list: the 5
  * built-in entries up top (status-driven, can't be removed, just recolored),
- * your own below (add as many as you want, assign one to an individual
- * appointment/shift's "Color key" field when scheduling it - same field
- * that used to be labeled "Tag"). Lives on the Staff settings page (moved
- * from Calendar) since color keys/tags are a staff-scheduling concern.
+ * your own below - split into a Shifts group and an Appointments group (a
+ * `BOTH`-scoped tag appears in both) rather than one flat list, since
+ * Shifts and Appointments are two distinct surfaces that happen to share
+ * this same color-tag mechanism. Lives on the Calendar settings page - an
+ * event's color is a calendar-display concern, not specific to Staff or any
+ * one of Appointments/Shifts.
  */
 export function EventColorSettings() {
   const [colors, setColors] = useState<Record<EventColorKey, string> | null>(null);
@@ -140,6 +142,46 @@ export function EventColorSettings() {
     }
   }
 
+  function renderTagGroup(label: string, groupTags: EventTag[]) {
+    return (
+      <div className="min-w-[14rem] flex-1">
+        <h4 className="text-[11px] font-semibold tracking-wide text-gray-400 uppercase">{label}</h4>
+        {groupTags.length === 0 ? (
+          <p className="mt-2 text-sm text-gray-400">None yet.</p>
+        ) : (
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {groupTags.map((tag) => (
+              <li
+                key={tag.id}
+                className="flex items-center gap-2 rounded-full border border-gray-200 py-1 pr-2 pl-3 text-sm"
+              >
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
+                {tag.name}
+                {tag.appliesTo === "BOTH" && (
+                  <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                    {SCOPE_LABELS[tag.appliesTo]}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteTag(tag.id)}
+                  disabled={deletingId === tag.id}
+                  className="rounded-full px-1.5 text-xs text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  title={`Remove "${tag.name}"`}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
+  const shiftTags = tags.filter((t) => t.appliesTo === "SHIFT" || t.appliesTo === "BOTH");
+  const appointmentTags = tags.filter((t) => t.appliesTo === "APPOINTMENT" || t.appliesTo === "BOTH");
+
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Color key</h2>
@@ -149,9 +191,10 @@ export function EventColorSettings() {
         appointment/shift&apos;s status. Add your own below that - anyone can
         then pick one from the &quot;Color key&quot; field when creating or
         editing an individual appointment or shift, to color-code it however
-        you like (e.g. &quot;VIP&quot;, &quot;Consultation&quot;). Each one can
-        be scoped to shifts only, appointments only, or both - a scoped tag
-        only shows up on that picker.
+        you like (e.g. &quot;VIP&quot;, &quot;Consultation&quot;). Each one is
+        scoped to shifts only, appointments only, or both, and is grouped
+        below accordingly - a &quot;Both&quot; tag shows up in both groups,
+        since it&apos;s available on either picker.
       </p>
 
       <h3 className="mt-5 text-xs font-semibold tracking-wide text-gray-500 uppercase">Built in</h3>
@@ -189,35 +232,12 @@ export function EventColorSettings() {
         <p className="mt-3 text-sm text-gray-400">Loading...</p>
       ) : (
         <>
-          {tags.length > 0 && (
-            <ul className="mt-3 flex flex-wrap gap-2">
-              {tags.map((tag) => (
-                <li
-                  key={tag.id}
-                  className="flex items-center gap-2 rounded-full border border-gray-200 py-1 pr-2 pl-3 text-sm"
-                >
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
-                  {tag.name}
-                  {tag.appliesTo !== "BOTH" && (
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
-                      {SCOPE_LABELS[tag.appliesTo]}
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteTag(tag.id)}
-                    disabled={deletingId === tag.id}
-                    className="rounded-full px-1.5 text-xs text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                    title={`Remove "${tag.name}"`}
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="mt-3 flex flex-wrap gap-6">
+            {renderTagGroup("Shifts", shiftTags)}
+            {renderTagGroup("Appointments", appointmentTags)}
+          </div>
 
-          <form onSubmit={handleCreateTag} className="mt-3 flex flex-wrap items-end gap-3">
+          <form onSubmit={handleCreateTag} className="mt-4 flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1 text-sm">
               New color key name
               <input

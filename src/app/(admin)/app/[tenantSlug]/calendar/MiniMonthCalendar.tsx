@@ -7,6 +7,7 @@ import {
   endOfMonth,
   endOfWeek,
   format,
+  isSameDay,
   isSameMonth,
   isToday,
   startOfMonth,
@@ -94,6 +95,7 @@ export function MiniMonthCalendar({
         {days.map((day) => {
           const inMonth = isSameMonth(day, displayedMonth);
           const today = isToday(day);
+          const selected = isSameDay(day, currentDate);
           const inRange = isInVisibleRange(day);
           return (
             <button
@@ -103,11 +105,13 @@ export function MiniMonthCalendar({
               className={`mx-auto flex h-6 w-6 items-center justify-center rounded-full text-xs transition-colors duration-150 ${
                 !inMonth
                   ? "text-gray-300 hover:bg-gray-100"
-                  : today
-                    ? "font-bold text-primary-600 ring-1 ring-primary-500"
-                    : inRange
-                      ? "bg-primary-50 text-gray-900 hover:bg-primary-100"
-                      : "text-gray-700 hover:bg-gray-100"
+                  : selected
+                    ? "bg-primary-500 font-bold text-white"
+                    : today
+                      ? "font-bold text-primary-600 ring-1 ring-primary-500"
+                      : inRange
+                        ? "bg-primary-50 text-gray-900 hover:bg-primary-100"
+                        : "text-gray-700 hover:bg-gray-100"
               }`}
             >
               {day.getDate()}

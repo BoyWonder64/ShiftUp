@@ -249,11 +249,18 @@ export async function findCoverageCandidates(
  * left over is only shown if it belongs to `ownStaffId`. Passing `undefined`
  * (the coverage-finder caller) keeps the old "see everything" behavior, since
  * that's an internal staffing computation, not a viewer-facing listing.
+ *
+ * `canViewShifts`/`canViewAppointments` implement the separate VIEW_SHIFTS/
+ * VIEW_APPOINTMENTS permission split (ISSUES.md #6): unlike the all/own axes
+ * above, these are a hard type-level gate, ANDed in rather than OR'd - a role
+ * lacking VIEW_SHIFTS never sees a shift row at all, not even its own.
  */
 export interface AppointmentVisibility {
   allShifts: boolean;
   allAppointments: boolean;
   ownStaffId: string | null;
+  canViewShifts: boolean;
+  canViewAppointments: boolean;
 }
 
 export async function listAppointmentsInRange(
@@ -264,10 +271,20 @@ export async function listAppointmentsInRange(
 ) {
   const visibilityFilter = visibility
     ? {
-        OR: [
-          ...(visibility.allShifts ? [{ clientId: null }] : []),
-          ...(visibility.allAppointments ? [{ clientId: { not: null } }] : []),
-          ...(visibility.ownStaffId ? [{ staffId: visibility.ownStaffId }] : []),
+        AND: [
+          {
+            OR: [
+              ...(visibility.canViewShifts ? [{ clientId: null }] : []),
+              ...(visibility.canViewAppointments ? [{ clientId: { not: null } }] : []),
+            ],
+          },
+          {
+            OR: [
+              ...(visibility.allShifts ? [{ clientId: null }] : []),
+              ...(visibility.allAppointments ? [{ clientId: { not: null } }] : []),
+              ...(visibility.ownStaffId ? [{ staffId: visibility.ownStaffId }] : []),
+            ],
+          },
         ],
       }
     : {};

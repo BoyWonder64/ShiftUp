@@ -20,8 +20,6 @@ export async function GET(
   try {
     const session = await requireTenantSession();
     const result = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
-      const canView = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS");
-      if (!canView) throw new Error("FORBIDDEN");
       const canViewEstimates = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES");
       const appointment = await getAppointmentById(tx, id);
       if (!appointment) return null;
@@ -30,6 +28,14 @@ export async function GET(
       // endpoint - without it for this appointment's type, only its own
       // assigned staff member can fetch it directly by id.
       const isShift = !appointment.clientId;
+      const canView = await hasPermission(
+        tx,
+        session.tenantId,
+        session.role,
+        session.roleId,
+        isShift ? "VIEW_SHIFTS" : "VIEW_APPOINTMENTS"
+      );
+      if (!canView) throw new Error("FORBIDDEN");
       const canViewAll = await hasPermission(
         tx,
         session.tenantId,
@@ -97,14 +103,33 @@ export async function PATCH(
         const wantsReschedule = Boolean(data.startTime && data.endTime);
         const wantsReassign = data.staffId !== undefined;
 
+        // Needed up front (rather than inside cancelAppointment/reschedule-
+        // Appointment, which don't know about permissions) so the
+        // CANCEL_SHIFTS/CANCEL_APPOINTMENTS and EDIT_SHIFTS/EDIT_APPOINTMENTS
+        // split below can pick the right key for this specific event.
+        const existing = await tx.appointment.findUniqueOrThrow({ where: { id }, select: { clientId: true } });
+        const isShiftEvent = !existing.clientId;
+
         if (data.status === "CANCELLED") {
-          const canCancel = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CANCEL_APPOINTMENTS");
+          const canCancel = await hasPermission(
+            tx,
+            session.tenantId,
+            session.role,
+            session.roleId,
+            isShiftEvent ? "CANCEL_SHIFTS" : "CANCEL_APPOINTMENTS"
+          );
           if (!canCancel) throw new Error("FORBIDDEN");
           return cancelAppointment(tx, id);
         }
 
         if (wantsReschedule || locationFieldsRequested || tagFieldRequested || wantsReassign) {
-          const canEdit = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_APPOINTMENTS");
+          const canEdit = await hasPermission(
+            tx,
+            session.tenantId,
+            session.role,
+            session.roleId,
+            isShiftEvent ? "EDIT_SHIFTS" : "EDIT_APPOINTMENTS"
+          );
           if (!canEdit) throw new Error("FORBIDDEN");
         }
         if (estimateFieldsRequested) {

@@ -24,7 +24,9 @@ import {
   type ColorTriple,
   type EventColorKey,
 } from "@/lib/colors/eventColors";
-import { getCustomHolidaysInRange, getFederalHolidaysInRange, type ComputedHoliday } from "@/lib/holidays/federal";
+import { getCustomHolidaysInRange, type ComputedHoliday } from "@/lib/holidays/federal";
+import { getEnabledHolidaysInRange } from "@/lib/holidays/catalog";
+import { CALENDAR_TEXT_SIZE_REM, type CalendarTextSize } from "@/lib/calendar/textSize";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { CalendarLegend } from "./CalendarLegend";
 import { MiniMonthCalendar } from "./MiniMonthCalendar";
@@ -291,10 +293,52 @@ function formatDuration(totalMinutes: number | null | undefined): string {
   return `${value} ${unit === "hours" ? (n === 1 ? "hour" : "hours") : n === 1 ? "day" : "days"}`;
 }
 
+/**
+ * Centered overlay for the create/edit and details panels - replaces the old
+ * in-flow placement below the calendar grid so the calendar stays put and
+ * the form/panel floats in front of it instead of pushing the page layout
+ * around. Closes on Escape or a click on the dimmed backdrop.
+ */
+function Modal({
+  onClose,
+  visible = true,
+  panelRef,
+  children,
+}: {
+  onClose: () => void;
+  visible?: boolean;
+  panelRef?: React.RefObject<HTMLDivElement | null>;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-900/40 p-4 pt-[8vh] backdrop-blur-sm"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={panelRef}
+        className={`w-full max-w-xl transition-all duration-300 ease-out ${
+          visible ? "translate-y-0 scale-100 opacity-100" : "pointer-events-none translate-y-2 scale-95 opacity-0"
+        }`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function toEvent(appt: ApiAppointment): CalendarEvent {
-  const title = isShift(appt)
-    ? `${appointmentTitle(appt)} (${appt.staff.displayName})`
-    : appointmentTitle(appt);
+  const title = `${appointmentTitle(appt)} (${appt.staff.displayName})`;
   return {
     id: appt.id,
     title,
@@ -312,6 +356,22 @@ function nextHourSlot(): { start: Date; end: Date } {
   const end = new Date(start);
   end.setHours(end.getHours() + 1);
   return { start, end };
+}
+
+/**
+ * Google Calendar's stacking order for overlapping Week/Day events: the
+ * longer (background) event sits behind, shorter ones layer in front of it -
+ * read naturally as "the big block this short thing happens during", rather
+ * than two same-weight boxes competing for attention. react-big-calendar's
+ * own layout algorithm already gives shorter overlapping events more width
+ * growth room, but never sets a z-index, so without this a longer event that
+ * happens to render later in the DOM could still paint over a shorter one it
+ * overlaps. One minute shorter always wins by exactly one z-index step, and
+ * every real duration (even multi-day) stays positive.
+ */
+function stackingZIndex(start: Date, end: Date): number {
+  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+  return Math.max(1, 10080 - minutes); // 10080 = minutes in a week, comfortably above any realistic event
 }
 
 export function SchedulingCalendar({
@@ -354,6 +414,10 @@ export function SchedulingCalendar({
         : "appointment";
   });
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  // Settings > Account > "Calendar text size" - per-user, fetched independently of the
+  // tenant-wide settings below since it's the viewer's own preference, not shared config.
+  // Defaults to the calendar's own (smaller-than-body) baseline until the real value loads.
+  const [calendarTextSize, setCalendarTextSize] = useState<CalendarTextSize>("MEDIUM");
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [serviceTypes, setServiceTypes] = useState<ServiceTypeOption[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
@@ -370,13 +434,18 @@ export function SchedulingCalendar({
   const [colorTriples, setColorTriples] = useState<Record<EventColorKey, ColorTriple>>(() =>
     buildColorTriples(DEFAULT_EVENT_COLORS)
   );
-  const [showFederalHolidays, setShowFederalHolidays] = useState(true);
+  const [enabledHolidayNames, setEnabledHolidayNames] = useState<string[]>([]);
   // Admin-configurable (Settings > "Shift form") - whether the shift
   // create/detail forms show these fields at all. Never applies to
   // mode === "appointment", which has its own always-shown equivalents.
   const [showJobTypeOnShiftForm, setShowJobTypeOnShiftForm] = useState(true);
   const [showJobEstimateOnShiftForm, setShowJobEstimateOnShiftForm] = useState(true);
   const [showColorKeyOnShiftForm, setShowColorKeyOnShiftForm] = useState(true);
+  // Settings > "Calendar" > "Calendar hours" - minutes-from-midnight bounds
+  // on the Week/Day grid's displayed range. Defaults to the full day until
+  // the real value loads, same as every other tenant setting here.
+  const [calendarStartMinute, setCalendarStartMinute] = useState(0);
+  const [calendarEndMinute, setCalendarEndMinute] = useState(1440);
   // The tenant's real roles (Settings > "Roles") - used by the inline
   // "+ Add new staff member" role dropdown.
   const [roles, setRoles] = useState<TenantRoleOption[]>([]);
@@ -421,12 +490,13 @@ export function SchedulingCalendar({
   // would render staff x 7 columns, far too wide - see TimeGrid's
   // renderResourcesFirst), so switching away from Day turns it back off.
   const [groupByStaff, setGroupByStaff] = useState(false);
-  // Whether the create panel has finished its entrance transition - kept
-  // separate from `creating` itself so the panel doesn't just snap into
+  // Whether the create modal has finished its entrance transition - kept
+  // separate from `creating` itself so the modal doesn't just snap into
   // view the instant a slot is selected. The draft "ghost" event on the
   // calendar (driven by `creating` directly) shows the selection
-  // immediately; this flips to true after a short hold so the panel fades/
-  // slides in afterward instead of popping in.
+  // immediately; this flips to true after a short hold so the modal fades/
+  // scales in over the calendar afterward instead of popping in in front of
+  // it right away.
   const [panelVisible, setPanelVisible] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -502,6 +572,15 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadCalendarTextSize = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ calendarTextSize: CalendarTextSize }>("/api/me/calendar-text-size");
+      setCalendarTextSize(data.calendarTextSize);
+    } catch {
+      // Not fatal - same reasoning as loadTags; just keeps the default size.
+    }
+  }, []);
+
   const loadRoles = useCallback(async () => {
     try {
       const data = await fetchJson<{ roles: TenantRoleOption[] }>("/api/roles");
@@ -522,10 +601,12 @@ export function SchedulingCalendar({
               requireClientForAppointments: boolean;
               enableMapsNavigation: boolean;
               eventColors: Record<EventColorKey, string>;
-              showFederalHolidays: boolean;
+              enabledHolidayNames: string[];
               showJobTypeOnShiftForm: boolean;
               showJobEstimateOnShiftForm: boolean;
               showColorKeyOnShiftForm: boolean;
+              calendarStartMinute: number;
+              calendarEndMinute: number;
             };
           }>("/api/tenant-settings"),
         ]);
@@ -534,16 +615,18 @@ export function SchedulingCalendar({
         setRequireClientForAppointments(settingsData.settings.requireClientForAppointments);
         setEnableMapsNavigation(settingsData.settings.enableMapsNavigation);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
-        setShowFederalHolidays(settingsData.settings.showFederalHolidays);
+        setEnabledHolidayNames(settingsData.settings.enabledHolidayNames);
         setShowJobTypeOnShiftForm(settingsData.settings.showJobTypeOnShiftForm);
         setShowJobEstimateOnShiftForm(settingsData.settings.showJobEstimateOnShiftForm);
         setShowColorKeyOnShiftForm(settingsData.settings.showColorKeyOnShiftForm);
+        setCalendarStartMinute(settingsData.settings.calendarStartMinute);
+        setCalendarEndMinute(settingsData.settings.calendarEndMinute);
       } catch {
         setError("Couldn't load service data.");
       }
-      await Promise.all([loadStaff(), loadClients(), loadTags(), loadHolidays(), loadRoles()]);
+      await Promise.all([loadStaff(), loadClients(), loadTags(), loadHolidays(), loadRoles(), loadCalendarTextSize()]);
     })();
-  }, [loadStaff, loadClients, loadTags, loadHolidays, loadRoles]);
+  }, [loadStaff, loadClients, loadTags, loadHolidays, loadRoles, loadCalendarTextSize]);
 
   useEffect(() => {
     (async () => {
@@ -567,17 +650,6 @@ export function SchedulingCalendar({
       setPanelVisible(false);
     };
   }, [creatingOpen]);
-
-  // Once the panel starts its fade/slide-in, smoothly scroll it into view too
-  // - a selection made further down a tall calendar (or on a small screen)
-  // shouldn't require the user to notice and manually scroll down themselves.
-  // "smooth" rather than "auto" so this reads as sliding the page over to the
-  // form, not an instant jump/snap.
-  useEffect(() => {
-    if (panelVisible) {
-      panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }
-  }, [panelVisible]);
 
   // Leaving Day view (via the toolbar's Week/Month/Agenda buttons, or
   // onView below) turns "Group by staff" back off, since it only renders as
@@ -628,7 +700,13 @@ export function SchedulingCalendar({
     ({ event, start, end, resourceId }: EventInteractionArgs<CalendarEvent>) => {
       const newStaffId = typeof resourceId === "string" ? resourceId : undefined;
       if (event.id === DRAFT_EVENT_ID) {
+        // Mode not chosen yet (pendingSlot, no `creating`) - move the pending
+        // slot itself rather than a no-op, so its on-calendar highlight
+        // tracks the drag the same way an already-mode-picked draft does.
         setCreating((prev) =>
+          prev ? { ...prev, start: start as Date, end: end as Date, defaultStaffId: newStaffId ?? prev.defaultStaffId } : prev
+        );
+        setPendingSlot((prev) =>
           prev ? { ...prev, start: start as Date, end: end as Date, defaultStaffId: newStaffId ?? prev.defaultStaffId } : prev
         );
         return;
@@ -648,6 +726,7 @@ export function SchedulingCalendar({
     ({ event, start, end }: EventInteractionArgs<CalendarEvent>) => {
       if (event.id === DRAFT_EVENT_ID) {
         setCreating((prev) => (prev ? { ...prev, start: start as Date, end: end as Date } : prev));
+        setPendingSlot((prev) => (prev ? { ...prev, start: start as Date, end: end as Date } : prev));
         return;
       }
       void applyReschedule(event.id, start as Date, end as Date);
@@ -660,9 +739,35 @@ export function SchedulingCalendar({
   // would otherwise allow - this is what makes the dedicated read-only
   // calendar view (see the /calendar/view route) genuinely non-interactive
   // rather than just "happens to be viewed by someone without edit rights".
-  const canCreate = !readOnly && (permissions?.CREATE_APPOINTMENTS ?? false);
-  const canEdit = !readOnly && (permissions?.EDIT_APPOINTMENTS ?? false);
-  const canCancel = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
+  //
+  // Shifts and appointments are independently gated (ISSUES.md #6) - each
+  // action is two separate permissions, not one combined key, so every
+  // button/drag/resize check below picks the right one for the specific
+  // event (or mode) it applies to via canEditEvent/canCancelEvent below,
+  // rather than a single flat canEdit/canCancel/canCreate boolean.
+  const canCreateShift = !readOnly && (permissions?.CREATE_SHIFTS ?? false);
+  const canCreateAppointment = !readOnly && (permissions?.CREATE_APPOINTMENTS ?? false);
+  const canEditShift = !readOnly && (permissions?.EDIT_SHIFTS ?? false);
+  const canEditAppointment = !readOnly && (permissions?.EDIT_APPOINTMENTS ?? false);
+  const canCancelShift = !readOnly && (permissions?.CANCEL_SHIFTS ?? false);
+  const canCancelAppointment = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
+  // Generic "is the Create group worth showing at all" / "can anything on
+  // this grid ever be dragged" checks - the specific buttons/accessors below
+  // still each gate on their own specific permission, not this.
+  const canCreate = canCreateShift || canCreateAppointment;
+  const canEdit = canEditShift || canEditAppointment;
+  const canEditEvent = useCallback(
+    (appt: ApiAppointment) => (isShift(appt) ? canEditShift : canEditAppointment),
+    [canEditShift, canEditAppointment]
+  );
+  const canCancelEvent = useCallback(
+    (appt: ApiAppointment) => (isShift(appt) ? canCancelShift : canCancelAppointment),
+    [canCancelShift, canCancelAppointment]
+  );
+  const canCreateForMode = useCallback(
+    (mode: EntryMode) => (mode === "shift" ? canCreateShift : canCreateAppointment),
+    [canCreateShift, canCreateAppointment]
+  );
   const canViewAllShifts = permissions?.VIEW_ALL_SHIFTS ?? false;
   const canViewAllAppointments = permissions?.VIEW_ALL_APPOINTMENTS ?? false;
   // Whether the Everyone/Just mine toggle is worth showing for whatever the
@@ -675,6 +780,17 @@ export function SchedulingCalendar({
         ? canViewAllAppointments
         : canViewAllShifts || canViewAllAppointments;
 
+  // Whether dragging a new selection on the grid as currently filtered is
+  // allowed at all - same ternary-on-calendarType shape as canToggleViewScope
+  // above. "both" can't know which type a drag means (hence the pendingSlot
+  // picker below), so it's allowed as long as either is creatable.
+  const canCreateForCurrentType =
+    calendarType === "shift"
+      ? canCreateShift
+      : calendarType === "appointment"
+        ? canCreateAppointment
+        : canCreateShift || canCreateAppointment;
+
   const visibleEvents = useMemo(() => {
     let list = staffFilter === "all" ? events : events.filter((e) => e.resource.staffId === staffFilter);
     if (calendarType === "appointment") list = list.filter((e) => !isShift(e.resource));
@@ -686,25 +802,34 @@ export function SchedulingCalendar({
   // dashed "ghost" block) so its selection stays visible and can be dragged/
   // resized directly on the grid, instead of disappearing the moment the
   // mouse is released (react-big-calendar's own slot-selection highlight is
-  // only ever momentary).
+  // only ever momentary). `pendingSlot` (calendarType === "both", mode not
+  // chosen yet - see onSelectSlot) gets the same treatment as `creating` so
+  // the selection still holds its position while the Appointment/Shift
+  // popup is up, not just once a mode's been picked - previously this block
+  // only checked `creating`, so a "both" selection lost its on-calendar
+  // highlight entirely until a mode was chosen.
+  const draftSlot = useMemo(
+    () => creating ?? (pendingSlot ? { ...pendingSlot, mode: undefined } : null),
+    [creating, pendingSlot]
+  );
   const calendarEvents = useMemo(() => {
-    if (!creating) return visibleEvents;
+    if (!draftSlot) return visibleEvents;
     const draft: CalendarEvent = {
       id: DRAFT_EVENT_ID,
       // The "(drag to adjust)" hint itself is appended by EventContent, not
       // baked in here, so it can render smaller than the rest of the label
       // and be dropped once creationCount passes the onboarding threshold.
-      title: creating.mode === "shift" ? "New shift" : "New appointment",
-      start: creating.start,
-      end: creating.end,
+      title: draftSlot.mode === "shift" ? "New shift" : draftSlot.mode === "appointment" ? "New appointment" : "New event",
+      start: draftSlot.start,
+      end: draftSlot.end,
       // In "Group by staff" Day view, resourceAccessor reads staffId off
       // this to place the draft in the right column - whichever column was
       // clicked/dragged into (see onSelectSlot/handleEventDrop), falling
       // back to DRAFT_RESOURCE's empty id (no column) otherwise.
-      resource: creating.defaultStaffId ? { ...DRAFT_RESOURCE, staffId: creating.defaultStaffId } : DRAFT_RESOURCE,
+      resource: draftSlot.defaultStaffId ? { ...DRAFT_RESOURCE, staffId: draftSlot.defaultStaffId } : DRAFT_RESOURCE,
     };
     return [...visibleEvents, draft];
-  }, [visibleEvents, creating]);
+  }, [visibleEvents, draftSlot]);
 
   // Day view only (see groupByStaff's declaration above for why) - the
   // staff filter dropdown still narrows which column(s) show, same as it
@@ -718,14 +843,26 @@ export function SchedulingCalendar({
   const eventPropGetter = useCallback(
     (event: CalendarEvent) => {
       if (event.id === DRAFT_EVENT_ID) {
-        const isShiftDraft = creating?.mode === "shift";
+        // Neutral gray while `pendingSlot` is up and the mode is still
+        // undecided (draftSlot.mode is undefined then) - blue/purple would
+        // falsely imply a choice has already been made.
+        const draftMode = draftSlot?.mode;
         return {
           style: {
-            backgroundColor: isShiftDraft
-              ? "color-mix(in srgb, var(--color-shift-500) 15%, transparent)"
-              : "color-mix(in srgb, var(--color-primary-500) 15%, transparent)",
-            border: `2px dashed ${isShiftDraft ? "var(--color-shift-600)" : "var(--color-primary-600)"}`,
-            color: isShiftDraft ? "var(--color-shift-700)" : "var(--color-primary-700)",
+            backgroundColor:
+              draftMode === "shift"
+                ? "color-mix(in srgb, var(--color-shift-500) 15%, transparent)"
+                : draftMode === "appointment"
+                  ? "color-mix(in srgb, var(--color-primary-500) 15%, transparent)"
+                  : "color-mix(in srgb, #6b7280 15%, transparent)",
+            border: `2px dashed ${
+              draftMode === "shift" ? "var(--color-shift-600)" : draftMode === "appointment" ? "var(--color-primary-600)" : "#4b5563"
+            }`,
+            color: draftMode === "shift" ? "var(--color-shift-700)" : draftMode === "appointment" ? "var(--color-primary-700)" : "#374151",
+            // Always above every real event, regardless of duration - the
+            // slot being created should never get buried behind something
+            // it happens to overlap.
+            zIndex: 10081,
           },
         };
       }
@@ -739,21 +876,29 @@ export function SchedulingCalendar({
           borderColor: c.border,
           color: c.text,
           textDecoration: appt.status === "CANCELLED" ? "line-through" : undefined,
+          zIndex: stackingZIndex(event.start, event.end),
+          // A slight elevation shadow so a shorter event layered in front of
+          // a longer one (see stackingZIndex above) reads as sitting above
+          // it, Google Calendar-style, rather than just abutting it.
+          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.2)",
         },
       };
     },
-    [creating, colorTriples]
+    [draftSlot, colorTriples]
   );
 
-  // Federal holidays (computed, admin can hide tenant-wide) merged with
-  // tenant-added custom holidays (recurring or one-off) for the visible
-  // range - drives both the day-cell tint below and the "holidays in view"
-  // list rendered next to the legend.
+  // Whichever catalog holidays (US federal + European, individually
+  // enabled/disabled per-holiday - see Settings > Calendar) are enabled,
+  // merged with tenant-added custom holidays (recurring or one-off) for the
+  // visible range - drives both the day-cell tint below and the "holidays
+  // in view" list rendered next to the legend. The catalog never has two
+  // entries sharing a name (see european.ts's dedup note), so no merge-time
+  // dedup is needed here.
   const holidaysInView = useMemo<ComputedHoliday[]>(() => {
-    const federal = showFederalHolidays ? getFederalHolidaysInRange(range.start, range.end) : [];
+    const enabled = getEnabledHolidaysInRange(enabledHolidayNames, range.start, range.end);
     const custom = getCustomHolidaysInRange(holidays, range.start, range.end);
-    return [...federal, ...custom].sort((a, b) => a.date.getTime() - b.date.getTime());
-  }, [range, showFederalHolidays, holidays]);
+    return [...enabled, ...custom].sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [range, enabledHolidayNames, holidays]);
 
   const holidayDateKeys = useMemo(
     () => new Set(holidaysInView.map((h) => h.date.toDateString())),
@@ -789,29 +934,45 @@ export function SchedulingCalendar({
     return [...base, ...tagItems];
   }, [calendarType, colorTriples, tags]);
 
-  // The time grid always renders the full 24 hours now - the AM/PM toggle
-  // below no longer hides half the day, it just scrolls the (already fully
-  // rendered) grid to that half. react-big-calendar's min/max only read the
-  // time-of-day portion of these Date objects (the date itself is ignored,
-  // merged onto whichever day is actually rendered), so fixed constants are
-  // fine here.
-  const gridMinTime = useMemo(() => new Date(2000, 0, 1, 0, 0, 0), []);
-  const gridMaxTime = useMemo(() => new Date(2000, 0, 1, 23, 59, 59), []);
+  // Bounds the Week/Day grid to the tenant's configured calendarStartMinute/
+  // calendarEndMinute range (Settings > Calendar > "Calendar hours",
+  // minutes-from-midnight, defaults to the full day). react-big-calendar's
+  // min/max only read the time-of-day portion of these Date objects (the
+  // date itself is ignored, merged onto whichever day is actually
+  // rendered), so a fixed reference date (2000-01-01) is fine here. Hour 24
+  // doesn't exist on a Date (it'd roll into the next day), so a full-day end
+  // (1440) maps to 23:59:59 instead.
+  const minutesToGridTime = useCallback(
+    (minutes: number) =>
+      minutes >= 1440
+        ? new Date(2000, 0, 1, 23, 59, 59)
+        : new Date(2000, 0, 1, Math.floor(minutes / 60), minutes % 60, 0),
+    []
+  );
+  const gridMinTime = useMemo(() => minutesToGridTime(calendarStartMinute), [minutesToGridTime, calendarStartMinute]);
+  const gridMaxTime = useMemo(() => minutesToGridTime(calendarEndMinute), [minutesToGridTime, calendarEndMinute]);
 
   // Only affects where the grid starts scrolled to on first mount -
   // react-big-calendar doesn't re-read this prop after mount, so switching
   // halves afterward is handled imperatively in scrollToAmPmHalf below.
+  // "AM" scrolls to the top of the configured range, "PM" to its midpoint -
+  // same 0%/50% split scrollToAmPmHalf applies on later toggles.
   const initialScrollToTime = useMemo(
-    () => new Date(2000, 0, 1, amPmHalf === "PM" ? 12 : 0, 0, 0),
-    [amPmHalf]
+    () =>
+      minutesToGridTime(
+        amPmHalf === "PM" ? calendarStartMinute + (calendarEndMinute - calendarStartMinute) / 2 : calendarStartMinute
+      ),
+    [minutesToGridTime, amPmHalf, calendarStartMinute, calendarEndMinute]
   );
 
   const calendarWrapperRef = useRef<HTMLDivElement>(null);
 
   // Smoothly scrolls the Week/Day time gutter to the top (AM) or the
-  // midpoint (PM) of the now-always-full-day grid. Scrolls the actual DOM
-  // node directly since react-big-calendar's `scrollToTime` prop only takes
-  // effect on first mount, not on later prop changes.
+  // midpoint (PM) of whatever range is currently rendered (the tenant's
+  // configured calendarStartMinute/calendarEndMinute, see gridMinTime/
+  // gridMaxTime above). Scrolls the actual DOM node directly since
+  // react-big-calendar's `scrollToTime` prop only takes effect on first
+  // mount, not on later prop changes.
   const scrollToAmPmHalf = useCallback((half: "AM" | "PM") => {
     const content = calendarWrapperRef.current?.querySelector<HTMLElement>(".rbc-time-content");
     if (!content) return;
@@ -839,7 +1000,12 @@ export function SchedulingCalendar({
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    // --calendar-event-font-size drives .rbc-event's font-size in globals.css - set here,
+    // on the outermost wrapper, so it cascades down to every event box regardless of view.
+    <div
+      className="flex flex-col gap-4"
+      style={{ "--calendar-event-font-size": CALENDAR_TEXT_SIZE_REM[calendarTextSize] } as React.CSSProperties}
+    >
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
 
       {readOnly && (
@@ -850,29 +1016,25 @@ export function SchedulingCalendar({
       )}
 
       {/* Controls (filters, create buttons) and the legend stay above the
-          calendar; only the actual create-panel "fillout" flows in below
-          the calendar grid once you've picked a slot or hit a button. */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* A single "settings box" for the view toggles (which staff, which
-            calendar type, time-grid granularity) - grouped under one bordered
-            panel with a micro-label per control, rather than loose buttons
-            floating next to the create buttons, so it reads as one cohesive
-            settings panel. Stretched full-width when there's no create-buttons
-            box beside it (readOnly or lacking create permission) so it matches
-            the full-width legend/holiday bars below instead of sitting as a
-            narrow card with dead space to its right. */}
-        <div
-          className={`flex flex-wrap items-end gap-5 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 ${
-            canCreate ? "" : "w-full"
-          }`}
-        >
-          {staff.length > 1 && (
-            <div className="flex flex-col gap-1">
+          calendar; the actual create/edit "fillout" opens in a modal over
+          the grid once you've picked a slot or hit a button, rather than
+          living inline in the page.
+          `sticky top-14` pins this bar directly under AppHeader (~56px tall)
+          once it scrolls to that point, instead of scrolling away with the
+          page - switching a filter or hitting "Add appointment" no longer
+          means scrolling all the way back up past the calendar grid first. */}
+      <div className="sticky top-14 z-[9] flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 shadow-sm">
+        {/* One cohesive settings panel for every control (view toggles plus
+            the create buttons) - grouped with a micro-label per control, all
+            sharing the same pill shape, instead of the create buttons sitting
+            in their own visually disconnected bordered box next to this one. */}
+        {staff.length > 1 && (
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Staff</span>
               <select
                 value={staffFilter}
                 onChange={(e) => setStaffFilter(e.target.value)}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               >
                 <option value="all">All staff</option>
                 {staff.map((s) => (
@@ -891,9 +1053,9 @@ export function SchedulingCalendar({
               button still shows elsewhere so switching views doesn't hide
               the control, but clicking it jumps to Day view too. */}
           {staff.length > 1 && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Layout</span>
-              <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+              <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
                 {(["combined", "staff"] as const).map((layout) => (
                   <button
                     key={layout}
@@ -903,7 +1065,7 @@ export function SchedulingCalendar({
                       setGroupByStaff(layout === "staff");
                     }}
                     title={layout === "staff" ? "One column per staff member (Day view)" : "Everyone in one combined view"}
-                    className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                    className={`rounded-full px-2.5 py-1 font-medium transition-all duration-150 ${
                       (layout === "staff") === groupByStaff
                         ? "bg-primary-500 text-white shadow-sm"
                         : "text-gray-600 hover:text-primary-600"
@@ -920,15 +1082,15 @@ export function SchedulingCalendar({
               otherwise there's nothing to switch to, so it's just noise - and
               only when this role holds VIEW_CALENDAR_TOGGLE. */}
           {features.appointmentManager && features.shiftManagement && canToggleCalendarType && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Calendar</span>
-              <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+              <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
                 {(["appointment", "shift", "both"] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
                     onClick={() => setCalendarType(t)}
-                    className={`rounded-full px-3 py-1.5 font-medium capitalize transition-all duration-150 ${
+                    className={`rounded-full px-2.5 py-1 font-medium capitalize transition-all duration-150 ${
                       calendarType === t
                         ? "bg-primary-500 text-white shadow-sm"
                         : "text-gray-600 hover:text-primary-600"
@@ -946,15 +1108,15 @@ export function SchedulingCalendar({
               permission for whatever's currently shown; without it they're
               always scoped to their own regardless of this control. */}
           {canToggleViewScope && (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Viewing</span>
-              <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+              <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
                 {(["all", "mine"] as const).map((v) => (
                   <button
                     key={v}
                     type="button"
                     onClick={() => setViewScope(v)}
-                    className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                    className={`rounded-full px-2.5 py-1 font-medium transition-all duration-150 ${
                       viewScope === v
                         ? "bg-primary-500 text-white shadow-sm"
                         : "text-gray-600 hover:text-primary-600"
@@ -970,16 +1132,16 @@ export function SchedulingCalendar({
           {/* Controls the Week/Day time gutter's row size - hour, half-hour,
               or 15-minute blocks. No effect in Month view, which doesn't
               show a time gutter at all. */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Time grid</span>
-            <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+            <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
               {([60, 30, 15] as const).map((s) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => setTimeStep(s)}
                   title="Time grid granularity"
-                  className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                  className={`rounded-full px-2.5 py-1 font-medium transition-all duration-150 ${
                     timeStep === s
                       ? "bg-primary-500 text-white shadow-sm"
                       : "text-gray-600 hover:text-primary-600"
@@ -994,9 +1156,9 @@ export function SchedulingCalendar({
           {/* The Week/Day time gutter always renders the full 24 hours now -
               this just scrolls it to the morning or afternoon/evening half
               instead of hiding the other one. No effect in Month view. */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Hours</span>
-            <div className="inline-flex gap-1 rounded-full bg-white p-1 text-sm shadow-sm">
+            <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
               {(["AM", "PM"] as const).map((half) => (
                 <button
                   key={half}
@@ -1006,7 +1168,7 @@ export function SchedulingCalendar({
                     scrollToAmPmHalf(half);
                   }}
                   title={half === "AM" ? "Scroll up to 12 AM" : "Scroll down to 12 PM"}
-                  className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                  className={`rounded-full px-2.5 py-1 font-medium transition-all duration-150 ${
                     amPmHalf === half
                       ? "bg-primary-500 text-white shadow-sm"
                       : "text-gray-600 hover:text-primary-600"
@@ -1017,42 +1179,47 @@ export function SchedulingCalendar({
               ))}
             </div>
           </div>
-        </div>
 
         {canCreate && (
-          <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-            {features.appointmentManager && (
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Create</span>
+            {/* No pill/track behind these - they're solid brand-color action
+                buttons, not toggles, so they don't need the white rounded-full
+                container the toggle-pill groups elsewhere in this bar use. */}
+            <div className="inline-flex items-center gap-1.5 text-xs">
+              {features.appointmentManager && canCreateAppointment && (
+                <button
+                  onClick={() =>
+                    setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
+                  }
+                  className="rounded-full bg-primary-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-primary-600"
+                >
+                  + Add appointment
+                </button>
+              )}
+              {features.shiftManagement && canCreateShift && (
+                <button
+                  onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
+                  className="rounded-full bg-shift-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-shift-600"
+                >
+                  + Schedule shift
+                </button>
+              )}
+              {/* Always rendered (space reserved via `invisible`, not conditionally
+                  mounted) so this button appearing doesn't grow the row's content
+                  width and reflow the rest of the toolbar - that reflow was the
+                  actual cause of the "everything shifts left" bug, not the
+                  page-height/scrollbar effect originally suspected. */}
               <button
-                onClick={() =>
-                  setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
-                }
-                className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
+                type="button"
+                onClick={() => setCreating(null)}
+                className={`rounded-full border border-[#BD3039] px-2.5 py-1 font-medium text-[#BD3039] transition-all duration-150 hover:bg-[#BD3039]/10 ${
+                  creating ? "" : "invisible"
+                }`}
               >
-                + Add appointment
+                Cancel
               </button>
-            )}
-            {features.shiftManagement && (
-              <button
-                onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
-                className="rounded-lg bg-shift-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-shift-500)_0%,var(--color-shift-700)_100%)] hover:shadow-md"
-              >
-                + Schedule shift
-              </button>
-            )}
-            {/* Always rendered (space reserved via `invisible`, not conditionally
-                mounted) so this button appearing doesn't grow the row's content
-                width and reflow the settings box to its left - that reflow was
-                the actual cause of the "everything shifts left" bug, not the
-                page-height/scrollbar effect originally suspected. */}
-            <button
-              type="button"
-              onClick={() => setCreating(null)}
-              className={`rounded-lg border border-[#BD3039] px-4 py-2 text-sm font-medium text-[#BD3039] shadow-sm transition-all duration-200 hover:bg-[#BD3039]/10 ${
-                creating ? "" : "invisible"
-              }`}
-            >
-              Cancel
-            </button>
+            </div>
           </div>
         )}
       </div>
@@ -1062,7 +1229,16 @@ export function SchedulingCalendar({
           <div
             ref={calendarWrapperRef}
             style={{ height: 650 }}
-            className="relative rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
+            // `isolate` contains the event stacking z-indexes below (up into
+            // the thousands, for the overlap-layering effect) to *this*
+            // element - without it they have no ancestor stacking context to
+            // stop at, so they compete directly with the page's own
+            // z-indexed elements, including the create/detail Modal's
+            // backdrop (z-50) elsewhere on the page - a 2000+ event z-index
+            // easily outranks that and paints straight through it. Fixed-
+            // position elements like the Modal still paint above this div's
+            // own (unraised, auto) stacking position regardless.
+            className="relative isolate rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
           >
             {appointmentsLoading && events.length === 0 ? (
               <div className="flex h-full animate-pulse flex-col gap-3 p-2">
@@ -1127,13 +1303,29 @@ export function SchedulingCalendar({
                   // click/drag - this is what lets overlapping bookings be created
                   // deliberately rather than being blocked by whatever's already
                   // there.
-                  selectable={canCreate ? "ignoreEvents" : false}
+                  selectable={canCreateForCurrentType ? "ignoreEvents" : false}
                   resizable={canEdit || canCreate}
-                  draggableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
-                  resizableAccessor={(event: CalendarEvent) => (event.id === DRAFT_EVENT_ID ? canCreate : canEdit)}
+                  draggableAccessor={(event: CalendarEvent) =>
+                    event.id === DRAFT_EVENT_ID
+                      ? creating
+                        ? canCreateForMode(creating.mode)
+                        : pendingSlot
+                          ? canCreate
+                          : false
+                      : canEditEvent(event.resource)
+                  }
+                  resizableAccessor={(event: CalendarEvent) =>
+                    event.id === DRAFT_EVENT_ID
+                      ? creating
+                        ? canCreateForMode(creating.mode)
+                        : pendingSlot
+                          ? canCreate
+                          : false
+                      : canEditEvent(event.resource)
+                  }
                   onRangeChange={handleRangeChange}
                   onSelectSlot={(slot: SlotInfo) => {
-                    if (!canCreate) return;
+                    if (!canCreateForCurrentType) return;
                     // Only set in "Group by staff" Day view - which column
                     // was clicked/dragged into becomes the new entry's
                     // default staff member.
@@ -1188,50 +1380,61 @@ export function SchedulingCalendar({
       </div>
 
       {pendingSlot && (
-        <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-          <span className="text-sm font-medium text-gray-600">Add as:</span>
-          <button
-            type="button"
-            onClick={() => {
-              setCreating({ ...pendingSlot, mode: "appointment" });
-              setPendingSlot(null);
-            }}
-            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
-          >
-            Appointment
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCreating({ ...pendingSlot, mode: "shift" });
-              setPendingSlot(null);
-            }}
-            className="rounded-lg bg-shift-500 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-[radial-gradient(circle_at_center,var(--color-shift-500)_0%,var(--color-shift-700)_100%)] hover:shadow-md"
-          >
-            Shift
-          </button>
-          <button
-            type="button"
-            onClick={() => setPendingSlot(null)}
-            className="ml-auto text-sm text-gray-500 hover:text-gray-700"
-          >
-            Cancel
-          </button>
-        </div>
+        // A popup, not an inline bar at the bottom of the page (ISSUES.md) -
+        // the selection it's asking about is highlighted right there on the
+        // calendar (see draftSlot above), and this appears right over it
+        // immediately, instead of appearing out of sight below everything
+        // else and leaving the viewer to go looking for it.
+        <Modal onClose={() => setPendingSlot(null)}>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="text-lg font-medium">Add as...</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              This calendar shows both appointments and shifts - which one is this?
+            </p>
+            <div className="mt-4 flex gap-3">
+              {canCreateAppointment && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating({ ...pendingSlot, mode: "appointment" });
+                    setPendingSlot(null);
+                  }}
+                  className="flex-1 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-600"
+                >
+                  Appointment
+                </button>
+              )}
+              {canCreateShift && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreating({ ...pendingSlot, mode: "shift" });
+                    setPendingSlot(null);
+                  }}
+                  className="flex-1 rounded-lg bg-shift-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-shift-600"
+                >
+                  Shift
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setPendingSlot(null)}
+              className="mt-3 text-sm font-medium text-[#BD3039] hover:underline"
+            >
+              Cancel
+            </button>
+          </div>
+        </Modal>
       )}
 
       {creating && (
         // Selecting a slot shouldn't snap the form into view instantly - the
         // draft "ghost" event on the calendar shows the selection right
-        // away, and this panel holds briefly (see the panelVisible delay
-        // above) before fading/sliding in underneath it, so the selection
-        // itself gets a beat to register before the form appears.
-        <div
-          ref={panelRef}
-          className={`transition-all duration-500 ease-out ${
-            panelVisible ? "translate-y-0 opacity-100" : "pointer-events-none -translate-y-2 opacity-0"
-          }`}
-        >
+        // away, and this modal holds briefly (see the panelVisible delay
+        // above) before fading/scaling in over it, so the selection itself
+        // gets a beat to register before the form appears.
+        <Modal onClose={() => setCreating(null)} visible={panelVisible} panelRef={panelRef}>
           <CreateEntryPanel
             start={creating.start}
             end={creating.end}
@@ -1252,7 +1455,7 @@ export function SchedulingCalendar({
             canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
             canCreateStaff={permissions?.CREATE_STAFF ?? false}
             canCreateClient={permissions?.CREATE_CLIENTS ?? false}
-            canCreateTag={canCreate}
+            canCreateTag={canCreateForMode(creating.mode)}
             onStaffCreated={loadStaff}
             onClientCreated={loadClients}
             onTagCreated={loadTags}
@@ -1263,31 +1466,33 @@ export function SchedulingCalendar({
               void loadAppointments(range);
             }}
           />
-        </div>
+        </Modal>
       )}
 
       {selected && (
-        <AppointmentDetailPanel
-          appointment={selected}
-          permissions={permissions}
-          canCancel={canCancel}
-          canEdit={canEdit}
-          canFindCoverage={canEdit}
-          readOnly={readOnly}
-          enableMapsNavigation={enableMapsNavigation}
-          showJobType={showJobTypeOnShiftForm}
-          showJobEstimate={showJobEstimateOnShiftForm}
-          showColorKey={showColorKeyOnShiftForm}
-          colorTriples={colorTriples}
-          tags={tags}
-          canCreateTag={canCreate}
-          onTagCreated={loadTags}
-          onClose={() => setSelected(null)}
-          onChanged={() => {
-            setSelected(null);
-            void loadAppointments(range);
-          }}
-        />
+        <Modal onClose={() => setSelected(null)}>
+          <AppointmentDetailPanel
+            appointment={selected}
+            permissions={permissions}
+            canCancel={canCancelEvent(selected)}
+            canEdit={canEditEvent(selected)}
+            canFindCoverage={canEditEvent(selected)}
+            readOnly={readOnly}
+            enableMapsNavigation={enableMapsNavigation}
+            showJobType={showJobTypeOnShiftForm}
+            showJobEstimate={showJobEstimateOnShiftForm}
+            showColorKey={showColorKeyOnShiftForm}
+            colorTriples={colorTriples}
+            tags={tags}
+            canCreateTag={isShift(selected) ? canCreateShift : canCreateAppointment}
+            onTagCreated={loadTags}
+            onClose={() => setSelected(null)}
+            onChanged={() => {
+              setSelected(null);
+              void loadAppointments(range);
+            }}
+          />
+        </Modal>
       )}
     </div>
   );

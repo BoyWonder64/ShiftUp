@@ -36,9 +36,12 @@ logic. Local dev Postgres runs via `docker-compose.yml`.
   a superuser connection, so this split is load-bearing, not cosmetic.
   Proven by an automated test: `src/lib/tenant-context.rls.test.ts`.
 - **Permissions**: `src/lib/permissions/catalog.ts` defines `PERMISSION_KEYS`
-  (20 keys, e.g. `VIEW_APPOINTMENTS`/`CREATE_STAFF`/`APPROVE_TIME_OFF`) and
-  hardcoded per-role defaults. `RolePermission`/`RoleVisibility` tables let a
-  tenant ADMIN override those defaults per role from the Settings page.
+  (28 keys, e.g. `VIEW_APPOINTMENTS`/`CREATE_STAFF`/`APPROVE_TIME_OFF`) and
+  hardcoded per-role defaults. Shifts and appointments are gated by fully
+  independent key pairs (`VIEW/CREATE/EDIT/CANCEL_SHIFTS` vs.
+  `..._APPOINTMENTS`, ISSUES.md #6) - no single key covers both. `RolePermission`/
+  `RoleVisibility` tables let a tenant ADMIN override those defaults per role
+  from the Settings page.
   `src/lib/permissions/service.ts` - `hasPermission(tx, tenantId, role, key)`
   is what every route actually calls to gate an action; `canViewRole()`
   exists for the visibility matrix but **nothing calls it yet** (tracked in
@@ -60,7 +63,7 @@ Full detail (fields, relations, doc comments) lives in
 
 | Model | What it is |
 |---|---|
-| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `eventColors`, `showFederalHolidays`, `allowOverlappingShifts`. |
+| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `eventColors`, `enabledHolidayNames`, `allowOverlappingShifts`. |
 | `User` | Login-capable account. `tenantId` null only for SUPERADMIN. |
 | `License` | Entitlement (tier + billing plan), one per tenant. |
 | `StaffProfile` | A `User` who can be scheduled; has `WorkingHours` (modeled, **not yet enforced anywhere**). |
@@ -102,15 +105,15 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/me/permissions` | GET | session | Caller's own effective permission map - what the client UI gates on. |
 | `/api/admin/permissions` | GET, PUT | ADMIN | Read/edit the tenant's permission + visibility matrix. |
 | `/api/admin/logo` | POST, DELETE | ADMIN | Upload/remove the tenant logo (stored as a `data:` URL, no blob storage). |
-| `/api/tenant-settings` | GET, PUT | session (GET) / ADMIN (PUT) | `requireClientForAppointments`, `enableMapsNavigation`, `eventColors`, `showFederalHolidays`, `allowOverlappingShifts` - one settings bucket, partial-update PUT. |
+| `/api/tenant-settings` | GET, PUT | session (GET) / ADMIN (PUT) | `requireClientForAppointments`, `enableMapsNavigation`, `eventColors`, `enabledHolidayNames`, `allowOverlappingShifts` - one settings bucket, partial-update PUT. |
 | `/api/staff` | GET, POST | `VIEW_STAFF` / `CREATE_STAFF` | List/add staff (never serialize `passwordHash` - see PROGRESS.md for the bug this caused once). |
 | `/api/service-types` | GET, POST | `VIEW_SERVICES` / `CREATE_SERVICES` | |
 | `/api/clients` | GET, POST | `VIEW_CLIENTS` / `CREATE_CLIENTS` | |
-| `/api/appointments` | GET, POST | `VIEW_APPOINTMENTS` / `CREATE_APPOINTMENTS` | List in a date range; create (enforces free-plan cap). |
-| `/api/appointments/[id]` | GET, PATCH | `VIEW_APPOINTMENTS` / varies by field (`EDIT_APPOINTMENTS`, `CANCEL_APPOINTMENTS`, `EDIT_JOB_ESTIMATES`) | One PATCH handles reschedule, cancel, reassign, estimates, location, tag. |
-| `/api/appointments/[id]/coverage` | GET | `EDIT_APPOINTMENTS` | Who can cover this shift (see `findCoverageCandidates`). |
+| `/api/appointments` | GET, POST | `VIEW_SHIFTS`+`VIEW_APPOINTMENTS` / `CREATE_SHIFTS` or `CREATE_APPOINTMENTS` (by row type) | List in a date range (each row type gated independently, not just all/own-scoped); create (enforces free-plan cap). |
+| `/api/appointments/[id]` | GET, PATCH | `VIEW_SHIFTS`/`VIEW_APPOINTMENTS` (by row type) / varies by field and row type (`EDIT_SHIFTS`/`EDIT_APPOINTMENTS`, `CANCEL_SHIFTS`/`CANCEL_APPOINTMENTS`, `EDIT_JOB_ESTIMATES`) | One PATCH handles reschedule, cancel, reassign, estimates, location, tag. |
+| `/api/appointments/[id]/coverage` | GET | `EDIT_SHIFTS` or `EDIT_APPOINTMENTS` (by row type) | Who can cover this shift (see `findCoverageCandidates`). |
 | `/api/time-off`, `/api/time-off/[id]` | GET/POST, PATCH | session / `APPROVE_TIME_OFF` | Request + approve/deny. |
-| `/api/event-tags`, `/api/event-tags/[id]` | GET/POST, DELETE | session+`CREATE_APPOINTMENTS` / ADMIN | Custom color tags - **not yet consumed by the calendar UI**, see TODO.md. |
+| `/api/event-tags`, `/api/event-tags/[id]` | GET/POST, DELETE | session+`CREATE_SHIFTS`/`CREATE_APPOINTMENTS` (by the tag's own `appliesTo`) / ADMIN | Custom color tags - **not yet consumed by the calendar UI**, see TODO.md. |
 | `/api/holidays`, `/api/holidays/[id]` | GET/POST, DELETE | session / ADMIN | Custom holidays - **not yet consumed by the calendar UI**, see TODO.md. |
 | `/api/schedule-templates`, `/[id]`, `/[id]/clone` | GET/POST, GET/PATCH/DELETE, POST | `VIEW`/`CREATE`/`EDIT`/`DELETE_SCHEDULE_TEMPLATES` | Template CRUD + clone. Paid feature - every route also calls `assertScheduleTemplatesEnabled` (403s on `FREE`). |
 | `/api/schedule-templates/[id]/shifts`, `/[shiftId]` | POST, PATCH/DELETE | `EDIT_SCHEDULE_TEMPLATES` | A template's shift rows. |
@@ -128,8 +131,10 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
 - `calendar` — the main scheduling UI (`SchedulingCalendar.tsx`, by far the
   largest client component in the app).
 - `calendar/view` — read-only variant (ignores the viewer's real permissions).
-- `calendar/roster` — manager-facing per-employee drill-down (ADMIN/MANAGER/
-  SUPERVISOR only, role-hardcoded not permission-key-gated - see TODO.md).
+- `calendar/roster` — manager-facing per-employee drill-down, gated on
+  `VIEW_ROSTER`. See ISSUES.md's "Known gaps" for an interaction a role
+  holding `VIEW_ROSTER` without `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`
+  runs into.
 - `time-off` — request/approve UI.
 - `schedule-templates` — reusable shift-pattern builder + apply-to-a-week UI
   (`ScheduleTemplatesView.tsx`), gated on `VIEW_SCHEDULE_TEMPLATES` and a

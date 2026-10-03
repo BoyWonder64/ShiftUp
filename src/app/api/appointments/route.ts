@@ -48,8 +48,11 @@ export async function GET(request: NextRequest) {
       session.userId,
       session.role,
       async (tx) => {
-        const canView = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS");
-        if (!canView) throw new Error("FORBIDDEN");
+        const [canViewShifts, canViewAppointments] = await Promise.all([
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_SHIFTS"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS"),
+        ]);
+        if (!canViewShifts && !canViewAppointments) throw new Error("FORBIDDEN");
         const [canViewEstimates, canViewAllShifts, canViewAllAppointments] = await Promise.all([
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES"),
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_ALL_SHIFTS"),
@@ -63,7 +66,7 @@ export async function GET(request: NextRequest) {
           tx,
           session.tenantId,
           { start: new Date(parsed.data.start), end: new Date(parsed.data.end) },
-          { allShifts, allAppointments, ownStaffId: own?.id ?? null }
+          { allShifts, allAppointments, ownStaffId: own?.id ?? null, canViewShifts, canViewAppointments }
         );
         return rows.map((row) => redactEstimates(row, canViewEstimates));
       }
@@ -109,7 +112,13 @@ export async function POST(request: NextRequest) {
       session.role,
       async (tx) => {
         const [canCreate, canEditEstimates] = await Promise.all([
-          hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_APPOINTMENTS"),
+          hasPermission(
+            tx,
+            session.tenantId,
+            session.role,
+            session.roleId,
+            data.clientId ? "CREATE_APPOINTMENTS" : "CREATE_SHIFTS"
+          ),
           hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_JOB_ESTIMATES"),
         ]);
         if (!canCreate) throw new Error("FORBIDDEN");

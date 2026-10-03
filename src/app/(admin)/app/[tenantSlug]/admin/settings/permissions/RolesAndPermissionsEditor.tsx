@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { type PermissionKey } from "@/lib/permissions/catalog";
+import { PERMISSION_KEYS, type PermissionKey } from "@/lib/permissions/catalog";
 import { RoleDetailPanel } from "./RoleDetailPanel";
 
 export interface RoleRow {
@@ -9,6 +9,8 @@ export interface RoleRow {
   name: string;
   description: string | null;
   reportsToId: string | null;
+  /** Seniority rank for authorization (higher outranks lower) - see Role.level in schema.prisma. Not the same as reportsToId, which is cosmetic. */
+  level: number;
 }
 
 export type Grants = Record<string, Record<PermissionKey, boolean>>;
@@ -16,47 +18,141 @@ export type Visibility = Record<string, Record<string, boolean>>;
 
 /**
  * Groups PERMISSION_KEYS for display only - no new permission keys, no
- * change to what's actually enforced. "Scheduling" deliberately covers both
- * appointments and shifts together (not two separate sections) because
- * they share one set of permission keys in the data model - a shift is just
- * an Appointment row with no client attached, see ARCHITECTURE.md. The two
- * VIEW_ALL_* keys are the one exception - they're genuinely split per type
- * (a role can see all shifts without seeing all appointments, or vice versa)
- * since "see outside your own" is naturally a different call per type, unlike
- * create/edit/cancel which this app doesn't split that way.
+ * change to what's actually enforced. "Scheduling" renders as a matrix
+ * (one row per action, one column per Shifts/Appointments) rather than a
+ * flat checkbox list, since every action here (ISSUES.md #6) is genuinely
+ * two independent keys that look identical if just dropped into a flat
+ * list side by side - the matrix makes which toggle governs which event
+ * type legible at a glance. VIEW_CALENDAR_TOGGLE doesn't split, so it stays
+ * a flat row underneath the matrix.
+ *
+ * "resourceMatrix" groups are the same idea applied to plain CRUD
+ * resources (Staff/Clients/Services/Schedule templates): one row per
+ * resource, one column per action, instead of four separate flat
+ * checkbox grids that each repeat "View X / Add X / Edit X / Remove X" in
+ * words. A resource with no key for a given column (e.g. templates is the
+ * only row with "Apply") just leaves that cell blank.
+ *
+ * Groups are further bucketed into top-level categories purely for
+ * display (collapsible sections with a granted-count badge) - categories
+ * carry no semantics of their own, just groups.
  */
-export const PERMISSION_GROUPS: Array<{ label: string; note?: string; keys: PermissionKey[] }> = [
+export interface PermissionMatrixRow {
+  label: string;
+  shiftKey: PermissionKey;
+  appointmentKey: PermissionKey;
+}
+
+export interface ResourceMatrixRow {
+  label: string;
+  view: PermissionKey;
+  create?: PermissionKey;
+  edit?: PermissionKey;
+  delete?: PermissionKey;
+  apply?: PermissionKey;
+}
+
+export type PermissionGroup =
+  | { label: string; note?: string; keys: PermissionKey[] }
+  | { label: string; note?: string; matrix: PermissionMatrixRow[]; keys?: PermissionKey[] }
+  | { label: string; note?: string; resourceMatrix: ResourceMatrixRow[] };
+
+export interface PermissionCategory {
+  id: string;
+  label: string;
+  description: string;
+  groups: PermissionGroup[];
+}
+
+export const PERMISSION_CATEGORIES: PermissionCategory[] = [
   {
-    label: "Scheduling (appointments & shifts)",
-    note: "Create/edit/cancel apply to both - appointments and shifts share those permissions. \"See all\" is split per type below: without it, a role only sees its own shifts/appointments on the calendar (plus a toggle to deliberately narrow down even when it can see everyone's).",
-    keys: [
-      "VIEW_APPOINTMENTS",
-      "CREATE_APPOINTMENTS",
-      "EDIT_APPOINTMENTS",
-      "CANCEL_APPOINTMENTS",
-      "VIEW_CALENDAR_TOGGLE",
-      "VIEW_ALL_SHIFTS",
-      "VIEW_ALL_APPOINTMENTS",
+    id: "scheduling",
+    label: "Scheduling",
+    description: "Shifts, appointments, schedule templates, and time off.",
+    groups: [
+      {
+        label: "Shifts & appointments",
+        note: "Each row is two independent toggles - granting one doesn't grant the other.",
+        matrix: [
+          { label: "View", shiftKey: "VIEW_SHIFTS", appointmentKey: "VIEW_APPOINTMENTS" },
+          { label: "Create", shiftKey: "CREATE_SHIFTS", appointmentKey: "CREATE_APPOINTMENTS" },
+          { label: "Edit", shiftKey: "EDIT_SHIFTS", appointmentKey: "EDIT_APPOINTMENTS" },
+          { label: "Cancel", shiftKey: "CANCEL_SHIFTS", appointmentKey: "CANCEL_APPOINTMENTS" },
+          {
+            label: "See all (outside your own)",
+            shiftKey: "VIEW_ALL_SHIFTS",
+            appointmentKey: "VIEW_ALL_APPOINTMENTS",
+          },
+        ],
+        keys: ["VIEW_CALENDAR_TOGGLE"],
+      },
+      {
+        label: "Schedule templates",
+        note: "Applying a template creates real shifts, so it's a separate permission from editing a template's definition - a role can be allowed to apply existing templates without being able to redefine them.",
+        resourceMatrix: [
+          {
+            label: "Templates",
+            view: "VIEW_SCHEDULE_TEMPLATES",
+            create: "CREATE_SCHEDULE_TEMPLATES",
+            edit: "EDIT_SCHEDULE_TEMPLATES",
+            delete: "DELETE_SCHEDULE_TEMPLATES",
+            apply: "APPLY_SCHEDULE_TEMPLATES",
+          },
+        ],
+      },
+      { label: "Time off", keys: ["VIEW_TIME_OFF", "APPROVE_TIME_OFF"] },
     ],
   },
-  { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
   {
-    label: "Schedule templates",
-    note: "Applying a template creates real shifts, so it's a separate permission from editing a template's definition - a role can be allowed to apply existing templates without being able to redefine them.",
-    keys: [
-      "VIEW_SCHEDULE_TEMPLATES",
-      "CREATE_SCHEDULE_TEMPLATES",
-      "EDIT_SCHEDULE_TEMPLATES",
-      "DELETE_SCHEDULE_TEMPLATES",
-      "APPLY_SCHEDULE_TEMPLATES",
+    id: "records",
+    label: "People & records",
+    description: "Staff, clients, service types, the roster, and job estimates.",
+    groups: [
+      {
+        label: "Staff, clients & services",
+        resourceMatrix: [
+          { label: "Staff", view: "VIEW_STAFF", create: "CREATE_STAFF", edit: "EDIT_STAFF", delete: "DELETE_STAFF" },
+          {
+            label: "Clients",
+            view: "VIEW_CLIENTS",
+            create: "CREATE_CLIENTS",
+            edit: "EDIT_CLIENTS",
+            delete: "DELETE_CLIENTS",
+          },
+          {
+            label: "Service types",
+            view: "VIEW_SERVICES",
+            create: "CREATE_SERVICES",
+            edit: "EDIT_SERVICES",
+            delete: "DELETE_SERVICES",
+          },
+        ],
+      },
+      { label: "Roster", keys: ["VIEW_ROSTER"] },
+      { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
     ],
   },
-  { label: "Clients", keys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
-  { label: "Staff", keys: ["VIEW_STAFF", "CREATE_STAFF", "EDIT_STAFF", "DELETE_STAFF"] },
-  { label: "Services", keys: ["VIEW_SERVICES", "CREATE_SERVICES", "EDIT_SERVICES", "DELETE_SERVICES"] },
-  { label: "Roster", keys: ["VIEW_ROSTER"] },
-  { label: "Time off", keys: ["VIEW_TIME_OFF", "APPROVE_TIME_OFF"] },
 ];
+
+export function permissionGroupKeys(group: PermissionGroup): PermissionKey[] {
+  const keys: PermissionKey[] = [];
+  if ("matrix" in group) {
+    for (const row of group.matrix) keys.push(row.shiftKey, row.appointmentKey);
+  }
+  if ("resourceMatrix" in group) {
+    for (const row of group.resourceMatrix) {
+      for (const key of [row.view, row.create, row.edit, row.delete, row.apply]) {
+        if (key) keys.push(key);
+      }
+    }
+  }
+  if ("keys" in group && group.keys) keys.push(...group.keys);
+  return keys;
+}
+
+export function permissionCategoryKeys(category: PermissionCategory): PermissionKey[] {
+  return category.groups.flatMap(permissionGroupKeys);
+}
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -76,6 +172,7 @@ export function RolesAndPermissionsEditor() {
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newReportsTo, setNewReportsTo] = useState("");
+  const [newLevel, setNewLevel] = useState("0");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -124,11 +221,13 @@ export function RolesAndPermissionsEditor() {
           name: newName.trim(),
           description: newDescription.trim() || null,
           reportsToId: newReportsTo || null,
+          level: Number(newLevel) || 0,
         }),
       });
       setNewName("");
       setNewDescription("");
       setNewReportsTo("");
+      setNewLevel("0");
       // Jump straight to the new role so its permissions can be configured
       // immediately, instead of landing back on whatever was selected before.
       await reload(role.id);
@@ -141,7 +240,7 @@ export function RolesAndPermissionsEditor() {
 
   async function handleSaveField(
     id: string,
-    patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId">>
+    patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId" | "level">>
   ) {
     setError(null);
     try {
@@ -177,6 +276,34 @@ export function RolesAndPermissionsEditor() {
     }
   }
 
+  // Backs each group's "All"/"None" shortcut - sends every changed key as
+  // one PUT (the API already accepts an array of permissionUpdates) rather
+  // than one request per checkbox.
+  async function handleBulkToggleGrant(roleId: string, keys: PermissionKey[], granted: boolean) {
+    const current = grants[roleId] ?? ({} as Record<PermissionKey, boolean>);
+    const changingKeys = keys.filter((k) => Boolean(current[k]) !== granted);
+    if (changingKeys.length === 0) return;
+    setGrants((prev) => ({
+      ...prev,
+      [roleId]: { ...prev[roleId], ...Object.fromEntries(changingKeys.map((k) => [k, granted])) },
+    }));
+    try {
+      await fetchJson("/api/admin/permissions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          permissionUpdates: changingKeys.map((key) => ({ roleId, permissionKey: key, granted })),
+        }),
+      });
+    } catch {
+      setGrants((prev) => ({
+        ...prev,
+        [roleId]: { ...prev[roleId], ...Object.fromEntries(changingKeys.map((k) => [k, !granted])) },
+      }));
+      setError("Couldn't save that change - try again.");
+    }
+  }
+
   async function handleToggleVisibility(viewerId: string, targetId: string) {
     const next = !visibility[viewerId]?.[targetId];
     setVisibility((prev) => ({ ...prev, [viewerId]: { ...prev[viewerId], [targetId]: next } }));
@@ -203,18 +330,29 @@ export function RolesAndPermissionsEditor() {
       <aside className="flex w-full flex-shrink-0 flex-col gap-3 lg:w-64">
         <div className="flex flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
           {roles.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">No roles yet.</p>}
-          {roles.map((role) => (
-            <button
-              key={role.id}
-              type="button"
-              onClick={() => setSelectedRoleId(role.id)}
-              className={`rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
-                role.id === selectedRoleId ? "bg-primary-50 text-primary-700" : "text-gray-700 hover:bg-gray-50"
-              }`}
-            >
-              {role.name}
-            </button>
-          ))}
+          {roles.map((role) => {
+            const roleGrants = grants[role.id] ?? ({} as Record<PermissionKey, boolean>);
+            const grantedCount = PERMISSION_KEYS.filter((k) => roleGrants[k]).length;
+            return (
+              <button
+                key={role.id}
+                type="button"
+                onClick={() => setSelectedRoleId(role.id)}
+                className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                  role.id === selectedRoleId ? "bg-primary-50 text-primary-700" : "text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                <span className="truncate">{role.name}</span>
+                <span
+                  className={`shrink-0 text-xs font-normal tabular-nums ${
+                    role.id === selectedRoleId ? "text-primary-400" : "text-gray-400"
+                  }`}
+                >
+                  {grantedCount}/{PERMISSION_KEYS.length}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         <form
@@ -255,6 +393,20 @@ export function RolesAndPermissionsEditor() {
               ))}
             </select>
           </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Rank
+            <input
+              type="number"
+              min={0}
+              max={1000}
+              value={newLevel}
+              onChange={(e) => setNewLevel(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1.5"
+            />
+            <span className="text-xs font-normal text-gray-400">
+              Higher outranks lower. A role can only reassign staff currently below, and only to roles below, its own rank.
+            </span>
+          </label>
           <button
             type="submit"
             disabled={creating}
@@ -276,6 +428,7 @@ export function RolesAndPermissionsEditor() {
             onSaveField={(patch) => handleSaveField(selectedRole.id, patch)}
             onDelete={() => handleDelete(selectedRole.id)}
             onToggleGrant={(key) => handleToggleGrant(selectedRole.id, key)}
+            onBulkToggleGrant={(keys, granted) => handleBulkToggleGrant(selectedRole.id, keys, granted)}
             onToggleVisibility={(targetId) => handleToggleVisibility(selectedRole.id, targetId)}
           />
         ) : (

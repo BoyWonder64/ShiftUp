@@ -2,6 +2,7 @@
   "AppHeader": {
     "dashboard": "Panel",
     "calendar": "Calendario",
+    "fullCalendar": "Calendario completo",
     "viewOnly": "Solo lectura",
     "staffPages": "Páginas de personal",
     "roster": "Plantilla",
@@ -18,9 +19,18 @@
     "DE": "Alemán",
     "FR": "Francés"
   },
+  "CalendarTextSizePicker": {
+    "label": "Tamaño del texto del calendario",
+    "SMALL": "Pequeño",
+    "MEDIUM": "Predeterminado",
+    "LARGE": "Grande",
+    "XLARGE": "Extra grande"
+  },
   "AccountPage": {
     "languageSectionTitle": "Idioma",
     "languageSectionDescription": "Elige el idioma que se usará en toda tu cuenta.",
+    "calendarTextSizeSectionTitle": "Tamaño del texto del calendario",
+    "calendarTextSizeSectionDescription": "Elige el tamaño del texto de los eventos en el calendario.",
     "saved": "Guardado."
   },
   "Dashboard": {

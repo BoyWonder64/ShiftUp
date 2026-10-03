@@ -79,10 +79,39 @@ body {
 }
 .rbc-event {
   border-radius: 0.375rem;
-  border: none;
+  /* A real (non-"none") border so eventPropGetter's inline `borderColor`
+   * (SchedulingCalendar.tsx) actually renders - "border: none" zeroes the
+   * border-style too, which hides any color set via inline style. Doubles as
+   * the fix for "mushed" overlapping events below: without it, same-time
+   * events in Month view had zero visual seam between touching chips. */
+  border: 2px solid transparent;
+  /* --calendar-event-font-size is set on the calendar's outer wrapper
+   * (SchedulingCalendar.tsx) from the viewer's own Settings > Account >
+   * "Calendar text size" preference - 0.75rem is the calendar's own default,
+   * deliberately smaller than the page's ambient text since event boxes
+   * crowd fast. .rbc-event-label's existing 80% (react-big-calendar.css)
+   * is relative to this, so it scales down with it automatically. */
+  font-size: var(--calendar-event-font-size, 0.75rem);
 }
 .rbc-event.rbc-selected {
   background-color: var(--color-primary-600);
+}
+/* Week/Day time grid: when several events overlap in time, react-big-calendar
+ * lays them out as same-width slivers with zero gap between them (and only a
+ * thin 1px border - see react-big-calendar.css's `.rbc-day-slot .rbc-event`),
+ * which reads as one solid mashed-together block once there are more than
+ * two or three. The chained `.rbc-event.rbc-event` selector isn't a typo -
+ * it's a specificity bump (one class repeated = an extra selector's worth of
+ * specificity with no extra markup) so this reliably wins over that library
+ * rule regardless of CSS load order. The margin insets each event from its
+ * computed left/width slot - since margin sits outside the box-sizing:
+ * border-box width, it opens a real gap rather than shrinking the slot RBC
+ * already calculated.
+ */
+.rbc-day-slot .rbc-event.rbc-event,
+.rbc-day-slot .rbc-background-event.rbc-background-event {
+  margin: 0 1.5px;
+  border-width: 2px;
 }
 .rbc-slot-selection {
   background-color: color-mix(in srgb, var(--color-primary-500) 25%, transparent);
@@ -97,4 +126,24 @@ body {
  * continuous strip. */
 .rbc-time-header-gutter {
   border-bottom: 1px solid #ddd;
+}
+/* "Group by staff" Day view (resourced - one column per staff member):
+ * react-big-calendar pins the time-of-day column with `position: sticky;
+ * left: 0; z-index: 10;` (react-big-calendar.css) so it stays visible while
+ * the staff columns scroll past underneath it - correct by design. But
+ * SchedulingCalendar.tsx's eventPropGetter now sets each event's own
+ * z-index much higher (up to ~10081, for the "shorter event stacks in front
+ * of a longer one" layering) so it can outrank other events it overlaps -
+ * and since the gutter and every event live in the same isolated stacking
+ * context (see the calendar wrapper's `isolate` in SchedulingCalendar.tsx),
+ * that range completely swamps the gutter's old z-index: 10, so whichever
+ * event happens to scroll underneath it can render in front of/behind it
+ * unpredictably instead of the gutter reliably staying on top. The gutter
+ * is navigation chrome, not calendar content, so it should always win -
+ * raised well above the event range. The doubled class (same trick as
+ * `.rbc-event.rbc-event` above) is a specificity bump so this reliably
+ * wins over the library rule regardless of CSS load order. */
+.rbc-time-view-resources .rbc-time-gutter.rbc-time-gutter,
+.rbc-time-view-resources .rbc-time-header-gutter.rbc-time-header-gutter {
+  z-index: 10090;
 }

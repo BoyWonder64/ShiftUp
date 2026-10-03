@@ -2,7 +2,10 @@
 
 Tracked bugs, data-model problems, and known gaps in what's already built.
 Referenced from `TODO.md` (which is feature requests/backlog, not this).
-Newest/highest-priority first within each section.
+Newest/highest-priority first within each section. **Anything marked
+"Resolved" below has been pulled out into `VERIFY.md`** — a checklist for you
+to confirm in the running app — rather than left here as resolved-but-
+unconfirmed clutter.
 
 ## High priority
 
@@ -34,28 +37,8 @@ link points at a shift-owned list instead of the Appointments page's.
 
 ### 2. Color tags live under Staff settings — need to be in Shifts/Appointments, separated from Staff
 
-**Status:** Open, raised 2026-10-02.
-
-Uncommitted work-in-progress moved `EventColorSettings.tsx` from the Calendar
-settings page to the Staff settings page
-(`src/app/(admin)/app/[tenantSlug]/admin/settings/staff/EventColorSettings.tsx`,
-new/untracked; the old `calendar/EventColorSettings.tsx` was deleted), on the
-reasoning - stated in that file's own top comment - that "color keys/tags are
-a staff-scheduling concern."
-
-That's the wrong home. A color tag (`EventTag`, with its
-`appliesTo: SHIFT | APPOINTMENT | BOTH` scope) colors an individual
-*appointment or shift* on the calendar - it has nothing to do with a staff
-member or the Staff settings page (which manages staff profiles/invites).
-Bundling it there conflates two unrelated settings surfaces.
-
-**Needs:** move `EventColorSettings` out of Staff settings and into
-Shifts/Appointments settings instead - and keep it properly separated once
-it's there: don't just drop one shared, undifferentiated list onto a single
-page. The `SHIFT`-only, `APPOINTMENT`-only, and `BOTH` tags should be
-presented/managed in a way that reflects that Shifts and Appointments are two
-distinct surfaces that happen to share the same underlying color-tag
-mechanism, not one combined list that doesn't distinguish them.
+**Status:** Resolved 2026-10-02 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in git history / `PROGRESS.md`.
 
 ### 3. No way to update a calendar event after it's created — e.g. logging a no-show
 
@@ -126,19 +109,103 @@ viewing Manager already has visibility into (ties into the existing
 `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` visibility model rather than a
 separate access rule).
 
+**Design proposed 2026-10-02 (still blocked on issue #3, not built)** -
+answers to the open questions above, for sign-off before this is picked up:
+- **Metrics**: no-show count, completed count, cancelled count, scheduled/
+  booked count, completion rate (%), and total hours worked (shifts) - all
+  computed over whichever date range is selected, with an optional per-staff
+  breakdown table underneath the aggregate tiles.
+- **Filters**: status, staff member, service type, date range - combined
+  with AND (narrowing), same mental model as the calendar's existing
+  Staff/Everyone-just-mine filters, not OR.
+- **Time range**: a date-range picker defaulting to "this week," rather than
+  a fixed today/week/month toggle - matches how the calendar's own range
+  already drives its fetching.
+- **Drill-down**: clicking a stat tile's number opens a plain filtered list,
+  reusing the existing appointment-detail panel for any single row clicked
+  further, rather than a new bespoke table component.
+- **Scope**: tenant-wide for whoever holds the new permission, *not* tied to
+  `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` - this is an explicitly
+  manager-facing aggregate view, so a dedicated new key (e.g.
+  `VIEW_SHIFT_REPORTS`, defaulted true for Manager/Supervisor only, same
+  pattern as `VIEW_ROSTER`) is simpler and more legible than overloading the
+  existing per-event visibility keys.
+
+### 5. Appointment payment status is shown (e.g. "UNPAID") but there's no way to update it
+
+**Status:** Open, raised 2026-10-02. Related to issue #3 above (same shape of
+problem - a status field the data model supports but nothing lets you change
+after the fact) but a separate enum: this is `PaymentStatus`
+(`UNPAID | PAID | WAIVED | REFUNDED`, `prisma/schema.prisma`), not
+`AppointmentStatus`.
+
+The appointment detail panel in `SchedulingCalendar.tsx` renders
+`appointment.paymentStatus` as plain read-only text (`<dd>{appointment.paymentStatus}</dd>`,
+line ~1527) - every appointment defaults to and stays `UNPAID` forever, since
+nothing ever sets it to anything else. `PATCH /api/appointments/[id]`'s
+validation schema (`src/app/api/appointments/[id]/route.ts`) doesn't accept
+`paymentStatus` at all, so there's no path - UI or API - to ever mark one
+`PAID`, `WAIVED`, or `REFUNDED`.
+
+**Needs, per the user, two separate pieces:**
+1. **A setting to make payment-status tracking toggleable per tenant** -
+   same pattern as the other per-tenant display toggles already wired up in
+   `AppointmentFormSettings.tsx`/`ShiftFormSettings.tsx` and the
+   `tenant-settings` API/Tenant model (e.g. `showJobType`,
+   `enableMapsNavigation`). Not every tenant bills per-appointment, so
+   whether payment status shows at all should be an admin-configurable
+   setting, not always-on.
+2. **An actual way to update it** - extend the PATCH route's schema to
+   accept `paymentStatus`, gate it behind whatever permission makes sense
+   (likely the same `EDIT_APPOINTMENTS`, or a dedicated one if payment
+   changes should be restricted more tightly), and add a real control on the
+   appointment detail panel (a dropdown in place of the current plain-text
+   `<dd>`) so staff/admins can actually mark something paid/waived/refunded
+   instead of it being permanently stuck at `UNPAID`.
+
+### 6. Appointment/shift permissions are combined — can't grant or revoke one without the other
+
+**Status:** Resolved 2026-10-02 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in git history / `PROGRESS.md`.
+
 ## Bugs / UX fixes
+
+- ~~**"Group by staff" Day view: the time-of-day column on the left
+  visually glitches / floats in front of things it shouldn't.**~~
+  **Resolved 2026-10-03 — moved to `VERIFY.md`.**
+
+- ~~**"+ Add appointment"/"+ Schedule shift" buttons look out of place at the
+  top of the calendar.**~~ **Resolved 2026-10-03 (take 3) — moved to
+  `VERIFY.md`.**
+
+- ~~**Selected calendar slot doesn't hold its position while booking an
+  appointment vs. shift is still undecided.**~~ **Resolved 2026-10-03 —
+  moved to `VERIFY.md`.**
+
+- ~~**The Appointment-vs-Shift chooser is an inline bar at the bottom of the
+  page, disconnected from the slot it's asking about.**~~ **Resolved
+  2026-10-03 — moved to `VERIFY.md`.**
+
+- ~~**Calendar events render on top of the create/detail popup instead of
+  behind it ("events bleed through the form").**~~ **Resolved 2026-10-03 —
+  moved to `VERIFY.md`.**
 
 - **Layout shift when opening "+ Add appointment"/"+ Schedule shift".**
   Reported 2026-10-01. First fix (`scrollbar-gutter: stable`) did **not**
-  resolve it - user confirmed still happening. Re-diagnosed: the "Cancel"
-  button was only mounted into the action-button row while `creating` was
-  set, growing that row's width and reflowing the settings box next to it -
-  correlates exactly with the reported trigger. **Second fix applied**:
-  Cancel is now always rendered (`invisible` class toggle instead of
-  conditional mount), so its appearance can never change the row's width.
-  Left the scrollbar-gutter fix in place too. **Still needs your browser
-  confirmation** - don't want to repeat declaring this fixed on code-reading
-  confidence alone twice in a row.
+  resolve it - user confirmed still happening. Second fix applied (Cancel
+  button always rendered via `invisible` toggle instead of conditional
+  mount, so its appearance can't change the row's width) - **moved to
+  `VERIFY.md` for your browser confirmation**, since it's an applied fix
+  awaiting your check, not a closed bug yet. Will come back here if it's
+  still happening.
+
+- ~~**Calendar event boxes don't show enough info — appointment events don't
+  show which staff member is assigned.**~~ **Resolved 2026-10-02 — moved to
+  `VERIFY.md`.**
+
+- ~~**"View only" shouldn't be its own top-level nav link - it only needs to
+  be a dropdown option under Calendar.**~~ **Resolved 2026-10-02 — moved to
+  `VERIFY.md`.**
 
 ## Known gaps in what's already built
 
@@ -156,7 +223,12 @@ separate access rule).
   that one person's own row - defeating the page's purpose. Not fixed here
   deliberately - flagging rather than silently making `VIEW_ROSTER` imply full
   visibility, since that conflates two permissions that are meant to be
-  independent.
+  independent. **Sharper edge after issue #6's permission split**: the new
+  `VIEW_SHIFTS`/`VIEW_APPOINTMENTS` keys are now a hard type-level gate in
+  `listAppointmentsInRange` (ANDed, not just OR'd with the all/own scope) -
+  a role holding `VIEW_ROSTER` but lacking `VIEW_SHIFTS` entirely would see
+  zero shifts on the roster, not even its own, same "not fixed here
+  deliberately" reasoning as above.
 - **Checkout flow built, not yet live-tested.** `License.billingPlan` supports
   `ONE_TIME` and `SUBSCRIPTION`, and real Stripe Checkout is wired up
   (`src/lib/licensing/pricing.ts`, `POST /api/billing/checkout`,

@@ -28,6 +28,7 @@ const updateSchema = z
     name: z.string().trim().min(1).max(MAX_NAME_LENGTH),
     description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).nullable(),
     reportsToId: z.string().uuid().nullable(),
+    level: z.number().int().min(0).max(1000),
   })
   .partial();
 
@@ -72,6 +73,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ...(data.name !== undefined && { name: data.name }),
           ...(data.description !== undefined && { description: data.description || null }),
           ...(data.reportsToId !== undefined && { reportsToId: data.reportsToId }),
+          ...(data.level !== undefined && { level: data.level }),
         },
       });
     });

@@ -18,7 +18,16 @@ const ACCESS_CATEGORIES: Array<{ key: string; permissionKeys: PermissionKey[] }>
   { key: "clients", permissionKeys: ["VIEW_CLIENTS", "CREATE_CLIENTS", "EDIT_CLIENTS", "DELETE_CLIENTS"] },
   {
     key: "appointments",
-    permissionKeys: ["VIEW_APPOINTMENTS", "CREATE_APPOINTMENTS", "EDIT_APPOINTMENTS", "CANCEL_APPOINTMENTS"],
+    permissionKeys: [
+      "VIEW_SHIFTS",
+      "VIEW_APPOINTMENTS",
+      "CREATE_SHIFTS",
+      "CREATE_APPOINTMENTS",
+      "EDIT_SHIFTS",
+      "EDIT_APPOINTMENTS",
+      "CANCEL_SHIFTS",
+      "CANCEL_APPOINTMENTS",
+    ],
   },
   { key: "jobEstimates", permissionKeys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
   {
@@ -46,9 +55,13 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   CREATE_CLIENTS: "add",
   EDIT_CLIENTS: "edit",
   DELETE_CLIENTS: "remove",
+  VIEW_SHIFTS: "view",
   VIEW_APPOINTMENTS: "view",
+  CREATE_SHIFTS: "create",
   CREATE_APPOINTMENTS: "create",
+  EDIT_SHIFTS: "reschedule",
   EDIT_APPOINTMENTS: "reschedule",
+  CANCEL_SHIFTS: "cancel",
   CANCEL_APPOINTMENTS: "cancel",
   VIEW_JOB_ESTIMATES: "view",
   EDIT_JOB_ESTIMATES: "edit",
@@ -74,13 +87,16 @@ async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId
   }
   const summary: Array<{ categoryKey: string; actionKeys: string[] }> = [];
   for (const category of ACCESS_CATEGORIES) {
-    const actionKeys: string[] = [];
+    // A Set, not an array - "appointments" now has two keys per action
+    // (shifts/appointments split, ISSUES.md #6) that both map to the same
+    // action word, and a role holding both shouldn't show "create, create".
+    const actionKeys = new Set<string>();
     for (const key of category.permissionKeys) {
       if (await hasPermission(tx, tenantId, role, roleId, key)) {
-        actionKeys.push(ACTION_KEYS[key]);
+        actionKeys.add(ACTION_KEYS[key]);
       }
     }
-    summary.push({ categoryKey: category.key, actionKeys });
+    summary.push({ categoryKey: category.key, actionKeys: [...actionKeys] });
   }
   return summary;
 }

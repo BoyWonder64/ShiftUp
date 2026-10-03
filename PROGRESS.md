@@ -13,13 +13,104 @@ actually verified, not a quick current-state reference.
 
 ## Environment state (as left)
 
-- Docker Desktop installed and running; local Postgres container up and fully migrated (9 migrations applied, schema up to date as of 2026-10-01).
+- Docker Desktop installed and running; local Postgres container up and fully migrated (30 migrations applied, schema up to date as of 2026-10-02 - this count goes stale fast, re-check `ls prisma/migrations` rather than trust the number itself).
 - Dev server runs via `npm run dev` on http://localhost:3000.
 - **Windows-specific gotcha**: stopping the `npm run dev` background task doesn't always kill its child Next.js/Turbopack processes. If `prisma generate` or `prisma migrate` fails with `EPERM ... query_engine-windows.dll.node`, check `Get-Process node` and kill stray ones (excluding unrelated ones like Adobe's bundled node.exe) before retrying.
 - **Docker Desktop needs relaunching after a machine restart/sleep** — `docker ps` fails with a named-pipe connection error until the app is reopened; give it ~20-30s to come up before retrying.
 - **Don't assume anything about commit state from this note** — check `git status`/`git log` yourself at the start of every session. It has swung both ways: at one point the user was committing regularly; as of this handoff `git log` shows only 2 commits total, the latest (`2156602`, "Added to Todo and Time off manager") well before most of what's documented in this file — everything since (logo, roster, client combobox, Google Maps nav, scheduling-conflict banner, Helvetica/layout changes, and the whole event-colors/tags/holidays feature below) is **uncommitted working-tree state only**. Flag this to the user early in a new session; a lot of real work is one `git clean`/`checkout` away from being lost.
 
 ## Completed and verified this session
+
+### Configurable visible time range for the calendar grid
+Builds the `TODO.md` item raised 2026-10-02 ("a lot of the grid is dead AM/PM space nobody needs to scroll past").
+
+- **New `Tenant.calendarStartMinute`/`calendarEndMinute`** (migration `add_calendar_visible_hours`) — minutes-from-midnight, `@default(0)`/`@default(1440)` (the full day, i.e. no visual change for any tenant that never touches this). Purely a *display* bound on `SchedulingCalendar`'s grid — distinct from `WorkingHours` (still unused anywhere, see `ISSUES.md`), which is about constraining *bookable* times per staff member, not what the grid shows by default. Decided one tenant-wide range (not per-day-of-week) and hidden-entirely-outside-the-range (via react-big-calendar's `min`/`max`, not collapsed/scrollable), per the two open questions the TODO item left — same "one tenant-wide default" pattern as every other Settings-level toggle.
+- **`PUT /api/tenant-settings`** takes the pair together now (`calendarStartMinute`/`calendarEndMinute`, both 0-1440) with a schema-level refine requiring both fields when either is sent and `end > start`.
+- **New `CalendarHoursSettings.tsx`** (Settings > Calendar, above Holidays) — two `<input type="time">` fields + Save, with a "Reset to full day" shortcut that only shows once the range has actually been narrowed.
+- **`SchedulingCalendar.tsx`**: `gridMinTime`/`gridMaxTime` (previously hardcoded to the full 24 hours) now derive from the tenant's configured range via a shared `minutesToGridTime` helper (hour 24 doesn't exist on a `Date`, so a full-day end of 1440 maps to 23:59:59). The existing AM/PM scroll toggle's `initialScrollToTime` now targets the start of the configured range ("AM") or its midpoint ("PM") instead of fixed `0`/`12`; the imperative `scrollToAmPmHalf` needed no change since it already scrolls to 0%/50% of whatever height is currently rendered.
+- **Not yet confirmed in the browser** — type-check and lint are clean and `/api/tenant-settings` round-trips without a server error, but this session has no browser-automation tool to click through the Settings form or the resulting calendar grid. Added to `VERIFY.md`.
+
+### Shift/appointment permissions split into independent pairs, plus a batch of calendar/nav UX fixes
+Raised via an `ISSUES.md` review: picked quick UX fixes, issue #6 (combined
+shift/appointment permissions), and a design-only pass on issue #4 (manager
+no-show dashboard, still blocked on issue #3, not built).
+
+- **Issue #6 — permission split**: `src/lib/permissions/catalog.ts`'s four
+  combined keys (`VIEW/CREATE/EDIT/CANCEL_APPOINTMENTS`) are now eight -
+  `VIEW_SHIFTS`/`VIEW_APPOINTMENTS`, `CREATE_SHIFTS`/`CREATE_APPOINTMENTS`,
+  `EDIT_SHIFTS`/`EDIT_APPOINTMENTS`, `CANCEL_SHIFTS`/`CANCEL_APPOINTMENTS` -
+  mirroring the existing `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` split. No
+  key was renamed - the old combined key just narrows to "appointments only"
+  going forward, so existing appointment grants carry forward untouched.
+  - **API routes** (`appointments/route.ts`, `appointments/[id]/route.ts`,
+    `appointments/[id]/coverage/route.ts`, `event-tags/route.ts`) each now
+    check the key matching whichever event type is actually in play - the
+    PATCH and coverage routes fetch `clientId` first where they didn't
+    already know the type; `event-tags` keys off the tag's own `appliesTo`.
+  - **`modules/scheduling/service.ts`**: `AppointmentVisibility` gained
+    `canViewShifts`/`canViewAppointments`, ANDed against the existing
+    all/own `OR` filter in `listAppointmentsInRange` - a role lacking
+    `VIEW_SHIFTS` entirely now sees zero shift rows, not even its own.
+  - **`SchedulingCalendar.tsx`**: the three flat `canCreate`/`canEdit`/
+    `canCancel` booleans became per-type pairs (`canCreateShift`/
+    `canCreateAppointment`, etc.) plus `canEditEvent(appt)`/
+    `canCancelEvent(appt)`/`canCreateForMode(mode)` helpers, used everywhere
+    a specific event or create-mode is in play: the two create buttons
+    (each gated on its own permission instead of one combined check), the
+    grid's `selectable`/`draggableAccessor`/`resizableAccessor` (per-event
+    for real events, per-`creating.mode` for the drag-draft), the "Add as:
+    Appointment/Shift" picker (each button only shown if creatable), and the
+    detail-panel props (`canCancel`/`canEdit`/`canFindCoverage`/`canCreateTag`
+    now resolved per the specific selected event's type).
+  - **Permissions settings UI**: `RolesAndPermissionsEditor.tsx`'s
+    "Scheduling" group changed from a flat checkbox list to a small
+    View/Create/Edit/Cancel/See-all × Shifts/Appointments matrix
+    (`RoleDetailPanel.tsx` renders it as a table), so which toggle governs
+    which event type is legible at a glance instead of two more
+    same-looking rows dropped into a flat list.
+  - **Data migration** `20261003000000_split_shift_appointment_permissions`
+    backfills every existing role's new `_SHIFTS` grant from its old
+    combined-key value (same precedent as the `enabled_holiday_names`
+    backfill below) - applied against the local dev DB and verified with a
+    direct query: 0 mismatches between each role's old `CREATE_APPOINTMENTS`
+    value and its newly-backfilled `CREATE_SHIFTS` value, across all 96
+    existing role rows. `prisma generate`'s post-migration step hit the
+    documented Windows `EPERM` query-engine-DLL lock (the dev server was
+    actively running, holding the file) - skipped killing it since this
+    migration is pure data (no schema/model change), so the already-generated
+    Prisma client needed no regeneration.
+- **Quick UX fixes**, same session:
+  - Appointment events on the calendar now show the assigned staff member's
+    name (`toEvent()` in `SchedulingCalendar.tsx` appended it only in the
+    shift branch before; now unconditional).
+  - `AppHeader.tsx`'s separate `Calendar`/`View only` top-level links merged
+    into one `Calendar` `NavDropdown` ("Full calendar"/"View only" as its two
+    options) - new `fullCalendar` translation key added across all four
+    locale files.
+  - The "+ Add appointment"/"+ Schedule shift"/Cancel buttons moved into the
+    same settings-panel container as the view toggles and switched from
+    `rounded-lg` rectangles to the shared `rounded-full` pill shape, instead
+    of sitting in their own visually disconnected bordered box.
+- **Issue #4 — design-only**: proposed metrics/filters/time-range/drill-down/
+  scope answers written into `ISSUES.md` for sign-off; no code changed, still
+  blocked on issue #3 landing first.
+- **Verified**: `tsc --noEmit`, `eslint` (all touched files), and the full
+  `vitest` suite (19/19) all clean; migration applied and the backfill
+  spot-checked directly against the dev DB. **Not browser-click-tested** -
+  same standing caveat as the rest of this calendar's client-rendered UI; the
+  per-type button gating and drag/resize behavior are correct by code review
+  and the underlying API/DB behavior is real, but the on-screen interaction
+  hasn't been clicked through in a real browser.
+
+### Holidays reworked: per-holiday checkboxes (US + Europe) instead of one toggle per region, color key moved back to Calendar settings
+Raised directly, in stages: first "add a major European holidays setting" (alongside the existing US federal one), then "list out each one and provide the date, allow a checkbox to allow/disallow each" plus a concern about the two sets double-counting a shared holiday if both were ever turned on - and separately, "move the color key setting to the Calendar settings, and allow for two different groupings to organize everything."
+
+- **`src/lib/holidays/european.ts`** (new): major pan-European holidays computed the same way `federal.ts` computes the US 11 - Epiphany, Good Friday, Easter Sunday/Monday (real Easter-Sunday computation via the standard Gregorian/Meeus algorithm, not hardcoded), Labour Day, Assumption of Mary, All Saints' Day, St. Stephen's Day. Deliberately **excludes New Year's Day and Christmas Day** - both are observed in Europe too, but they're already in the US list under the identical name, so leaving them out of the European list means the two sets structurally can never collide on a name, with no merge-time dedup logic needed anywhere.
+- **`src/lib/holidays/catalog.ts`** (new): the single source both the calendar and the Settings page read - `getHolidayCatalog(year)` returns every known holiday (US + EU) tagged by region and dated for that year, `getEnabledHolidaysInRange(enabledNames, start, end)` filters to whichever names a tenant has turned on across the given range. `catalog.test.ts` locks in the "no two holidays ever share a name" invariant across several years.
+- **Replaced `Tenant.showFederalHolidays`/`showEuropeanHolidays` (two booleans) with `Tenant.enabledHolidayNames` (`String[]`, migration `20261002234500_replace_holiday_toggles_with_enabled_names`, hand-written since the destructive-column-drop warning requires interactive confirmation `prisma migrate dev` can't give in this environment)** - one checkbox per holiday instead of one per region. Migration backfills each existing tenant's array from their old boolean pair before dropping the columns, so no one's effective holiday set silently changed. Defaults to just the 11 US names for a new tenant, matching the old default.
+- **`HolidaySettings.tsx`** rewritten: two columns ("United States" / "Europe"), each holiday shown as its own checkbox with that year's actual date next to it (e.g. "Memorial Day — May 25"), rather than one all-or-nothing toggle per region.
+- **Color key card moved again**: back out of Staff settings and into Calendar settings (`EventColorSettings.tsx` now lives under `admin/settings/calendar/`) - a color is a calendar-display concern, not a staff-management one, and Calendar already owns other pure-display config (Holidays). Also addressed the "allow two different groupings" ask: the "Your own" tag list is no longer one flat list - it's split into a "Shifts" group and an "Appointments" group (a `BOTH`-scoped tag appears in both), so scope is visible by position instead of by reading a badge per tag. `sections.ts` descriptions updated to match (Calendar's now mentions the color key; Staff's no longer does). See `ISSUES.md` issue #2, marked resolved.
+- **Verified**: `tsc --noEmit`, `eslint` (all touched files), and the full `vitest` suite (19/19, including the two new holiday test files) all clean; migration applied and client regenerated against the local dev DB (hit the usual Windows `EPERM` query-engine-DLL file lock twice - killed stray `node.exe` processes per the documented fix both times). **Not browser-click-tested** - the per-holiday checkboxes and the two-group color-key layout are correct by code review, not yet clicked through in a real browser.
 
 ### Shift calendar redo: configurable shift-overlap + a "Group by staff" Day view
 Raised directly: shifts couldn't overlap, and the Week/Day grid got unreadable once 10+ shifts were on screen at once, with no easy way to see who's working alongside whom.

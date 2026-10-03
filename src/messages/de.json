@@ -2,6 +2,7 @@
   "AppHeader": {
     "dashboard": "Übersicht",
     "calendar": "Kalender",
+    "fullCalendar": "Vollständiger Kalender",
     "viewOnly": "Nur Ansicht",
     "staffPages": "Mitarbeiterseiten",
     "roster": "Dienstplan",
@@ -18,9 +19,18 @@
     "DE": "Deutsch",
     "FR": "Französisch"
   },
+  "CalendarTextSizePicker": {
+    "label": "Textgröße im Kalender",
+    "SMALL": "Klein",
+    "MEDIUM": "Standard",
+    "LARGE": "Groß",
+    "XLARGE": "Sehr groß"
+  },
   "AccountPage": {
     "languageSectionTitle": "Sprache",
     "languageSectionDescription": "Wähle die Sprache, die für dein gesamtes Konto verwendet wird.",
+    "calendarTextSizeSectionTitle": "Textgröße im Kalender",
+    "calendarTextSizeSectionDescription": "Wähle, wie groß der Text von Terminen im Kalender angezeigt wird.",
     "saved": "Gespeichert."
   },
   "Dashboard": {
