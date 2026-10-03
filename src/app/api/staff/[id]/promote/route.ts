@@ -26,7 +26,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
         where: { id },
         include: {
           user: {
-            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true, level: true } } },
+            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true } } },
           },
         },
       });

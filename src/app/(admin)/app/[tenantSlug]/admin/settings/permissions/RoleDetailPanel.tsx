@@ -15,7 +15,7 @@ interface Props {
   roles: RoleRow[];
   grants: Record<PermissionKey, boolean>;
   visibility: Record<string, boolean>;
-  onSaveField: (patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId" | "level">>) => Promise<void>;
+  onSaveField: (patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId">>) => Promise<void>;
   onDelete: () => Promise<void>;
   onToggleGrant: (key: PermissionKey) => void;
   onBulkToggleGrant: (keys: PermissionKey[], granted: boolean) => void;
@@ -152,26 +152,7 @@ export function RoleDetailPanel({
               ))}
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Rank
-            <input
-              key={`${role.id}-level`}
-              type="number"
-              min={0}
-              max={1000}
-              defaultValue={role.level}
-              onBlur={(e) => {
-                const value = Number(e.target.value);
-                if (Number.isFinite(value) && value !== role.level) void onSaveField({ level: value });
-              }}
-              className="w-24 rounded-md border border-gray-300 px-2 py-1.5"
-            />
-          </label>
         </div>
-        <p className="mt-2 text-xs text-gray-400">
-          Higher rank outranks lower. {role.name} can only reassign staff currently in a lower-ranked role, and only
-          into another role ranked below it.
-        </p>
       </section>
 
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -195,6 +176,7 @@ export function RoleDetailPanel({
                     <span className="text-sm text-gray-400">{category.description}</span>
                   </span>
                   <span
+                    title={`${categoryGranted} of ${categoryKeys.length} permissions in ${category.label} are granted to ${role.name}`}
                     className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums ${
                       categoryGranted === 0
                         ? "bg-gray-100 text-gray-400"
@@ -203,7 +185,7 @@ export function RoleDetailPanel({
                           : "bg-amber-50 text-amber-700"
                     }`}
                   >
-                    {categoryGranted}/{categoryKeys.length}
+                    {categoryGranted}/{categoryKeys.length} granted
                   </span>
                 </summary>
 

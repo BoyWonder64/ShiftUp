@@ -79,6 +79,11 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   EDIT_SCHEDULE_TEMPLATES: "edit",
   DELETE_SCHEDULE_TEMPLATES: "remove",
   APPLY_SCHEDULE_TEMPLATES: "apply",
+  // Not in any ACCESS_CATEGORIES list above - a Settings-page permission
+  // (Settings > Calendar), not a calendar-event action, so it has nothing
+  // to summarize here either; only needed to satisfy
+  // Record<PermissionKey, string>'s exhaustiveness.
+  EDIT_CALENDAR_SETTINGS: "edit",
 };
 
 async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId: string | null) {

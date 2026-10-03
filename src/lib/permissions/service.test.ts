@@ -5,8 +5,6 @@ import { createTestTenant, createTestRole } from "@/lib/test-support/fixtures";
 import {
   hasPermission,
   hasPermissionByRoleId,
-  canManageRoleAssignment,
-  canActOnStaffMember,
   canViewRole,
   canViewRoleById,
   listTenantRoles,
@@ -78,102 +76,6 @@ describe("permissions/service", () => {
     });
   });
 
-  describe("canManageRoleAssignment", () => {
-    it("ADMIN/SUPERADMIN can always manage role assignment", async () => {
-      await runInSystemContext(async (tx) => {
-        const role = await createTestRole(tx, tenantId, "Target");
-        expect(await canManageRoleAssignment(tx, tenantId, "ADMIN", null, null, role.id)).toBe(true);
-        expect(await canManageRoleAssignment(tx, tenantId, "SUPERADMIN", null, null, role.id)).toBe(true);
-      });
-    });
-
-    it("a STAFF actor with no roleId can never manage assignment", async () => {
-      await runInSystemContext(async (tx) => {
-        const role = await createTestRole(tx, tenantId, "Target");
-        expect(await canManageRoleAssignment(tx, tenantId, "STAFF", null, null, role.id)).toBe(false);
-      });
-    });
-
-    it("an actor can assign a role strictly below their own level", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "High", 30);
-        const newRole = await createTestRole(tx, tenantId, "Low", 10);
-        expect(await canManageRoleAssignment(tx, tenantId, "STAFF", actorRole.id, null, newRole.id)).toBe(true);
-      });
-    });
-
-    it("an actor cannot assign a role at or above their own level", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "Mid", 20);
-        const sameLevel = await createTestRole(tx, tenantId, "SameLevel", 20);
-        const higherLevel = await createTestRole(tx, tenantId, "Higher", 30);
-        expect(await canManageRoleAssignment(tx, tenantId, "STAFF", actorRole.id, null, sameLevel.id)).toBe(false);
-        expect(await canManageRoleAssignment(tx, tenantId, "STAFF", actorRole.id, null, higherLevel.id)).toBe(false);
-      });
-    });
-
-    it("an actor cannot reassign someone currently holding a role at or above their own level (blocks self-reassignment for free)", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "Mid", 20);
-        const lowRole = await createTestRole(tx, tenantId, "Low", 10);
-        // Target currently holds the actor's own role - actor can't outrank that.
-        expect(
-          await canManageRoleAssignment(tx, tenantId, "STAFF", actorRole.id, actorRole.id, lowRole.id)
-        ).toBe(false);
-      });
-    });
-
-    it("a role id from a different tenant is treated as non-existent (-Infinity level)", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "Actor", 10);
-        const foreignRole = await createTestRole(tx, otherTenantId, "Foreign", 999);
-        // The foreign role's level is -Infinity *within tenantId*, so the actor (level 10) outranks it.
-        expect(
-          await canManageRoleAssignment(tx, tenantId, "STAFF", actorRole.id, null, foreignRole.id)
-        ).toBe(true);
-        // A foreign role can never be the *actor's* role either - -Infinity can't outrank anything.
-        const realRole = await createTestRole(tx, tenantId, "Real", 5);
-        expect(
-          await canManageRoleAssignment(tx, tenantId, "STAFF", foreignRole.id, null, realRole.id)
-        ).toBe(false);
-      });
-    });
-  });
-
-  describe("canActOnStaffMember", () => {
-    it("ADMIN/SUPERADMIN can always act on staff", async () => {
-      await runInSystemContext(async (tx) => {
-        expect(await canActOnStaffMember(tx, tenantId, "ADMIN", null, "STAFF", null)).toBe(true);
-      });
-    });
-
-    it("no STAFF actor, no matter their permissions, can act on an ADMIN/SUPERADMIN target", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "TopDog", 999);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", actorRole.id, "ADMIN", null)).toBe(false);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", actorRole.id, "SUPERADMIN", null)).toBe(false);
-      });
-    });
-
-    it("a STAFF actor must outrank the target's current role", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "Actor", 20);
-        const lowerRole = await createTestRole(tx, tenantId, "Lower", 10);
-        const sameRole = await createTestRole(tx, tenantId, "Same", 20);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", actorRole.id, "STAFF", lowerRole.id)).toBe(true);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", actorRole.id, "STAFF", sameRole.id)).toBe(false);
-      });
-    });
-
-    it("denies when either side is missing a roleId", async () => {
-      await runInSystemContext(async (tx) => {
-        const actorRole = await createTestRole(tx, tenantId, "Actor", 20);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", null, "STAFF", actorRole.id)).toBe(false);
-        expect(await canActOnStaffMember(tx, tenantId, "STAFF", actorRole.id, "STAFF", null)).toBe(false);
-      });
-    });
-  });
-
   describe("canViewRole / canViewRoleById", () => {
     it("a role always sees its own data, even with no RoleVisibility row", async () => {
       await runInSystemContext(async (tx) => {
@@ -211,7 +113,7 @@ describe("permissions/service", () => {
   });
 
   describe("seedDefaultRolesForTenant", () => {
-    it("creates the 4 starter roles with the expected levels, reporting chain, permissions, and visibility", async () => {
+    it("creates the 4 starter roles with the expected reporting chain, permissions, and visibility", async () => {
       await runInSystemContext(async (tx) => {
         const tenant = await createTestTenant(tx, "seed");
         const idByName = await seedDefaultRolesForTenant(tx, tenant.id);
@@ -220,11 +122,6 @@ describe("permissions/service", () => {
 
         const roles = await tx.role.findMany({ where: { tenantId: tenant.id } });
         const byId = new Map(roles.map((r) => [r.id, r]));
-
-        expect(byId.get(idByName.Manager)?.level).toBe(30);
-        expect(byId.get(idByName.Supervisor)?.level).toBe(20);
-        expect(byId.get(idByName.Employee)?.level).toBe(10);
-        expect(byId.get(idByName.Customer)?.level).toBe(10);
 
         expect(byId.get(idByName.Employee)?.reportsToId).toBe(idByName.Supervisor);
         expect(byId.get(idByName.Supervisor)?.reportsToId).toBe(idByName.Manager);
@@ -258,8 +155,8 @@ describe("permissions/service", () => {
     it("returns this tenant's roles alphabetically, excluding other tenants'", async () => {
       await runInSystemContext(async (tx) => {
         const tenant = await createTestTenant(tx, "list-roles");
-        await tx.role.create({ data: { tenantId: tenant.id, name: "Zebra", level: 0 } });
-        await tx.role.create({ data: { tenantId: tenant.id, name: "Alpha", level: 0 } });
+        await tx.role.create({ data: { tenantId: tenant.id, name: "Zebra" } });
+        await tx.role.create({ data: { tenantId: tenant.id, name: "Alpha" } });
         await createTestRole(tx, otherTenantId, "ShouldNotAppear");
 
         const roles = await listTenantRoles(tx, tenant.id);

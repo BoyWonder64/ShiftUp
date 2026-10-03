@@ -5,6 +5,7 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { createAppointment, listAppointmentsInRange, SchedulingConflictError } from "@/modules/scheduling/service";
 import { assertCanAddAppointment, PlanLimitError } from "@/lib/licensing/limits";
+import { EVENT_COLOR_KEYS } from "@/lib/colors/eventColors";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
 
 type AppointmentWithMaybeEstimates = {
@@ -94,6 +95,7 @@ const createSchema = z.object({
   locationType: z.enum(["IN_PERSON", "ONLINE"]).default("IN_PERSON"),
   location: z.string().max(500).optional().nullable(),
   tagId: z.string().uuid().optional().nullable(),
+  colorKey: z.enum(EVENT_COLOR_KEYS).optional().nullable(),
 });
 
 export async function POST(request: NextRequest) {
@@ -136,6 +138,7 @@ export async function POST(request: NextRequest) {
           locationType: data.locationType,
           location: data.location,
           tagId: data.tagId,
+          colorKey: data.colorKey,
           createdByUserId: session.userId,
           source: "ADMIN",
         });

@@ -76,6 +76,7 @@ export interface CreateAppointmentInput {
   locationType?: "IN_PERSON" | "ONLINE";
   location?: string | null;
   tagId?: string | null;
+  colorKey?: string | null;
   createdByUserId: string;
   source: "SELF_SERVICE" | "ADMIN";
 }
@@ -105,6 +106,7 @@ export async function createAppointment(tx: Tx, tenantId: string, input: CreateA
         locationType: input.locationType ?? "IN_PERSON",
         location: input.location ?? null,
         tagId: input.tagId ?? null,
+        colorKey: input.colorKey ?? null,
         createdByUserId: input.createdByUserId,
         source: input.source,
       },

@@ -1,11 +1,19 @@
 import type { ComputedHoliday } from "@/lib/holidays/federal";
 
+export interface BlockedSpan {
+  title: string;
+  start: Date;
+  end: Date;
+}
+
 export function CalendarLegend({
   legendItems,
   holidaysInView,
+  blockedInView,
 }: {
   legendItems: Array<{ key: string; label: string; color: string }>;
   holidaysInView: ComputedHoliday[];
+  blockedInView: BlockedSpan[];
 }) {
   return (
     <>
@@ -25,6 +33,18 @@ export function CalendarLegend({
             <span key={`${h.name}-${h.date.toISOString()}`}>
               {i > 0 && ", "}
               {h.name} ({h.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })})
+            </span>
+          ))}
+        </p>
+      )}
+
+      {blockedInView.length > 0 && (
+        <p className="text-xs text-gray-500">
+          <span className="font-medium text-gray-600">Blocked in view:</span>{" "}
+          {blockedInView.map((b, i) => (
+            <span key={`${b.title}-${b.start.toISOString()}`}>
+              {i > 0 && ", "}
+              {b.title} ({b.start.toLocaleDateString("en-US", { month: "short", day: "numeric" })})
             </span>
           ))}
         </p>

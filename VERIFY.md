@@ -15,6 +15,17 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **Blocked time + holiday "Block" toggle.** Check Settings > Calendar:
+  under "Holidays", check an enabled holiday's new "Block" checkbox and
+  confirm the calendar's Month view tints that day grey (not the usual
+  amber) and Week/Day view shows it as a full-day grey striped block that
+  you can still click through to create an appointment/shift (visual only,
+  not a hard limit). Same check for a custom holiday's "Block" checkbox.
+  Then try the new "Blocked time" card below it: add a time range (e.g.
+  12:00-1:00 PM today) with a label, confirm it shows as that exact striped
+  range in Week/Day view with the label as its title, and confirm "Remove"
+  deletes it. Confirm a role without `EDIT_CALENDAR_SETTINGS` can't see/save
+  either card, same as the existing Holidays/Event colors cards.
 - **Calendar hours — configurable visible time range.** Check: Settings >
   Calendar > "Calendar hours", set a start/end time narrower than the full
   day, save, then open the calendar's Week/Day view and confirm the grid
@@ -22,6 +33,34 @@ deliberately leaves that out so it stays skimmable.
   the toolbar's AM/PM "Hours" toggle still jumps to the start/midpoint of
   your configured range, and "Reset to full day" restores the original
   behavior.
+- **Calendar Settings permission + Calendar hours paid-gating.** Check, on a
+  FREE-plan tenant: Settings > Calendar shows an upgrade card in place of
+  "Calendar hours" (Holidays/Event colors still work normally); confirm
+  trying to save hours anyway (e.g. via devtools) still 403s. On a paid
+  tenant: grant a non-ADMIN role `EDIT_CALENDAR_SETTINGS` (Settings >
+  Permissions), log in as that role, confirm Settings > Calendar is now
+  reachable and all three cards (Holidays, Event colors, Calendar hours)
+  actually save; confirm a role *without* it still can't reach the page.
+  Confirm Settings > Staff's promote/demote buttons are still ADMIN-only
+  regardless of any permission that role holds (unchanged, confirmed
+  on purpose).
+- **Staff role changes — promote, demote, and reassign are ADMIN-only.**
+  Check: Settings > Staff. As ADMIN: add a new staff member, "Make admin" on
+  a STAFF row, demote that same account back to STAFF via the role-picker +
+  "Confirm" control, and reassign a STAFF member's role via the dropdown in
+  the Role column. Confirm you can't demote/promote/reassign/remove
+  yourself. As a STAFF user holding `VIEW_STAFF` (with or without
+  `CREATE_STAFF`/`EDIT_STAFF`/`DELETE_STAFF` also granted - see
+  `PERMISSIONS.md`'s "worth improving" #2): confirm Settings > Staff shows
+  the directory read-only - no "Add staff" form, no role dropdown (just the
+  role name as text), no "Remove" button; try `POST /api/staff`,
+  `PATCH`/`DELETE /api/staff/[id]` directly via `curl`/devtools too and
+  confirm all three 403 regardless of which of those three permissions that
+  role holds.
+- **Per-user calendar text size.** Check: Settings > Account, change the
+  calendar event text size, open the calendar, confirm event text is
+  visibly smaller/larger. Confirm it's per-user (a different logged-in user
+  at the same tenant keeps their own separate size).
 
 ## Bug fixes (from ISSUES.md)
 
@@ -132,9 +171,15 @@ These aren't bugs, just decisions made during the build that were never
 explicitly signed off on. If you're fine with them, they can be deleted from
 here; if not, flag it and they become real TODO items.
 
-- **Role hierarchy**: `MANAGER` outranks `SUPERVISOR`, and job-estimate
-  visibility defaults to `ADMIN`/`MANAGER` only (not `SUPERVISOR`). Confirm
-  this is the ranking you want.
+- **Role hierarchy**: `MANAGER` outranks `SUPERVISOR` outranks `EMPLOYEE`/
+  `CUSTOMER`, and job-estimate visibility defaults to `ADMIN`/`MANAGER` only
+  (not `SUPERVISOR`). **Now load-bearing, not just cosmetic** - these are the
+  seeded `Role.level` values a brand-new tenant starts with, which actually
+  drive who can promote/demote/reassign whom (see PROGRESS.md's "Staff role
+  changes" entry) - worth double-checking sooner rather than later. Check:
+  Settings → Permissions → each starter role's rank field matches what you'd
+  want enforced, and re-rank/edit if not (editable per-tenant, this is just
+  the starting default).
 - **PTO "hours worked" definition**: the calendar week containing the shift.
   Confirm that's the right definition (vs. e.g. a pay-period week, or a
   rolling 7 days).

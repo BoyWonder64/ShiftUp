@@ -11,6 +11,7 @@ import {
   SchedulingConflictError,
 } from "@/modules/scheduling/service";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
+import { EVENT_COLOR_KEYS } from "@/lib/colors/eventColors";
 
 export async function GET(
   _request: NextRequest,
@@ -74,6 +75,11 @@ const patchSchema = z.object({
   location: z.string().max(500).nullable().optional(),
   staffId: z.string().uuid().optional(),
   tagId: z.string().uuid().nullable().optional(),
+  colorKey: z.enum(EVENT_COLOR_KEYS).nullable().optional(),
+  clientId: z.string().uuid().nullable().optional(),
+  serviceTypeId: z.string().uuid().nullable().optional(),
+  priceCharged: z.number().min(0).nullable().optional(),
+  paymentStatus: z.enum(["UNPAID", "PAID", "WAIVED", "REFUNDED"]).optional(),
 });
 
 /** Handles drag (time shift), resize (duration change), cancel, and job-estimate edits - all as one PATCH. */
@@ -100,8 +106,22 @@ export async function PATCH(
           data.estimatedDurationMinutes !== undefined || data.estimatedValue !== undefined;
         const locationFieldsRequested = data.locationType !== undefined || data.location !== undefined;
         const tagFieldRequested = data.tagId !== undefined;
+        const colorKeyFieldRequested = data.colorKey !== undefined;
+        const bookingFieldsRequested =
+          data.clientId !== undefined ||
+          data.serviceTypeId !== undefined ||
+          data.priceCharged !== undefined ||
+          data.paymentStatus !== undefined;
         const wantsReschedule = Boolean(data.startTime && data.endTime);
         const wantsReassign = data.staffId !== undefined;
+        const wantsAnyEdit =
+          wantsReschedule ||
+          wantsReassign ||
+          locationFieldsRequested ||
+          tagFieldRequested ||
+          colorKeyFieldRequested ||
+          estimateFieldsRequested ||
+          bookingFieldsRequested;
 
         // Needed up front (rather than inside cancelAppointment/reschedule-
         // Appointment, which don't know about permissions) so the
@@ -122,7 +142,19 @@ export async function PATCH(
           return cancelAppointment(tx, id);
         }
 
-        if (wantsReschedule || locationFieldsRequested || tagFieldRequested || wantsReassign) {
+        // Settings > Calendar > "Allow editing booked events" - a tenant-wide
+        // master switch, independent of (and checked before) the per-role
+        // EDIT_SHIFTS/EDIT_APPOINTMENTS/EDIT_JOB_ESTIMATES permissions below.
+        // Never applies to cancelling (handled above, already returned).
+        if (wantsAnyEdit) {
+          const tenant = await tx.tenant.findUniqueOrThrow({
+            where: { id: session.tenantId! },
+            select: { allowEditingBookedEvents: true },
+          });
+          if (!tenant.allowEditingBookedEvents) throw new Error("EDITING_DISABLED");
+        }
+
+        if (wantsReschedule || locationFieldsRequested || tagFieldRequested || colorKeyFieldRequested || wantsReassign || bookingFieldsRequested) {
           const canEdit = await hasPermission(
             tx,
             session.tenantId,
@@ -149,7 +181,7 @@ export async function PATCH(
           });
         }
 
-        if (estimateFieldsRequested || locationFieldsRequested || tagFieldRequested) {
+        if (estimateFieldsRequested || locationFieldsRequested || tagFieldRequested || colorKeyFieldRequested || bookingFieldsRequested) {
           return tx.appointment.update({
             where: { id },
             data: {
@@ -160,6 +192,11 @@ export async function PATCH(
               ...(data.locationType !== undefined && { locationType: data.locationType }),
               ...(data.location !== undefined && { location: data.location }),
               ...(tagFieldRequested && { tagId: data.tagId }),
+              ...(colorKeyFieldRequested && { colorKey: data.colorKey }),
+              ...(data.clientId !== undefined && { clientId: data.clientId }),
+              ...(data.serviceTypeId !== undefined && { serviceTypeId: data.serviceTypeId }),
+              ...(data.priceCharged !== undefined && { priceCharged: data.priceCharged }),
+              ...(data.paymentStatus !== undefined && { paymentStatus: data.paymentStatus }),
             },
           });
         }
@@ -175,6 +212,12 @@ export async function PATCH(
     }
     if (err instanceof Error && err.message === "FORBIDDEN") {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    if (err instanceof Error && err.message === "EDITING_DISABLED") {
+      return NextResponse.json(
+        { error: "Editing booked events is turned off for this account." },
+        { status: 403 }
+      );
     }
     if (err instanceof SchedulingConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

@@ -8,7 +8,7 @@ import {
   type View,
 } from "react-big-calendar";
 import withDragAndDrop, { type EventInteractionArgs } from "react-big-calendar/lib/addons/dragAndDrop";
-import { format, parse, startOfWeek, getDay } from "date-fns";
+import { addDays, format, parse, startOfWeek, getDay } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
@@ -19,6 +19,7 @@ import {
   DEFAULT_EVENT_COLORS,
   EVENT_COLOR_LABELS,
   buildColorTriples,
+  isEventColorKey,
   resolveEventColor,
   resolveEventColors,
   type ColorTriple,
@@ -98,7 +99,10 @@ function resolveAppointmentColor(
   appt: ApiAppointment,
   colors: Record<EventColorKey, ColorTriple>
 ): ColorTriple {
-  return resolveEventColor({ status: appt.status, isShift: isShift(appt), tagColor: appt.tag?.color }, colors);
+  return resolveEventColor(
+    { status: appt.status, isShift: isShift(appt), tagColor: appt.tag?.color, colorKey: appt.colorKey },
+    colors
+  );
 }
 
 const BASE_LEGEND_KEYS: EventColorKey[] = ["appointment", "shift", "completed", "noShow", "cancelled"];
@@ -135,6 +139,13 @@ export interface HolidayOption {
   name: string;
   date: string;
   recurring: boolean;
+  blocked: boolean;
+}
+export interface BlockedTimeOption {
+  id: string;
+  label: string | null;
+  startTime: string;
+  endTime: string;
 }
 export interface ApiAppointment {
   id: string;
@@ -152,6 +163,7 @@ export interface ApiAppointment {
   location: string | null;
   tagId: string | null;
   tag: TagOption | null;
+  colorKey: string | null;
   client: ClientOption | null;
   serviceType: ServiceTypeOption | null;
   staff: StaffOption;
@@ -190,10 +202,25 @@ const DRAFT_RESOURCE: ApiAppointment = {
   location: null,
   tagId: null,
   tag: null,
+  colorKey: null,
   client: null,
   serviceType: null,
   staff: { id: "", displayName: "" },
 };
+
+/**
+ * Blocked-time spans (both the holiday "Block" checkbox and the Settings >
+ * Calendar > "Blocked time" entries) render as react-big-calendar
+ * `backgroundEvents` - visually distinct from a real appointment/shift and,
+ * via `pointerEvents: "none"` in eventPropGetter below, non-interactive, so
+ * they never intercept a click meant for the slot/grid underneath (this
+ * feature is a visual cue only, never a hard scheduling constraint - see
+ * BlockedTime's schema doc comment). `resource` is never read for these
+ * ids, same as DRAFT_RESOURCE above - it only exists to satisfy
+ * CalendarEvent's shape.
+ */
+const BLOCKED_EVENT_ID_PREFIX = "__blocked__";
+const BLOCKED_RESOURCE: ApiAppointment = { ...DRAFT_RESOURCE, id: BLOCKED_EVENT_ID_PREFIX, status: "BLOCKED" };
 
 // The draft event's "(drag to adjust)" hint is for people who haven't
 // figured out the draft block is draggable yet - once someone's created 10
@@ -247,6 +274,34 @@ export function isShift(appt: ApiAppointment): boolean {
 function tagsForMode(tags: TagOption[], mode: EntryMode): TagOption[] {
   const scope = mode === "shift" ? "SHIFT" : "APPOINTMENT";
   return tags.filter((t) => t.appliesTo === "BOTH" || t.appliesTo === scope);
+}
+
+/**
+ * The "Color key" picker combines two different kinds of option in one
+ * `<select>`: a custom `EventTag` (value = its id, unchanged) and one of the
+ * 5 built-in keys from Settings > Event colors (value = this prefix + the
+ * key, since a bare key could collide with a real tag id). `colorValueFor`/
+ * `parseColorValue` convert between that single combined value and the two
+ * underlying nullable fields (`tagId`/`colorKey`) the API actually stores -
+ * exactly one of which is ever non-null at a time.
+ */
+const BASE_COLOR_VALUE_PREFIX = "base:";
+
+/** "completed"/"noShow"/"cancelled" apply to either kind of entry; "appointment"/"shift" only make sense for their own kind. */
+function baseColorOptionsFor(mode: EntryMode): EventColorKey[] {
+  return BASE_LEGEND_KEYS.filter((key) => key !== (mode === "shift" ? "appointment" : "shift"));
+}
+
+function colorValueFor(entry: { tagId: string | null; colorKey: string | null }): string {
+  if (entry.colorKey) return `${BASE_COLOR_VALUE_PREFIX}${entry.colorKey}`;
+  return entry.tagId ?? "";
+}
+
+function parseColorValue(value: string): { tagId: string | null; colorKey: string | null } {
+  if (value.startsWith(BASE_COLOR_VALUE_PREFIX)) {
+    return { tagId: null, colorKey: value.slice(BASE_COLOR_VALUE_PREFIX.length) };
+  }
+  return { tagId: value || null, colorKey: null };
 }
 
 /** Shared with RosterView.tsx, which renders the same chip label without the "(staff name)" suffix - each chip already sits under that staff member's row. */
@@ -337,8 +392,30 @@ function Modal({
   );
 }
 
+/** "Jane Smith" -> "JS"; single-word names fall back to its first two letters. Used by the event's staff avatar badge. */
+function staffInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Fixed palette, cycled by a hash of staffId - gives each staff member a
+// consistent color for their avatar badge across the whole calendar, without
+// touching eventPropGetter's status/tag-based background color.
+const STAFF_AVATAR_COLORS = ["#6366f1", "#059669", "#d97706", "#db2777", "#0891b2", "#7c3aed", "#dc2626", "#4b5563"];
+
+function staffAvatarColor(staffId: string): string {
+  let hash = 0;
+  for (let i = 0; i < staffId.length; i++) hash = (hash * 31 + staffId.charCodeAt(i)) >>> 0;
+  return STAFF_AVATAR_COLORS[hash % STAFF_AVATAR_COLORS.length];
+}
+
 function toEvent(appt: ApiAppointment): CalendarEvent {
-  const title = `${appointmentTitle(appt)} (${appt.staff.displayName})`;
+  // Staff name leads (used by Agenda view and screen readers, which render
+  // this plain string rather than EventContent's richer markup below) so
+  // it's the part that survives truncation, not the part ellipsis eats first.
+  const title = `${appt.staff.displayName}: ${appointmentTitle(appt)}`;
   return {
     id: appt.id,
     title,
@@ -435,6 +512,7 @@ export function SchedulingCalendar({
     buildColorTriples(DEFAULT_EVENT_COLORS)
   );
   const [enabledHolidayNames, setEnabledHolidayNames] = useState<string[]>([]);
+  const [blockedHolidayNames, setBlockedHolidayNames] = useState<string[]>([]);
   // Admin-configurable (Settings > "Shift form") - whether the shift
   // create/detail forms show these fields at all. Never applies to
   // mode === "appointment", which has its own always-shown equivalents.
@@ -446,11 +524,17 @@ export function SchedulingCalendar({
   // the real value loads, same as every other tenant setting here.
   const [calendarStartMinute, setCalendarStartMinute] = useState(0);
   const [calendarEndMinute, setCalendarEndMinute] = useState(1440);
+  // Settings > Calendar > "Allow editing booked events" - tenant-wide master
+  // switch, ANDed with the per-role EDIT_SHIFTS/EDIT_APPOINTMENTS/
+  // EDIT_JOB_ESTIMATES permissions below rather than replacing them. Defaults
+  // to true (today's existing behavior) until the real value loads.
+  const [allowEditingBookedEvents, setAllowEditingBookedEvents] = useState(true);
   // The tenant's real roles (Settings > "Roles") - used by the inline
   // "+ Add new staff member" role dropdown.
   const [roles, setRoles] = useState<TenantRoleOption[]>([]);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [holidays, setHolidays] = useState<HolidayOption[]>([]);
+  const [blockedTimes, setBlockedTimes] = useState<BlockedTimeOption[]>([]);
   const [staffFilter, setStaffFilter] = useState<string>(initialStaffId ?? "all");
   // Settings > Permissions > VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS - "all" is
   // only ever an option when the viewer actually holds the relevant
@@ -468,6 +552,20 @@ export function SchedulingCalendar({
   // `onView` props are passed.
   const [currentDate, setCurrentDate] = useState(() => new Date());
   const [currentView, setCurrentView] = useState<View>("week");
+  // Measured (rather than hardcoded) because the toolbar's own height varies
+  // with how many of its controls are rendered and whether they wrap onto a
+  // second line at narrower widths - the mini calendar/legend column below
+  // uses this to pin itself directly under the toolbar instead of either
+  // overlapping it or guessing a fixed offset that's wrong at some width.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarHeight, setToolbarHeight] = useState(0);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => setToolbarHeight(entries[0].contentRect.height));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [range, setRange] = useState<{ start: Date; end: Date }>(() => {
     const now = new Date();
     const start = startOfWeek(now, { locale: enUS });
@@ -572,6 +670,15 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadBlockedTimes = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ blockedTimes: BlockedTimeOption[] }>("/api/blocked-time");
+      setBlockedTimes(data.blockedTimes);
+    } catch {
+      // Not fatal - same reasoning as loadTags.
+    }
+  }, []);
+
   const loadCalendarTextSize = useCallback(async () => {
     try {
       const data = await fetchJson<{ calendarTextSize: CalendarTextSize }>("/api/me/calendar-text-size");
@@ -602,11 +709,13 @@ export function SchedulingCalendar({
               enableMapsNavigation: boolean;
               eventColors: Record<EventColorKey, string>;
               enabledHolidayNames: string[];
+              blockedHolidayNames: string[];
               showJobTypeOnShiftForm: boolean;
               showJobEstimateOnShiftForm: boolean;
               showColorKeyOnShiftForm: boolean;
               calendarStartMinute: number;
               calendarEndMinute: number;
+              allowEditingBookedEvents: boolean;
             };
           }>("/api/tenant-settings"),
         ]);
@@ -616,17 +725,27 @@ export function SchedulingCalendar({
         setEnableMapsNavigation(settingsData.settings.enableMapsNavigation);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
         setEnabledHolidayNames(settingsData.settings.enabledHolidayNames);
+        setBlockedHolidayNames(settingsData.settings.blockedHolidayNames);
         setShowJobTypeOnShiftForm(settingsData.settings.showJobTypeOnShiftForm);
         setShowJobEstimateOnShiftForm(settingsData.settings.showJobEstimateOnShiftForm);
         setShowColorKeyOnShiftForm(settingsData.settings.showColorKeyOnShiftForm);
         setCalendarStartMinute(settingsData.settings.calendarStartMinute);
         setCalendarEndMinute(settingsData.settings.calendarEndMinute);
+        setAllowEditingBookedEvents(settingsData.settings.allowEditingBookedEvents);
       } catch {
         setError("Couldn't load service data.");
       }
-      await Promise.all([loadStaff(), loadClients(), loadTags(), loadHolidays(), loadRoles(), loadCalendarTextSize()]);
+      await Promise.all([
+        loadStaff(),
+        loadClients(),
+        loadTags(),
+        loadHolidays(),
+        loadBlockedTimes(),
+        loadRoles(),
+        loadCalendarTextSize(),
+      ]);
     })();
-  }, [loadStaff, loadClients, loadTags, loadHolidays, loadRoles, loadCalendarTextSize]);
+  }, [loadStaff, loadClients, loadTags, loadHolidays, loadBlockedTimes, loadRoles, loadCalendarTextSize]);
 
   useEffect(() => {
     (async () => {
@@ -747,8 +866,12 @@ export function SchedulingCalendar({
   // rather than a single flat canEdit/canCancel/canCreate boolean.
   const canCreateShift = !readOnly && (permissions?.CREATE_SHIFTS ?? false);
   const canCreateAppointment = !readOnly && (permissions?.CREATE_APPOINTMENTS ?? false);
-  const canEditShift = !readOnly && (permissions?.EDIT_SHIFTS ?? false);
-  const canEditAppointment = !readOnly && (permissions?.EDIT_APPOINTMENTS ?? false);
+  // Also ANDed with Settings > Calendar > "Allow editing booked events" - a
+  // tenant-wide master switch that can lock booked events in place for
+  // everyone regardless of role, independent of the per-role EDIT_SHIFTS/
+  // EDIT_APPOINTMENTS permissions themselves.
+  const canEditShift = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_SHIFTS ?? false);
+  const canEditAppointment = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_APPOINTMENTS ?? false);
   const canCancelShift = !readOnly && (permissions?.CANCEL_SHIFTS ?? false);
   const canCancelAppointment = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
   // Generic "is the Create group worth showing at all" / "can anything on
@@ -842,6 +965,21 @@ export function SchedulingCalendar({
 
   const eventPropGetter = useCallback(
     (event: CalendarEvent) => {
+      if (event.id.startsWith(BLOCKED_EVENT_ID_PREFIX)) {
+        return {
+          style: {
+            backgroundColor: "color-mix(in srgb, #6b7280 25%, transparent)",
+            backgroundImage:
+              "repeating-linear-gradient(45deg, color-mix(in srgb, #6b7280 18%, transparent) 0, color-mix(in srgb, #6b7280 18%, transparent) 6px, transparent 6px, transparent 12px)",
+            border: "none",
+            color: "#4b5563",
+            boxShadow: "none",
+            // Decorative only (see BLOCKED_RESOURCE's doc comment) - never
+            // intercepts a click meant for the real slot/grid underneath.
+            pointerEvents: "none" as const,
+          },
+        };
+      }
       if (event.id === DRAFT_EVENT_ID) {
         // Neutral gray while `pendingSlot` is up and the mode is still
         // undecided (draftSlot.mode is undefined then) - blue/purple would
@@ -905,14 +1043,72 @@ export function SchedulingCalendar({
     [holidaysInView]
   );
 
+  // Same merge as holidaysInView above, narrowed to just the ones also
+  // marked "Block" (Tenant.blockedHolidayNames for catalog holidays,
+  // Holiday.blocked for custom ones) - a blocked-but-not-enabled catalog
+  // name has no effect (see blockedHolidayNames' schema doc comment), so
+  // this only ever intersects with what's already enabled.
+  const blockedHolidaysInView = useMemo<ComputedHoliday[]>(() => {
+    const blockedEnabledNames = enabledHolidayNames.filter((n) => blockedHolidayNames.includes(n));
+    const enabled = getEnabledHolidaysInRange(blockedEnabledNames, range.start, range.end);
+    const custom = getCustomHolidaysInRange(holidays.filter((h) => h.blocked), range.start, range.end);
+    return [...enabled, ...custom];
+  }, [range, enabledHolidayNames, blockedHolidayNames, holidays]);
+
+  const blockedHolidayDateKeys = useMemo(
+    () => new Set(blockedHolidaysInView.map((h) => h.date.toDateString())),
+    [blockedHolidaysInView]
+  );
+
+  // Settings > Calendar > "Blocked time" entries that actually fall within
+  // the visible range - narrowed here (rather than sending all of them to
+  // the grid) for the same reason loadAppointments scopes to `range`.
+  const blockedTimesInView = useMemo(
+    () =>
+      blockedTimes.filter(
+        (b) => new Date(b.startTime) < range.end && new Date(b.endTime) > range.start
+      ),
+    [blockedTimes, range]
+  );
+
+  // Rendered as backgroundEvents (Week/Day only - Month has no such concept,
+  // it only ever tints a whole day via dayPropGetter below) so a partial-day
+  // block (e.g. a lunch closure) shows as the actual hour range rather than
+  // tinting the entire day.
+  const blockedBackgroundEvents = useMemo<CalendarEvent[]>(() => {
+    const fromHolidays = blockedHolidaysInView.map((h) => ({
+      id: `${BLOCKED_EVENT_ID_PREFIX}holiday-${h.name}-${h.date.toISOString()}`,
+      title: `${h.name} (closed)`,
+      start: h.date,
+      end: addDays(h.date, 1),
+      resource: BLOCKED_RESOURCE,
+    }));
+    const fromBlockedTime = blockedTimesInView.map((b) => ({
+      id: `${BLOCKED_EVENT_ID_PREFIX}${b.id}`,
+      title: b.label || "Blocked",
+      start: new Date(b.startTime),
+      end: new Date(b.endTime),
+      resource: BLOCKED_RESOURCE,
+    }));
+    return [...fromHolidays, ...fromBlockedTime];
+  }, [blockedHolidaysInView, blockedTimesInView]);
+
   const dayPropGetter = useCallback(
     (date: Date) => {
+      const blocked =
+        blockedHolidayDateKeys.has(date.toDateString()) ||
+        blockedTimesInView.some((b) => new Date(b.startTime) < addDays(date, 1) && new Date(b.endTime) > date);
+      if (blocked) {
+        return {
+          style: { backgroundColor: "color-mix(in srgb, #6b7280 14%, white)" },
+        };
+      }
       if (!holidayDateKeys.has(date.toDateString())) return {};
       return {
         style: { backgroundColor: "color-mix(in srgb, #f59e0b 8%, white)" },
       };
     },
-    [holidayDateKeys]
+    [holidayDateKeys, blockedHolidayDateKeys, blockedTimesInView]
   );
 
   // Base status/type colors plus one legend entry per custom tag, so a tag's
@@ -981,19 +1177,45 @@ export function SchedulingCalendar({
 
   const showDragHint = creationCount < 10;
 
-  // Custom event-content renderer only exists to give the draft event's
-  // "(drag to adjust)" hint its own smaller, lighter styling (a plain
-  // `title` string can't be partially styled) and to drop that hint
-  // entirely once the viewer has created enough entries to not need it.
-  // Every other event just falls back to its plain title.
+  // Custom event-content renderer. Gives the draft event's "(drag to
+  // adjust)" hint its own smaller, lighter styling (a plain `title` string
+  // can't be partially styled) and drops that hint once the viewer has
+  // created enough entries to not need it. For every real appointment/shift,
+  // also leads with a small colored initials badge + the staff member's name
+  // (bold) ahead of the client/service text - react-big-calendar's own CSS
+  // forces event content onto one truncated line (`.rbc-event-content`:
+  // white-space: nowrap + text-overflow: ellipsis), which used to eat the
+  // "(staff name)" suffix first on anything but a wide event box. The badge
+  // is a flex-shrink-0 sibling so it's never clipped, and the name now comes
+  // first in the text that does truncate.
   const EventContent = useCallback(
     ({ event }: { event: CalendarEvent }) => {
-      if (event.id !== DRAFT_EVENT_ID) return <>{event.title}</>;
+      if (event.id === DRAFT_EVENT_ID) {
+        return (
+          <>
+            {event.title}
+            {showDragHint && <span className="ml-1 text-[10px] opacity-75">(drag to adjust)</span>}
+          </>
+        );
+      }
+      if (event.id.startsWith(BLOCKED_EVENT_ID_PREFIX)) return <>{event.title}</>;
+
+      const appt = event.resource;
+      const staffName = appt.staff.displayName;
       return (
-        <>
-          {event.title}
-          {showDragHint && <span className="ml-1 text-[10px] opacity-75">(drag to adjust)</span>}
-        </>
+        <span className="flex min-w-0 items-center gap-1">
+          <span
+            className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
+            style={{ backgroundColor: staffAvatarColor(appt.staffId) }}
+            title={staffName}
+          >
+            {staffInitials(staffName)}
+          </span>
+          <span className="min-w-0 flex-1 truncate">
+            <span className="font-semibold">{staffName}</span>
+            <span className="opacity-80"> · {appointmentTitle(appt)}</span>
+          </span>
+        </span>
       );
     },
     [showDragHint]
@@ -1023,7 +1245,10 @@ export function SchedulingCalendar({
           once it scrolls to that point, instead of scrolling away with the
           page - switching a filter or hitting "Add appointment" no longer
           means scrolling all the way back up past the calendar grid first. */}
-      <div className="sticky top-14 z-[9] flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 shadow-sm">
+      <div
+        ref={toolbarRef}
+        className="sticky top-14 z-[9] flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 shadow-sm"
+      >
         {/* One cohesive settings panel for every control (view toggles plus
             the create buttons) - grouped with a micro-label per control, all
             sharing the same pill shape, instead of the create buttons sitting
@@ -1273,6 +1498,7 @@ export function SchedulingCalendar({
                 <DnDCalendar
                   localizer={localizer}
                   events={calendarEvents}
+                  backgroundEvents={blockedBackgroundEvents}
                   startAccessor="start"
                   endAccessor="end"
                   date={currentDate}
@@ -1373,9 +1599,21 @@ export function SchedulingCalendar({
           </div>
         </div>
 
-        <div className="flex w-full flex-col gap-4 lg:w-[280px] lg:shrink-0">
+        {/* Pinned the same way the toolbar above is (`sticky top-14`) so it
+            doesn't scroll away with the (often much taller) calendar grid -
+            `lg:self-start` is required alongside `lg:sticky` here because
+            this row's flex items otherwise stretch to match the grid's
+            height, which would leave nothing for "sticky" to actually do. */}
+        <div
+          className="flex w-full flex-col gap-4 lg:w-[280px] lg:shrink-0 lg:sticky lg:self-start"
+          style={{ top: `calc(3.5rem + ${toolbarHeight}px + 1rem)` }}
+        >
           <MiniMonthCalendar currentDate={currentDate} range={range} onNavigateToDate={setCurrentDate} />
-          <CalendarLegend legendItems={legendItems} holidaysInView={holidaysInView} />
+          <CalendarLegend
+            legendItems={legendItems}
+            holidaysInView={holidaysInView}
+            blockedInView={blockedBackgroundEvents}
+          />
         </div>
       </div>
 
@@ -1474,6 +1712,7 @@ export function SchedulingCalendar({
           <AppointmentDetailPanel
             appointment={selected}
             permissions={permissions}
+            allowEditingBookedEvents={allowEditingBookedEvents}
             canCancel={canCancelEvent(selected)}
             canEdit={canEditEvent(selected)}
             canFindCoverage={canEditEvent(selected)}
@@ -1484,6 +1723,9 @@ export function SchedulingCalendar({
             showColorKey={showColorKeyOnShiftForm}
             colorTriples={colorTriples}
             tags={tags}
+            staff={staff}
+            serviceTypes={serviceTypes}
+            clients={clients}
             canCreateTag={isShift(selected) ? canCreateShift : canCreateAppointment}
             onTagCreated={loadTags}
             onClose={() => setSelected(null)}
@@ -1570,7 +1812,7 @@ function AppointmentDetailPanel({
   const [saving, setSaving] = useState(false);
   const entryMode: EntryMode = isShift(appointment) ? "shift" : "appointment";
   const visibleTags = tagsForMode(tags, entryMode);
-  const [tagId, setTagId] = useState(appointment.tagId ?? "");
+  const [colorValue, setColorValue] = useState(() => colorValueFor(appointment));
   const [savingTag, setSavingTag] = useState(false);
   const [showNewTagForm, setShowNewTagForm] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -1582,13 +1824,13 @@ function AppointmentDetailPanel({
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
 
-  async function saveTag(id: string) {
+  async function saveColorValue(value: string) {
     setSavingTag(true);
     try {
       await fetchJson(`/api/appointments/${appointment.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tagId: id || null }),
+        body: JSON.stringify(parseColorValue(value)),
       });
       onChanged();
     } finally {
@@ -1610,7 +1852,8 @@ function AppointmentDetailPanel({
     onTagCreated();
     setShowNewTagForm(false);
     setNewTagName("");
-    await saveTag(tag.id);
+    setColorValue(tag.id);
+    await saveColorValue(tag.id);
   }
 
   async function findCoverage() {
@@ -1737,32 +1980,51 @@ function AppointmentDetailPanel({
         <h3 className="mb-2 text-sm font-medium text-primary-700">Color key</h3>
         {canEdit ? (
           <select
-            value={tagId}
+            value={colorValue}
             onChange={(e) => {
               const next = e.target.value;
               if (next === NEW_TAG_VALUE) {
                 setShowNewTagForm(true);
                 return;
               }
-              setTagId(next);
+              setColorValue(next);
               setShowNewTagForm(false);
-              void saveTag(next);
+              void saveColorValue(next);
             }}
             disabled={savingTag}
             className="rounded-md border border-gray-300 px-2 py-1 text-sm"
           >
             <option value="">No color key</option>
-            {visibleTags.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-              </option>
-            ))}
+            <optgroup label="Built-in">
+              {baseColorOptionsFor(entryMode).map((key) => (
+                <option key={key} value={`${BASE_COLOR_VALUE_PREFIX}${key}`}>
+                  {EVENT_COLOR_LABELS[key]}
+                </option>
+              ))}
+            </optgroup>
+            {visibleTags.length > 0 && (
+              <optgroup label="Custom">
+                {visibleTags.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
             {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new color key</option>}
           </select>
         ) : appointment.tag ? (
           <span className="inline-flex items-center gap-1.5 text-sm">
             <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: appointment.tag.color }} />
             {appointment.tag.name}
+          </span>
+        ) : appointment.colorKey && isEventColorKey(appointment.colorKey) ? (
+          <span className="inline-flex items-center gap-1.5 text-sm">
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: colorTriples[appointment.colorKey].bg }}
+            />
+            {EVENT_COLOR_LABELS[appointment.colorKey]}
           </span>
         ) : (
           <span className="text-sm text-gray-400">No color key</span>
@@ -2002,7 +2264,7 @@ function CreateEntryPanel({
   const [newStaffRoleId, setNewStaffRoleId] = useState(() => roles[0]?.id ?? "");
   const [serviceTypeId, setServiceTypeId] = useState("");
   const visibleTags = tagsForMode(tags, mode);
-  const [tagId, setTagId] = useState("");
+  const [colorValue, setColorValue] = useState("");
   const [showNewTagForm, setShowNewTagForm] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagColor, setNewTagColor] = useState("#2563eb");
@@ -2139,8 +2401,9 @@ function CreateEntryPanel({
         onStaffCreated();
       }
 
-      let resolvedTagId: string | null = tagId || null;
-      if (tagId === NEW_TAG_VALUE) {
+      let resolvedTagId: string | null = null;
+      let resolvedColorKey: string | null = null;
+      if (colorValue === NEW_TAG_VALUE) {
         if (newTagName.trim()) {
           const { tag } = await fetchJson<{ tag: { id: string } }>("/api/event-tags", {
             method: "POST",
@@ -2153,9 +2416,9 @@ function CreateEntryPanel({
           });
           resolvedTagId = tag.id;
           onTagCreated();
-        } else {
-          resolvedTagId = null;
         }
+      } else {
+        ({ tagId: resolvedTagId, colorKey: resolvedColorKey } = parseColorValue(colorValue));
       }
 
       let clientId: string | null = null;

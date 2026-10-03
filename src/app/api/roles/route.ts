@@ -14,7 +14,7 @@ export async function GET() {
     const roles = await runInTenantContext(session.tenantId, session.userId, session.role, (tx) =>
       tx.role.findMany({
         where: { tenantId: session.tenantId },
-        select: { id: true, name: true, description: true, reportsToId: true, level: true },
+        select: { id: true, name: true, description: true, reportsToId: true },
         orderBy: { name: "asc" },
       })
     );
@@ -32,7 +32,6 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(MAX_NAME_LENGTH),
   description: z.string().trim().max(MAX_DESCRIPTION_LENGTH).optional().nullable(),
   reportsToId: z.string().uuid().optional().nullable(),
-  level: z.number().int().min(0).max(1000).optional(),
 });
 
 // Creating/editing the tenant's role structure is ADMIN-only, same reasoning
@@ -65,7 +64,6 @@ export async function POST(request: NextRequest) {
           name: data.name,
           description: data.description || null,
           reportsToId: data.reportsToId ?? null,
-          level: data.level ?? 0,
         },
       });
     });

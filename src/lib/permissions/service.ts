@@ -40,78 +40,6 @@ export async function hasPermission(
   return hasPermissionByRoleId(tx, tenantId, roleId, permissionKey);
 }
 
-/** A real Role's rank, or -Infinity if it doesn't exist/belong to this tenant - makes a deleted/foreign role unconditionally un-outrankable rather than silently comparing as 0. */
-async function getRoleLevel(tx: Tx, tenantId: string, roleId: string): Promise<number> {
-  const role = await tx.role.findUnique({ where: { id: roleId }, select: { level: true, tenantId: true } });
-  if (!role || role.tenantId !== tenantId) return -Infinity;
-  return role.level;
-}
-
-/**
- * Whether `actor` may assign `newRoleId` to a staff member, given the role
- * that staff member currently holds (`currentRoleId`, or null when creating
- * a brand-new staff account). ADMIN/SUPERADMIN always can. Otherwise the
- * actor's own role must OUTRANK (strictly higher Role.level) both the
- * target's current role and the role being assigned - this is what stops a
- * STAFF user from reassigning themselves or a peer to a more-privileged
- * role, since EDIT_STAFF/CREATE_STAFF alone say nothing about which role is
- * being handed out. Comparing against the actor's own current role also
- * blocks self-reassignment for free (their current level can never be
- * strictly below their own level).
- */
-export async function canManageRoleAssignment(
-  tx: Tx,
-  tenantId: string,
-  actorRole: string,
-  actorRoleId: string | null,
-  currentRoleId: string | null,
-  newRoleId: string
-): Promise<boolean> {
-  if (actorRole === "ADMIN" || actorRole === "SUPERADMIN") return true;
-  if (!actorRoleId) return false;
-
-  const actorLevel = await getRoleLevel(tx, tenantId, actorRoleId);
-  const newLevel = await getRoleLevel(tx, tenantId, newRoleId);
-  if (actorLevel <= newLevel) return false;
-
-  if (currentRoleId) {
-    const currentLevel = await getRoleLevel(tx, tenantId, currentRoleId);
-    if (actorLevel <= currentLevel) return false;
-  }
-
-  return true;
-}
-
-/**
- * Whether `actor` may act on (delete, or otherwise directly affect) a staff
- * member currently holding `targetRole`/`targetRoleId`. Unlike
- * canManageRoleAssignment, the target here can be ADMIN - e.g. deleting a
- * staff account entirely doesn't go through the "assign a role" path that
- * confines PATCH /api/staff/[id] and POST /api/staff to STAFF targets.
- * ADMIN/SUPERADMIN always can. A STAFF actor - no matter which permissions
- * their role has been granted - can never act on an ADMIN account, since
- * ADMIN sits outside the Role/level system entirely; otherwise the actor
- * must outrank the target's current role, same comparison as above.
- */
-export async function canActOnStaffMember(
-  tx: Tx,
-  tenantId: string,
-  actorRole: string,
-  actorRoleId: string | null,
-  targetRole: string,
-  targetRoleId: string | null
-): Promise<boolean> {
-  if (actorRole === "ADMIN" || actorRole === "SUPERADMIN") return true;
-  if (targetRole === "ADMIN" || targetRole === "SUPERADMIN") return false;
-  if (!actorRoleId || !targetRoleId) return false;
-
-  const [actorLevel, targetLevel] = await Promise.all([
-    getRoleLevel(tx, tenantId, actorRoleId),
-    getRoleLevel(tx, tenantId, targetRoleId),
-  ]);
-  return actorLevel > targetLevel;
-}
-
 /** Whether `viewerRoleId` can see data belonging to `targetRoleId`, both real Role ids. A missing row denies. */
 export async function canViewRoleById(
   tx: Tx,
@@ -245,21 +173,9 @@ export async function setRoleVisibility(
  * Call once, at tenant creation.
  */
 export async function seedDefaultRolesForTenant(tx: Tx, tenantId: string): Promise<Record<string, string>> {
-  // Mirrors the product's traditional hierarchy ordering (Manager outranks
-  // Supervisor outranks Employee) so role reassignment is correctly
-  // restricted from day one - see Role.level in schema.prisma. Customer
-  // starts at the same bottom rank as Employee since it's not part of the
-  // staff chain at all.
-  const starterLevels: Record<(typeof DEFAULT_STARTER_ROLE_NAMES)[number], number> = {
-    Manager: 30,
-    Supervisor: 20,
-    Employee: 10,
-    Customer: 10,
-  };
-
   const idByName: Record<string, string> = {};
   for (const name of DEFAULT_STARTER_ROLE_NAMES) {
-    const role = await tx.role.create({ data: { tenantId, name, level: starterLevels[name] } });
+    const role = await tx.role.create({ data: { tenantId, name } });
     idByName[name] = role.id;
   }
 

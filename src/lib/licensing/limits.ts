@@ -51,6 +51,22 @@ export async function assertScheduleTemplatesEnabled(tx: Tx, tenantId: string): 
   }
 }
 
+/**
+ * The calendar's configurable visible-hours range (Settings > Calendar >
+ * "Calendar hours", `Tenant.calendarStartMinute`/`calendarEndMinute`) -
+ * paid feature, same reasoning/shape as schedule templates above: a
+ * convenience with no cost-driver reason to be free. FREE tenants keep the
+ * full-day default and can't narrow it; ONE_TIME/SUBSCRIPTION can. Doesn't
+ * cover the rest of the Calendar settings page (holidays, event colors),
+ * which stay free.
+ */
+export async function assertCalendarHoursEnabled(tx: Tx, tenantId: string): Promise<void> {
+  const plan = await getBillingPlan(tx, tenantId);
+  if (plan === "FREE") {
+    throw new PlanLimitError("Calendar hours are a paid feature. Upgrade to customize them.");
+  }
+}
+
 /** Throws PlanLimitError if creating one more Appointment would exceed the FREE plan's rolling-30-day cap. */
 export async function assertCanAddAppointment(tx: Tx, tenantId: string): Promise<void> {
   const plan = await getBillingPlan(tx, tenantId);

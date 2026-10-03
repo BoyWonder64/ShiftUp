@@ -194,6 +194,17 @@ and appointment payment status having no way to actually update it (#5).
   can upload/replace/remove one from User manager, shown in `AppHeader` next
   to the business name - see PROGRESS.md). Individual staff profile pictures
   are still unbuilt.
+- **A color per staff member.** Raised 2026-10-03. Let each staff member have
+  their own color (could be as simple as a default color assigned per
+  `StaffProfile`, no per-event picking required) so their shifts/appointments
+  are visually distinguishable on the calendar at a glance. Distinct from the
+  existing `EventTag`/`Tenant.eventColors` system (`src/lib/colors/eventColors.ts`,
+  `EventColorSettings.tsx`) - those are tenant-defined tags assignable per
+  *event*, not a color tied to *who* the event belongs to. Needs a decision on
+  how it interacts with `EventTag`/`eventColors` when both are present on the
+  same appointment (which one wins visually), and who sets it - admin-assigned
+  per staff member vs. each staff member picking their own from Account
+  settings.
 - **Anonymized shareable calendar links.** **Decided 2026-10-02: paid
   feature** - an external-facing convenience, cheap to gate. Reaffirmed
   2026-10-01 with the

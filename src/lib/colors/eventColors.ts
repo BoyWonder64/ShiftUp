@@ -43,6 +43,11 @@ export function isValidHexColor(value: string): boolean {
   return HEX_COLOR_PATTERN.test(value);
 }
 
+/** Type guard for the "Color key" picker's built-in options (Appointment/Shift/Completed/No-show/Cancelled), as opposed to a custom EventTag id. */
+export function isEventColorKey(value: string): value is EventColorKey {
+  return (EVENT_COLOR_KEYS as readonly string[]).includes(value);
+}
+
 export interface ColorTriple {
   bg: string;
   border: string;
@@ -91,17 +96,20 @@ export function buildColorTriples(colors: Record<EventColorKey, string>): Record
 /**
  * Which color triple an appointment/shift renders in, shared by the main
  * calendar (SchedulingCalendar.tsx) and the roster drill-down (RosterView.tsx)
- * so the two never disagree on an event's color. A custom tag color overrides
- * the appointment/shift default, but a terminal status (cancelled/no-show/
- * completed) always wins over both.
+ * so the two never disagree on an event's color. The "Color key" picker lets
+ * an entry use either a custom tag color or one of the 5 built-in keys
+ * directly (colorKey) - both override the appointment/shift default, but a
+ * terminal status (cancelled/no-show/completed) always wins over either, same
+ * as it always has for a custom tag.
  */
 export function resolveEventColor(
-  event: { status: string; isShift: boolean; tagColor?: string | null },
+  event: { status: string; isShift: boolean; tagColor?: string | null; colorKey?: string | null },
   colors: Record<EventColorKey, ColorTriple>
 ): ColorTriple {
   if (event.status === "CANCELLED") return colors.cancelled;
   if (event.status === "NO_SHOW") return colors.noShow;
   if (event.status === "COMPLETED") return colors.completed;
   if (event.tagColor) return colorTripleFromHex(event.tagColor);
+  if (event.colorKey && isEventColorKey(event.colorKey)) return colors[event.colorKey];
   return event.isShift ? colors.shift : colors.appointment;
 }

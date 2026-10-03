@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
-import { hasPermission, canManageRoleAssignment, canActOnStaffMember } from "@/lib/permissions/service";
+import { hasPermission } from "@/lib/permissions/service";
 
 const updateStaffSchema = z.object({
   roleId: z.string().uuid(),
@@ -35,15 +35,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       // EDIT_STAFF alone says nothing about which role is being handed out -
       // without this, any role holding that one ordinary permission could
       // promote anyone to the most-privileged custom role in the tenant.
-      const canReassign = await canManageRoleAssignment(
-        tx,
-        session.tenantId,
-        session.role,
-        session.roleId,
-        staffProfile.user.roleId,
-        roleId
-      );
-      if (!canReassign) throw new Error("RANK_TOO_LOW");
+      // Reassigning a role is ADMIN-only.
+      if (session.role !== "ADMIN") throw new Error("FORBIDDEN");
 
       await tx.user.update({ where: { id: staffProfile.userId }, data: { roleId } });
 
@@ -51,7 +44,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         where: { id },
         include: {
           user: {
-            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true, level: true } } },
+            select: { id: true, email: true, username: true, role: true, customRole: { select: { id: true, name: true } } },
           },
         },
       });
@@ -77,12 +70,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (err instanceof Error && err.message === "INVALID_ROLE") {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
-    if (err instanceof Error && err.message === "RANK_TOO_LOW") {
-      return NextResponse.json(
-        { error: "Your role doesn't outrank that staff member's current or new role." },
-        { status: 403 }
-      );
-    }
     console.error("Failed to update staff role", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }
@@ -101,19 +88,11 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
       if (!staffProfile || staffProfile.tenantId !== session.tenantId) throw new Error("NOT_FOUND");
       if (staffProfile.userId === session.userId) throw new Error("CANNOT_DELETE_SELF");
 
-      // DELETE_STAFF alone says nothing about rank - without this, any role
-      // holding that one ordinary permission could delete an admin's account
-      // outright (sidestepping the rank checks on reassignment above, since
-      // there's no "new role" involved in a deletion to check).
-      const canAct = await canActOnStaffMember(
-        tx,
-        session.tenantId,
-        session.role,
-        session.roleId,
-        staffProfile.user.role,
-        staffProfile.user.roleId
-      );
-      if (!canAct) throw new Error("RANK_TOO_LOW");
+      // DELETE_STAFF alone says nothing about whether the actor outranks the
+      // account being removed - without this, any role holding that one
+      // ordinary permission could delete anyone, admins included. Deleting
+      // a staff account is ADMIN-only.
+      if (session.role !== "ADMIN") throw new Error("FORBIDDEN");
 
       // Appointment.staff is onDelete: Restrict (unlike ScheduleTemplateShift,
       // which cascades) - existing appointments must be reassigned or
@@ -140,9 +119,6 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     }
     if (err instanceof Error && err.message === "CANNOT_DELETE_SELF") {
       return NextResponse.json({ error: "You can't remove your own staff account." }, { status: 400 });
-    }
-    if (err instanceof Error && err.message === "RANK_TOO_LOW") {
-      return NextResponse.json({ error: "Your role doesn't outrank that staff member's role." }, { status: 403 });
     }
     if (err instanceof Error && err.message === "STAFF_HAS_APPOINTMENTS") {
       return NextResponse.json(

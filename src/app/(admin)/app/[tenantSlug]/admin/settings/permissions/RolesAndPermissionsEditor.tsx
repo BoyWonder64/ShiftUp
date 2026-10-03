@@ -9,8 +9,6 @@ export interface RoleRow {
   name: string;
   description: string | null;
   reportsToId: string | null;
-  /** Seniority rank for authorization (higher outranks lower) - see Role.level in schema.prisma. Not the same as reportsToId, which is cosmetic. */
-  level: number;
 }
 
 export type Grants = Record<string, Record<PermissionKey, boolean>>;
@@ -172,7 +170,6 @@ export function RolesAndPermissionsEditor() {
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
   const [newReportsTo, setNewReportsTo] = useState("");
-  const [newLevel, setNewLevel] = useState("0");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -221,13 +218,11 @@ export function RolesAndPermissionsEditor() {
           name: newName.trim(),
           description: newDescription.trim() || null,
           reportsToId: newReportsTo || null,
-          level: Number(newLevel) || 0,
         }),
       });
       setNewName("");
       setNewDescription("");
       setNewReportsTo("");
-      setNewLevel("0");
       // Jump straight to the new role so its permissions can be configured
       // immediately, instead of landing back on whatever was selected before.
       await reload(role.id);
@@ -240,7 +235,7 @@ export function RolesAndPermissionsEditor() {
 
   async function handleSaveField(
     id: string,
-    patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId" | "level">>
+    patch: Partial<Pick<RoleRow, "name" | "description" | "reportsToId">>
   ) {
     setError(null);
     try {
@@ -344,11 +339,12 @@ export function RolesAndPermissionsEditor() {
               >
                 <span className="truncate">{role.name}</span>
                 <span
+                  title={`${grantedCount} of ${PERMISSION_KEYS.length} permissions granted`}
                   className={`shrink-0 text-xs font-normal tabular-nums ${
                     role.id === selectedRoleId ? "text-primary-400" : "text-gray-400"
                   }`}
                 >
-                  {grantedCount}/{PERMISSION_KEYS.length}
+                  {grantedCount}/{PERMISSION_KEYS.length} granted
                 </span>
               </button>
             );
@@ -392,20 +388,6 @@ export function RolesAndPermissionsEditor() {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Rank
-            <input
-              type="number"
-              min={0}
-              max={1000}
-              value={newLevel}
-              onChange={(e) => setNewLevel(e.target.value)}
-              className="rounded-md border border-gray-300 px-2 py-1.5"
-            />
-            <span className="text-xs font-normal text-gray-400">
-              Higher outranks lower. A role can only reassign staff currently below, and only to roles below, its own rank.
-            </span>
           </label>
           <button
             type="submit"

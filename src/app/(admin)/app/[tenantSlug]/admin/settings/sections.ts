@@ -35,8 +35,8 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     slug: "calendar",
     label: "Calendar",
-    description: "Which holidays show on the calendar, and the color key for appointments/shifts.",
-    requirement: "ADMIN",
+    description: "Which holidays show on the calendar, the color key for appointments/shifts, and the calendar's visible hours.",
+    requirement: "EDIT_CALENDAR_SETTINGS",
   },
   {
     slug: "company-profile",

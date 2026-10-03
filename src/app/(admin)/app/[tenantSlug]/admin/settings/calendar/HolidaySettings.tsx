@@ -8,6 +8,7 @@ interface Holiday {
   name: string;
   date: string;
   recurring: boolean;
+  blocked: boolean;
 }
 
 const REGION_LABELS: Record<HolidayRegion, string> = {
@@ -30,15 +31,22 @@ function formatCatalogDate(d: Date): string {
 
 export function HolidaySettings() {
   const [enabledNames, setEnabledNames] = useState<string[] | null>(null);
+  const [blockedNames, setBlockedNames] = useState<string[] | null>(null);
   const [savingName, setSavingName] = useState<string | null>(null);
   const [savingRegion, setSavingRegion] = useState<HolidayRegion | null>(null);
+  // Separate from savingName above (which tracks the enable/disable
+  // checkbox) so toggling "Block" on one holiday doesn't also disable the
+  // enable checkbox of a different holiday mid-save.
+  const [savingBlockedName, setSavingBlockedName] = useState<string | null>(null);
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
   const [recurring, setRecurring] = useState(true);
+  const [blockDay, setBlockDay] = useState(false);
   const [creating, setCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [togglingBlockedId, setTogglingBlockedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // This year's date for every known holiday - just a reference point shown
@@ -67,6 +75,7 @@ export function HolidaySettings() {
         if (!holidaysRes.ok) throw new Error(holidaysData.error ?? "Failed to load");
         if (!cancelled) {
           setEnabledNames(settingsData.settings.enabledHolidayNames);
+          setBlockedNames(settingsData.settings.blockedHolidayNames);
           setHolidays(holidaysData.holidays);
         }
       } catch {
@@ -129,6 +138,52 @@ export function HolidaySettings() {
     }
   }
 
+  // Toggles whether an *enabled* catalog holiday also blocks out the whole
+  // day (see Tenant.blockedHolidayNames) - a name here with no matching
+  // enabled entry has no effect, so this is only exposed next to a holiday
+  // that's already checked on.
+  async function toggleBlockedHoliday(holidayName: string) {
+    if (blockedNames === null) return;
+    const isBlocked = blockedNames.includes(holidayName);
+    const next = isBlocked ? blockedNames.filter((n) => n !== holidayName) : [...blockedNames, holidayName];
+    setBlockedNames(next);
+    setSavingBlockedName(holidayName);
+    setError(null);
+    try {
+      const res = await fetch("/api/tenant-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blockedHolidayNames: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+    } catch {
+      setBlockedNames(blockedNames);
+      setError("Couldn't save - try again.");
+    } finally {
+      setSavingBlockedName(null);
+    }
+  }
+
+  async function toggleCustomHolidayBlocked(holiday: Holiday) {
+    setTogglingBlockedId(holiday.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/holidays/${holiday.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blocked: !holiday.blocked }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save");
+      setHolidays((prev) => prev.map((h) => (h.id === holiday.id ? { ...h, blocked: !holiday.blocked } : h)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save - try again.");
+    } finally {
+      setTogglingBlockedId(null);
+    }
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !date) return;
@@ -138,7 +193,7 @@ export function HolidaySettings() {
       const res = await fetch("/api/holidays", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), date, recurring }),
+        body: JSON.stringify({ name: name.trim(), date, recurring, blocked: blockDay }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to create");
@@ -148,6 +203,7 @@ export function HolidaySettings() {
       setName("");
       setDate("");
       setRecurring(true);
+      setBlockDay(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't add holiday.");
     } finally {
@@ -176,10 +232,11 @@ export function HolidaySettings() {
       <p className="mt-1 text-sm text-gray-500">
         Shown as highlighted days on the calendar for everyone on your team. Check which ones apply to
         your business - US and European holidays never share a name, so it&apos;s safe to turn on any mix
-        of both.
+        of both. Check <span className="font-medium text-gray-600">Block</span> on top of that for any
+        holiday your business is fully closed on, so it also shows as blocked-out time, not just a tint.
       </p>
 
-      {loading || enabledNames === null ? (
+      {loading || enabledNames === null || blockedNames === null ? (
         <p className="mt-4 text-sm text-gray-400">Loading...</p>
       ) : (
         <>
@@ -206,21 +263,37 @@ export function HolidaySettings() {
                     </label>
                   </div>
                   <ul className="mt-2 flex flex-col gap-1.5">
-                    {regionHolidays.map((h) => (
-                      <li key={h.name}>
-                        <label className="flex items-center gap-2.5 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={enabledNames.includes(h.name)}
-                            onChange={() => void toggleHoliday(h.name)}
-                            disabled={savingName === h.name || savingRegion === region}
-                            className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                          />
-                          <span className="text-gray-900">{h.name}</span>
-                          <span className="text-gray-400">{formatCatalogDate(h.date)}</span>
-                        </label>
-                      </li>
-                    ))}
+                    {regionHolidays.map((h) => {
+                      const isEnabled = enabledNames.includes(h.name);
+                      return (
+                        <li key={h.name} className="flex items-center gap-2.5 text-sm">
+                          <label className="flex flex-1 items-center gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={isEnabled}
+                              onChange={() => void toggleHoliday(h.name)}
+                              disabled={savingName === h.name || savingRegion === region}
+                              className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                            />
+                            <span className="text-gray-900">{h.name}</span>
+                            <span className="text-gray-400">{formatCatalogDate(h.date)}</span>
+                          </label>
+                          <label
+                            className={`flex items-center gap-1 text-xs ${isEnabled ? "text-gray-500" : "text-gray-300"}`}
+                            title="Also mark the day as blocked/unavailable on the calendar"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={blockedNames.includes(h.name)}
+                              onChange={() => void toggleBlockedHoliday(h.name)}
+                              disabled={!isEnabled || savingBlockedName === h.name}
+                              className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                            />
+                            Block
+                          </label>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               );
@@ -238,14 +311,29 @@ export function HolidaySettings() {
                     {formatHolidayDate(h.date)} — {h.name}
                     {h.recurring && <span className="ml-1.5 text-xs text-gray-400">(yearly)</span>}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => void handleDelete(h.id)}
-                    disabled={deletingId === h.id}
-                    className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-50"
-                  >
-                    Remove
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <label
+                      className="flex items-center gap-1 text-xs text-gray-500"
+                      title="Also mark the day as blocked/unavailable on the calendar"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={h.blocked}
+                        onChange={() => void toggleCustomHolidayBlocked(h)}
+                        disabled={togglingBlockedId === h.id}
+                        className="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      Block
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(h.id)}
+                      disabled={deletingId === h.id}
+                      className="text-xs text-gray-400 hover:text-red-600 disabled:opacity-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -279,6 +367,18 @@ export function HolidaySettings() {
                 className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               />
               Repeats every year
+            </label>
+            <label
+              className="flex items-center gap-1.5 pb-1.5 text-sm text-gray-600"
+              title="Also mark the day as blocked/unavailable on the calendar"
+            >
+              <input
+                type="checkbox"
+                checked={blockDay}
+                onChange={(e) => setBlockDay(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              />
+              Block this day
             </label>
             <button
               type="submit"

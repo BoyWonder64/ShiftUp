@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole, requireTenantSession } from "@/lib/auth/current-user";
+import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 
 // Readable by any signed-in tenant member - holidays show on the calendar
 // for everyone, not just admins.
@@ -25,15 +26,16 @@ const createSchema = z.object({
   name: z.string().min(1).max(100),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD."),
   recurring: z.boolean().default(true),
+  blocked: z.boolean().default(false),
 });
 
 // Custom holidays are tenant-wide (shown to everyone, shape the calendar
-// for the whole business) - ADMIN-only to add, same as the federal-holiday
-// toggle and the 5 built-in event colors.
+// for the whole business) - gated on EDIT_CALENDAR_SETTINGS, same as the
+// federal-holiday toggle and the 5 built-in event colors (all part of the
+// same Settings > Calendar page, see sections.ts).
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireRole(["ADMIN"]);
-    if (!session.tenantId) throw new Error("FORBIDDEN");
+    const session = await requireTenantSession();
 
     const json = await request.json().catch(() => null);
     const parsed = createSchema.safeParse(json);
@@ -41,8 +43,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid input" }, { status: 400 });
     }
 
-    const holiday = await runInTenantContext(session.tenantId, session.userId, "ADMIN", (tx) =>
-      tx.holiday.create({
+    const holiday = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_CALENDAR_SETTINGS");
+      if (!allowed) throw new Error("FORBIDDEN");
+
+      return tx.holiday.create({
         data: {
           tenantId: session.tenantId!,
           name: parsed.data.name,
@@ -51,9 +56,10 @@ export async function POST(request: NextRequest) {
           // is otherwise ignored (see the Holiday model's doc comment).
           date: new Date(`${parsed.data.date}T00:00:00.000Z`),
           recurring: parsed.data.recurring,
+          blocked: parsed.data.blocked,
         },
-      })
-    );
+      });
+    });
 
     return NextResponse.json({ holiday }, { status: 201 });
   } catch (err) {

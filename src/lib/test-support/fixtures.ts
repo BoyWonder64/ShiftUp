@@ -27,8 +27,8 @@ export async function createTestTenant(tx: Tx, label: string) {
   return tenant;
 }
 
-export async function createTestRole(tx: Tx, tenantId: string, name: string, level = 0) {
-  return tx.role.create({ data: { tenantId, name: `${name}-${shortId()}`, level } });
+export async function createTestRole(tx: Tx, tenantId: string, name: string) {
+  return tx.role.create({ data: { tenantId, name: `${name}-${shortId()}` } });
 }
 
 /** A STAFF user with an attached StaffProfile, holding `roleId`. */

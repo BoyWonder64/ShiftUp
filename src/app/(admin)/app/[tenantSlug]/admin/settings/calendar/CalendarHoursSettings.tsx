@@ -2,17 +2,18 @@
 
 import { useEffect, useState } from "react";
 
-/** "07:00" <-> 420 (minutes-from-midnight), matching Tenant.calendarStartMinute/calendarEndMinute. */
-function minutesToInputValue(minutes: number): string {
-  const h = Math.floor(minutes / 60) % 24;
+/** Human-readable label for a minutes-from-midnight value, e.g. 450 -> "7:30 AM". 1440 -> "Midnight". */
+function formatMinutes(minutes: number): string {
+  if (minutes === 1440) return "Midnight";
+  const h24 = Math.floor(minutes / 60) % 24;
   const m = minutes % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const period = h24 < 12 ? "AM" : "PM";
+  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-function inputValueToMinutes(value: string): number {
-  const [h, m] = value.split(":").map(Number);
-  return h * 60 + m;
-}
+/** Every half hour of the day, 0 (Midnight) through 1440 (Midnight, end-of-day). */
+const TIME_OPTIONS = Array.from({ length: 49 }, (_, i) => i * 30);
 
 export function CalendarHoursSettings() {
   const [startMinute, setStartMinute] = useState<number | null>(null);
@@ -93,28 +94,37 @@ export function CalendarHoursSettings() {
         <form onSubmit={handleSubmit} className="mt-4 flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-sm">
             Starts at
-            <input
-              type="time"
-              value={minutesToInputValue(startMinute)}
+            <select
+              value={startMinute}
               onChange={(e) => {
                 setSaved(false);
-                setStartMinute(inputValueToMinutes(e.target.value));
+                setStartMinute(Number(e.target.value));
               }}
               className="rounded-md border border-gray-300 px-2 py-1"
-            />
+            >
+              {TIME_OPTIONS.filter((m) => m < 1440).map((m) => (
+                <option key={m} value={m}>
+                  {formatMinutes(m)}
+                </option>
+              ))}
+            </select>
           </label>
           <label className="flex flex-col gap-1 text-sm">
             Ends at
-            <input
-              type="time"
-              value={endMinute === 1440 ? "24:00" : minutesToInputValue(endMinute)}
+            <select
+              value={endMinute}
               onChange={(e) => {
                 setSaved(false);
-                const v = e.target.value;
-                setEndMinute(v === "24:00" ? 1440 : inputValueToMinutes(v));
+                setEndMinute(Number(e.target.value));
               }}
               className="rounded-md border border-gray-300 px-2 py-1"
-            />
+            >
+              {TIME_OPTIONS.filter((m) => m > 0).map((m) => (
+                <option key={m} value={m}>
+                  {formatMinutes(m)}
+                </option>
+              ))}
+            </select>
           </label>
           <button
             type="submit"

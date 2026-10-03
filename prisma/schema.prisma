@@ -115,6 +115,13 @@ model Tenant {
   /// per region. Defaults to just the 11 US federal names - keep in sync
   /// with catalog.ts's `DEFAULT_ENABLED_HOLIDAY_NAMES`.
   enabledHolidayNames          String[] @default(["New Year's Day", "Martin Luther King Jr. Day", "Washington's Birthday", "Memorial Day", "Juneteenth", "Independence Day", "Labor Day", "Columbus Day", "Veterans Day", "Thanksgiving Day", "Christmas Day"]) @map("enabled_holiday_names")
+  /// Admin-configurable: which of the *enabled* computed holidays above
+  /// should also render as a full-day blocked-time span (see BlockedTime)
+  /// instead of just the plain holiday tint - e.g. a business that's fully
+  /// closed on Christmas vs. one that just likes the day marked. A name
+  /// here with no matching entry in enabledHolidayNames has no effect -
+  /// blocking only ever applies on top of a holiday that's actually shown.
+  blockedHolidayNames          String[] @default([]) @map("blocked_holiday_names")
   /// Admin-configurable (Settings > "Shift form"): whether the shift
   /// create/detail forms show the job type (ServiceType), job estimate, and
   /// color key fields. On by default (today's existing behavior). Only
@@ -146,6 +153,17 @@ model Tenant {
   /// they never use.
   calendarStartMinute          Int      @default(0) @map("calendar_start_minute")
   calendarEndMinute            Int      @default(1440) @map("calendar_end_minute")
+  /// Admin-configurable (Settings > Calendar): master on/off switch for
+  /// editing an appointment/shift once it's booked - reassigning staff,
+  /// rescheduling, changing the client/service/location/price/payment
+  /// status, the color key, or the job estimate. Does NOT cover cancelling
+  /// (CANCEL_SHIFTS/CANCEL_APPOINTMENTS stays independent - see
+  /// src/app/api/appointments/[id]/route.ts) - a tenant can lock bookings
+  /// from being altered while still letting them be called off. On by
+  /// default (today's existing behavior); EDIT_SHIFTS/EDIT_APPOINTMENTS/
+  /// EDIT_JOB_ESTIMATES still apply on top of this when it's on - this is an
+  /// extra tenant-wide gate, not a replacement for the per-role permissions.
+  allowEditingBookedEvents     Boolean  @default(true) @map("allow_editing_booked_events")
   /// SUPERADMIN-only (dev console > Customers): blocks every user of this
   /// tenant from logging in. Checked in POST /api/auth/login only - an
   /// already-active session isn't revoked (sessions are stateless, see
@@ -175,6 +193,7 @@ model Tenant {
   timeOffs               TimeOff[]
   eventTags              EventTag[]
   holidays               Holiday[]
+  blockedTimes           BlockedTime[]
   scheduleTemplates      ScheduleTemplate[]
   scheduleTemplateShifts ScheduleTemplateShift[]
 
@@ -205,16 +224,6 @@ model Role {
   reportsToId String?  @map("reports_to_id")
   reportsTo   Role?    @relation("RoleHierarchy", fields: [reportsToId], references: [id], onDelete: SetNull)
   reports     Role[]   @relation("RoleHierarchy")
-  /// Seniority rank used for authorization, NOT display - higher outranks
-  /// lower. Unlike reportsToId above, this one IS enforced: a STAFF user may
-  /// only assign/reassign someone to a role whose level is strictly lower
-  /// than their own role's level, and may only act on staff currently
-  /// holding a strictly-lower-level role (see canManageRoleAssignment in
-  /// src/lib/permissions/service.ts). ADMIN/SUPERADMIN bypass this
-  /// entirely and outrank every level. Defaults to 0 (bottom rank) for new
-  /// roles so an admin must deliberately raise a role's rank before anyone
-  /// holding it can manage other roles' assignment.
-  level       Int      @default(0) @map("level")
   createdAt   DateTime @default(now()) @map("created_at")
 
   users       User[]
@@ -273,10 +282,35 @@ model Holiday {
   /// still stored as a full date since Postgres has no month/day-only type).
   /// If false, it's a one-off for that exact date.
   recurring Boolean  @default(true)
+  /// If true, this holiday also renders as a full-day blocked-time span (see
+  /// BlockedTime) instead of just the plain holiday tint - the custom-holiday
+  /// equivalent of Tenant.blockedHolidayNames for the computed catalog ones.
+  blocked   Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([tenantId])
   @@map("holidays")
+}
+
+/// A business-wide span of time marked unavailable on the calendar - purely
+/// visual (greyed out/striped, see SchedulingCalendar.tsx's backgroundEvents),
+/// not a hard constraint: appointments and shifts can still be created over
+/// it if someone chooses to. Distinct from Holiday (a single enabled/disabled
+/// whole day) in that it's an arbitrary start/end range an admin creates
+/// directly, and from TimeOff (per-staff leave) in that it applies to the
+/// whole business at once rather than one staff member.
+model BlockedTime {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label     String?
+  startTime DateTime @map("start_time")
+  endTime   DateTime @map("end_time")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId])
+  @@index([tenantId, startTime])
+  @@map("blocked_time")
 }
 
 enum DiscountType {
@@ -588,6 +622,17 @@ model Appointment {
   /// default status-based color on the calendar.
   tagId                    String?             @map("tag_id")
   tag                      EventTag?           @relation(fields: [tagId], references: [id], onDelete: SetNull)
+  /// Optional built-in color key ("appointment"/"shift"/"completed"/
+  /// "noShow"/"cancelled" - see EVENT_COLOR_KEYS in
+  /// src/lib/colors/eventColors.ts) picked from the same "Color key"
+  /// control tagId uses, letting an entry use one of Settings > Calendar >
+  /// Event colors' built-in colors directly instead of only a custom tag.
+  /// Mutually exclusive with tagId in the UI (picking one clears the
+  /// other) - not enforced at the DB level, same as every other
+  /// soft invariant in this app. Loses to a terminal status
+  /// (CANCELLED/NO_SHOW/COMPLETED) in resolveEventColor, the same priority
+  /// slot tagId's color already holds.
+  colorKey                 String?             @map("color_key")
   createdAt                DateTime            @default(now()) @map("created_at")
   updatedAt                DateTime            @updatedAt @map("updated_at")
 

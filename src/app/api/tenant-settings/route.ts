@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireRole, requireTenantSession } from "@/lib/auth/current-user";
+import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { hasPermission } from "@/lib/permissions/service";
 import { EVENT_COLOR_KEYS, isValidHexColor, resolveEventColors } from "@/lib/colors/eventColors";
+import { assertCalendarHoursEnabled, PlanLimitError } from "@/lib/licensing/limits";
 
 const SETTINGS_SELECT = {
   requireClientForAppointments: true,
   enableMapsNavigation: true,
   eventColors: true,
   enabledHolidayNames: true,
+  blockedHolidayNames: true,
   showJobTypeOnShiftForm: true,
   showJobEstimateOnShiftForm: true,
   showColorKeyOnShiftForm: true,
   allowOverlappingShifts: true,
+  allowEditingBookedEvents: true,
   calendarStartMinute: true,
   calendarEndMinute: true,
 } as const;
@@ -49,10 +53,12 @@ const updateSchema = z
     requireClientForAppointments: z.boolean(),
     enableMapsNavigation: z.boolean(),
     enabledHolidayNames: z.array(z.string()),
+    blockedHolidayNames: z.array(z.string()),
     showJobTypeOnShiftForm: z.boolean(),
     showJobEstimateOnShiftForm: z.boolean(),
     showColorKeyOnShiftForm: z.boolean(),
     allowOverlappingShifts: z.boolean(),
+    allowEditingBookedEvents: z.boolean(),
     // Minutes-from-midnight bounds on the calendar grid's displayed range
     // (see Tenant.calendarStartMinute/calendarEndMinute) - always sent as a
     // pair (see CalendarHoursSettings.tsx), checked together below since
@@ -79,12 +85,16 @@ const updateSchema = z
     { message: "End time must be after start time." }
   );
 
-// Changing how the form/calendar behaves for everyone else is an ADMIN-only
-// action - same reasoning as the permission matrix.
+// Each field below belongs to a specific Settings section with its own
+// gate, checked inside the transaction (not one blanket role check up
+// front): the Appointments/Shifts form toggles stay ADMIN-only (same as
+// their own settings pages, see sections.ts), while the Calendar section's
+// fields (holidays, event colors, calendar hours) are gated on
+// EDIT_CALENDAR_SETTINGS instead, now that that section is reachable by any
+// role holding it, not just ADMIN.
 export async function PUT(request: NextRequest) {
   try {
-    const session = await requireRole(["ADMIN"]);
-    if (!session.tenantId) throw new Error("FORBIDDEN");
+    const session = await requireTenantSession();
 
     const json = await request.json().catch(() => null);
     const parsed = updateSchema.safeParse(json);
@@ -93,7 +103,34 @@ export async function PUT(request: NextRequest) {
     }
     const { eventColors: eventColorUpdates, ...rest } = parsed.data;
 
-    const tenant = await runInTenantContext(session.tenantId, session.userId, "ADMIN", async (tx) => {
+    const tenant = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
+      const touchesAdminOnlySettings =
+        rest.requireClientForAppointments !== undefined ||
+        rest.enableMapsNavigation !== undefined ||
+        rest.showJobTypeOnShiftForm !== undefined ||
+        rest.showJobEstimateOnShiftForm !== undefined ||
+        rest.showColorKeyOnShiftForm !== undefined ||
+        rest.allowOverlappingShifts !== undefined ||
+        rest.allowEditingBookedEvents !== undefined;
+      if (touchesAdminOnlySettings && session.role !== "ADMIN") throw new Error("FORBIDDEN");
+
+      const touchesCalendarSettings =
+        rest.enabledHolidayNames !== undefined ||
+        rest.blockedHolidayNames !== undefined ||
+        rest.calendarStartMinute !== undefined ||
+        rest.calendarEndMinute !== undefined ||
+        eventColorUpdates !== undefined;
+      if (touchesCalendarSettings) {
+        const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_CALENDAR_SETTINGS");
+        if (!allowed) throw new Error("FORBIDDEN");
+      }
+
+      // Calendar hours specifically (not the rest of the Calendar section)
+      // is a paid feature - see assertCalendarHoursEnabled.
+      if (rest.calendarStartMinute !== undefined || rest.calendarEndMinute !== undefined) {
+        await assertCalendarHoursEnabled(tx, session.tenantId);
+      }
+
       let mergedColors: Record<string, string> | undefined;
       if (eventColorUpdates) {
         const current = await tx.tenant.findUniqueOrThrow({
@@ -115,6 +152,9 @@ export async function PUT(request: NextRequest) {
   } catch (err) {
     if (err instanceof Error && (err.message === "UNAUTHENTICATED" || err.message === "FORBIDDEN")) {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    if (err instanceof PlanLimitError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
     }
     console.error("Failed to update tenant settings", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });

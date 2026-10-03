@@ -30,6 +30,17 @@ this into actual landing-page copy is a separate, later step (see TODO.md).
   `sameSite: lax`, and `secure` in production (HTTPS-only transmission),
   with a 7-day expiry baked into and checked from the signed payload itself.
 
+**Privilege escalation within a tenant**
+- Granting a staff member a permission like "edit staff" doesn't by itself let
+  them hand out *any* role - role reassignment/promotion is additionally
+  gated by a seniority rank (`Role.level`), requiring the acting user's own
+  role to strictly outrank both the target's current and prospective role
+  (`canManageRoleAssignment`/`canActOnStaffMember`,
+  `src/lib/permissions/service.ts`). Promoting to or demoting from the
+  platform ADMIN role is further restricted to existing ADMINs outright,
+  not rank-based at all, since ADMIN sits outside the per-tenant role
+  system and unconditionally holds every permission.
+
 **Tenant isolation**
 - Every tenant-scoped table has **Postgres Row-Level Security**, enforced via
   session variables set inside `runInTenantContext()`
