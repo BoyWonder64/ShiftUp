@@ -67,6 +67,22 @@ export async function assertCalendarHoursEnabled(tx: Tx, tenantId: string): Prom
   }
 }
 
+/**
+ * The public self-booking widget (TODO.md: "decided 2026-10-02: paid
+ * feature" - the single biggest upsell lever noted there) - same
+ * whole-feature gate shape as schedule templates/calendar hours above. This
+ * only gates the *paid-plan* dimension; Tenant.publicBookingEnabled is a
+ * second, independent admin on/off switch layered on top (a paying tenant
+ * can still choose not to expose public booking) - both must pass before the
+ * public routes under src/app/api/public/booking/** will serve anything.
+ */
+export async function assertBookingWidgetEnabled(tx: Tx, tenantId: string): Promise<void> {
+  const plan = await getBillingPlan(tx, tenantId);
+  if (plan === "FREE") {
+    throw new PlanLimitError("The public booking widget is a paid feature. Upgrade to use it.");
+  }
+}
+
 /** Throws PlanLimitError if creating one more Appointment would exceed the FREE plan's rolling-30-day cap. */
 export async function assertCanAddAppointment(tx: Tx, tenantId: string): Promise<void> {
   const plan = await getBillingPlan(tx, tenantId);

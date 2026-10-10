@@ -15,6 +15,58 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **Public booking widget.** Built 2026-10-09. End-to-end check: as ADMIN on
+  a non-FREE tenant, go to Settings > Booking Widget, check "Enable public
+  booking", mark at least one active service type "Bookable online" (same
+  page), and under "Staff working hours" give a staff member a window on
+  today's day of week. Open the "Preview the booking page" link
+  (`/book/<your-slug>`) in a private/incognito window (no login) - pick the
+  service, pick "Any available" or that staff member, pick today's date,
+  confirm a time slot shows inside your working-hours window, fill in a
+  name, and submit. Confirm: the booking appears on the real calendar as a
+  normal appointment (status Booked, source self-service isn't shown in the
+  UI but should be visible via `GET /api/appointments/[id]` in devtools if
+  you want to check), and a brand-new guest `Client` was created for it.
+  Then confirm the negative cases: toggle "Enable public booking" back off
+  and reload `/book/<slug>` - should show "This booking page isn't
+  available" (not an error, not a hint that the business exists but is
+  unavailable). Same check on a FREE-plan tenant with the toggle on anyway -
+  still unavailable (paid-plan gate independent of the admin toggle). Try
+  submitting the same exact time slot twice in two browser tabs - the second
+  should get a "that time was just booked" message, not a double-booked
+  calendar. Finally, copy the embed snippet from Settings and paste it into
+  a plain static `.html` file opened locally (or any scratch page) - confirm
+  the iframe loads and auto-sizes to fit its content as you step through it.
+- **"Require a client on every appointment" toggle actually works
+  end-to-end.** Flagged 2026-10-09 while reviewing the backlog (not a code
+  change - this already existed). Check: Settings > "Appointment & shift
+  form", toggle "Require a client on every appointment" off, then open the
+  appointment create panel and confirm you can save without picking a
+  client (label should read "Client (optional)"). Toggle it back on and
+  confirm the client field becomes required again (can't save without
+  one). Default for a new tenant should be **on** (required) - confirmed
+  correct, not changing.
+- **Mark an appointment/shift Completed or No-show.** Open an appointment or
+  shift's detail panel: confirm "Mark completed" and "Mark no-show" buttons
+  appear next to the existing Cancel button (as long as you hold
+  `EDIT_SHIFTS`/`EDIT_APPOINTMENTS` and Settings > Calendar's "Allow editing
+  booked events" is on), clicking one updates the status pill and the
+  event's calendar color, and a "Revert to booked" button appears in their
+  place once set. Confirm a cancelled event still only shows the Cancel
+  button's own disabled state (no outcome buttons), and confirm a role
+  without `EDIT_SHIFTS`/`EDIT_APPOINTMENTS` doesn't see these buttons at all
+  (try `PATCH /api/appointments/[id]` with `{"status":"COMPLETED"}` directly
+  via devtools too, confirm it 403s).
+- **Color key picker offers built-in colors too.** Open an appointment or
+  shift's detail panel (or the create panel): the "Color key" dropdown
+  should now show a "Built-in" group (Appointment/Shift/Completed/No-show/
+  Cancelled - whichever apply to that entry type) above the existing
+  "Custom" group of your own tags. Pick a built-in one (e.g. "Completed" on
+  a still-booked appointment) and confirm the event recolors on the
+  calendar immediately, the picker reopens showing that same selection, and
+  it reverts to its actual status color if you later cancel/complete/no-show
+  it for real (status always wins). Confirm picking a custom tag after a
+  built-in key clears the built-in selection, and vice versa.
 - **Blocked time + holiday "Block" toggle.** Check Settings > Calendar:
   under "Holidays", check an enabled holiday's new "Block" checkbox and
   confirm the calendar's Month view tints that day grey (not the usual

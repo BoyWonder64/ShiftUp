@@ -68,7 +68,7 @@ export async function GET(
 const patchSchema = z.object({
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
-  status: z.enum(["CANCELLED"]).optional(),
+  status: z.enum(["BOOKED", "COMPLETED", "CANCELLED", "NO_SHOW"]).optional(),
   estimatedDurationMinutes: z.number().int().min(0).nullable().optional(),
   estimatedValue: z.number().min(0).nullable().optional(),
   locationType: z.enum(["IN_PERSON", "ONLINE"]).optional(),
@@ -107,6 +107,11 @@ export async function PATCH(
         const locationFieldsRequested = data.locationType !== undefined || data.location !== undefined;
         const tagFieldRequested = data.tagId !== undefined;
         const colorKeyFieldRequested = data.colorKey !== undefined;
+        // Logging what actually happened (completed/no-show, or reverting
+        // back to booked) - distinct from data.status === "CANCELLED" below,
+        // which keeps its own dedicated CANCEL_SHIFTS/CANCEL_APPOINTMENTS
+        // gate rather than falling under the general edit permission here.
+        const outcomeStatusRequested = data.status !== undefined && data.status !== "CANCELLED";
         const bookingFieldsRequested =
           data.clientId !== undefined ||
           data.serviceTypeId !== undefined ||
@@ -120,6 +125,7 @@ export async function PATCH(
           locationFieldsRequested ||
           tagFieldRequested ||
           colorKeyFieldRequested ||
+          outcomeStatusRequested ||
           estimateFieldsRequested ||
           bookingFieldsRequested;
 
@@ -154,7 +160,15 @@ export async function PATCH(
           if (!tenant.allowEditingBookedEvents) throw new Error("EDITING_DISABLED");
         }
 
-        if (wantsReschedule || locationFieldsRequested || tagFieldRequested || colorKeyFieldRequested || wantsReassign || bookingFieldsRequested) {
+        if (
+          wantsReschedule ||
+          locationFieldsRequested ||
+          tagFieldRequested ||
+          colorKeyFieldRequested ||
+          outcomeStatusRequested ||
+          wantsReassign ||
+          bookingFieldsRequested
+        ) {
           const canEdit = await hasPermission(
             tx,
             session.tenantId,
@@ -181,7 +195,14 @@ export async function PATCH(
           });
         }
 
-        if (estimateFieldsRequested || locationFieldsRequested || tagFieldRequested || colorKeyFieldRequested || bookingFieldsRequested) {
+        if (
+          estimateFieldsRequested ||
+          locationFieldsRequested ||
+          tagFieldRequested ||
+          colorKeyFieldRequested ||
+          outcomeStatusRequested ||
+          bookingFieldsRequested
+        ) {
           return tx.appointment.update({
             where: { id },
             data: {
@@ -193,6 +214,7 @@ export async function PATCH(
               ...(data.location !== undefined && { location: data.location }),
               ...(tagFieldRequested && { tagId: data.tagId }),
               ...(colorKeyFieldRequested && { colorKey: data.colorKey }),
+              ...(outcomeStatusRequested && { status: data.status }),
               ...(data.clientId !== undefined && { clientId: data.clientId }),
               ...(data.serviceTypeId !== undefined && { serviceTypeId: data.serviceTypeId }),
               ...(data.priceCharged !== undefined && { priceCharged: data.priceCharged }),

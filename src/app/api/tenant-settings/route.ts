@@ -4,7 +4,7 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { EVENT_COLOR_KEYS, isValidHexColor, resolveEventColors } from "@/lib/colors/eventColors";
-import { assertCalendarHoursEnabled, PlanLimitError } from "@/lib/licensing/limits";
+import { assertCalendarHoursEnabled, assertBookingWidgetEnabled, PlanLimitError } from "@/lib/licensing/limits";
 
 const SETTINGS_SELECT = {
   requireClientForAppointments: true,
@@ -19,6 +19,9 @@ const SETTINGS_SELECT = {
   allowEditingBookedEvents: true,
   calendarStartMinute: true,
   calendarEndMinute: true,
+  publicBookingEnabled: true,
+  publicBookingMinNoticeMinutes: true,
+  publicBookingWindowDays: true,
 } as const;
 
 // Readable by any signed-in tenant member (not just ADMIN) - this drives
@@ -65,6 +68,9 @@ const updateSchema = z
     // neither bound means anything validated alone.
     calendarStartMinute: z.number().int().min(0).max(1440),
     calendarEndMinute: z.number().int().min(0).max(1440),
+    publicBookingEnabled: z.boolean(),
+    publicBookingMinNoticeMinutes: z.number().int().min(0).max(10_080),
+    publicBookingWindowDays: z.number().int().min(1).max(365),
     // Sparse - only the keys being changed need be present; merged onto the
     // existing stored overrides below rather than replacing them wholesale,
     // so changing one color doesn't require resending all five.
@@ -129,6 +135,27 @@ export async function PUT(request: NextRequest) {
       // is a paid feature - see assertCalendarHoursEnabled.
       if (rest.calendarStartMinute !== undefined || rest.calendarEndMinute !== undefined) {
         await assertCalendarHoursEnabled(tx, session.tenantId);
+      }
+
+      const touchesBookingWidgetSettings =
+        rest.publicBookingEnabled !== undefined ||
+        rest.publicBookingMinNoticeMinutes !== undefined ||
+        rest.publicBookingWindowDays !== undefined;
+      if (touchesBookingWidgetSettings) {
+        const allowed = await hasPermission(
+          tx,
+          session.tenantId,
+          session.role,
+          session.roleId,
+          "EDIT_BOOKING_WIDGET_SETTINGS"
+        );
+        if (!allowed) throw new Error("FORBIDDEN");
+      }
+      // Only gate on the paid-plan check when actually turning the widget on -
+      // a tenant that's already on (then downgraded) can still turn it back
+      // off, and the min-notice/window fields are meaningless once it's off.
+      if (rest.publicBookingEnabled === true) {
+        await assertBookingWidgetEnabled(tx, session.tenantId);
       }
 
       let mergedColors: Record<string, string> | undefined;

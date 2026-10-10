@@ -425,6 +425,12 @@ function toEvent(appt: ApiAppointment): CalendarEvent {
   };
 }
 
+/** "2024-01-01T09:00" - the format `<input type="datetime-local">` needs, in the browser's local time (not UTC). */
+function toInputValue(d: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Default time range when opening the create panel from a button rather than clicking a calendar slot - the next full hour, one hour long. */
 function nextHourSlot(): { start: Date; end: Date } {
   const start = new Date();
@@ -1762,6 +1768,7 @@ function StatusPill({
 function AppointmentDetailPanel({
   appointment,
   permissions,
+  allowEditingBookedEvents,
   canCancel,
   canEdit,
   canFindCoverage,
@@ -1772,6 +1779,9 @@ function AppointmentDetailPanel({
   showColorKey,
   colorTriples,
   tags,
+  staff,
+  serviceTypes,
+  clients,
   canCreateTag,
   onTagCreated,
   onClose,
@@ -1779,6 +1789,10 @@ function AppointmentDetailPanel({
 }: {
   appointment: ApiAppointment;
   permissions: Record<PermissionKey, boolean> | null;
+  // Settings > Calendar > "Allow editing booked events" - see its schema
+  // doc comment. ANDed into canEditEstimates below the same way the parent
+  // already ANDs it into canEdit itself (via canEditEvent).
+  allowEditingBookedEvents: boolean;
   canCancel: boolean;
   canEdit: boolean;
   canFindCoverage: boolean;
@@ -1792,13 +1806,28 @@ function AppointmentDetailPanel({
   showColorKey: boolean;
   colorTriples: Record<EventColorKey, ColorTriple>;
   tags: TagOption[];
+  staff: StaffOption[];
+  serviceTypes: ServiceTypeOption[];
+  clients: ClientOption[];
   canCreateTag: boolean;
   onTagCreated: () => void;
   onClose: () => void;
   onChanged: () => void;
 }) {
   const canViewEstimates = permissions?.VIEW_JOB_ESTIMATES ?? false;
-  const canEditEstimates = !readOnly && (permissions?.EDIT_JOB_ESTIMATES ?? false);
+  const canEditEstimates = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_JOB_ESTIMATES ?? false);
+  const [editing, setEditing] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editClientId, setEditClientId] = useState(appointment.clientId ?? "");
+  const [editServiceTypeId, setEditServiceTypeId] = useState(appointment.serviceTypeId ?? "");
+  const [editStaffId, setEditStaffId] = useState(appointment.staffId);
+  const [editLocationType, setEditLocationType] = useState(appointment.locationType);
+  const [editLocation, setEditLocation] = useState(appointment.location ?? "");
+  const [editPriceCharged, setEditPriceCharged] = useState(appointment.priceCharged ?? "");
+  const [editPaymentStatus, setEditPaymentStatus] = useState(appointment.paymentStatus);
+  const [editStart, setEditStart] = useState(() => toInputValue(new Date(appointment.startTime)));
+  const [editEnd, setEditEnd] = useState(() => toInputValue(new Date(appointment.endTime)));
   const [includeEstimate, setIncludeEstimate] = useState(
     appointment.estimatedDurationMinutes != null || appointment.estimatedValue != null
   );
@@ -1823,6 +1852,8 @@ function AppointmentDetailPanel({
   const [coverageLoading, setCoverageLoading] = useState(false);
   const [coverageError, setCoverageError] = useState<string | null>(null);
   const [assigning, setAssigning] = useState<string | null>(null);
+  const [outcomeSaving, setOutcomeSaving] = useState(false);
+  const [outcomeError, setOutcomeError] = useState<string | null>(null);
 
   async function saveColorValue(value: string) {
     setSavingTag(true);
@@ -1912,6 +1943,64 @@ function AppointmentDetailPanel({
     onChanged();
   }
 
+  async function setOutcomeStatus(status: "BOOKED" | "COMPLETED" | "NO_SHOW") {
+    setOutcomeSaving(true);
+    setOutcomeError(null);
+    try {
+      await fetchJson(`/api/appointments/${appointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      onChanged();
+    } catch (err) {
+      setOutcomeError(err instanceof Error ? err.message : "Couldn't update status.");
+      setOutcomeSaving(false);
+    }
+  }
+
+  async function saveEdits(e: React.FormEvent) {
+    e.preventDefault();
+    const start = new Date(editStart);
+    const end = new Date(editEnd);
+    if (end <= start) {
+      setEditError("End time must be after start time.");
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      await fetchJson(`/api/appointments/${appointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          staffId: editStaffId,
+          // Never sent for a shift - clientId only means anything on a real
+          // appointment, same as the create form's mode === "appointment" gate.
+          ...(isShift(appointment) ? {} : { clientId: editClientId || null }),
+          serviceTypeId: editServiceTypeId || null,
+          locationType: editLocationType,
+          location: editLocation.trim() || null,
+          priceCharged: editPriceCharged === "" ? null : Number(editPriceCharged),
+          paymentStatus: editPaymentStatus,
+        }),
+      });
+      onChanged();
+    } catch (err) {
+      setEditError(
+        err instanceof ApiError && err.status === 409
+          ? "That time overlaps another booking for this staff member."
+          : err instanceof Error
+            ? err.message
+            : "Couldn't save changes."
+      );
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   return (
     <div className="rounded-xl border border-primary-100 bg-linear-to-br from-primary-50 to-white p-5 shadow-sm">
       <div className="mb-3 flex items-start justify-between">
@@ -1921,61 +2010,208 @@ function AppointmentDetailPanel({
             <StatusPill appointment={appointment} colorTriples={colorTriples} />
           </div>
         </div>
-        <button onClick={onClose} className="text-sm text-gray-500 hover:underline">
-          Close
-        </button>
+        <div className="flex items-center gap-3">
+          {canEdit && !editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-sm font-medium text-primary-600 hover:underline"
+            >
+              Edit
+            </button>
+          )}
+          <button onClick={onClose} className="text-sm text-gray-500 hover:underline">
+            Close
+          </button>
+        </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-        <dt className="text-gray-500">Client</dt>
-        <dd>{appointment.client?.name ?? "— (internal/shift)"}</dd>
-        {appointment.client?.email && (
-          <>
-            <dt className="text-gray-500">Email</dt>
-            <dd>{appointment.client.email}</dd>
-          </>
-        )}
-        {appointment.client?.phone && (
-          <>
-            <dt className="text-gray-500">Phone</dt>
-            <dd>{appointment.client.phone}</dd>
-          </>
-        )}
-        {(!isShift(appointment) || showJobType) && (
-          <>
-            <dt className="text-gray-500">Service</dt>
-            <dd>{appointment.serviceType?.name ?? "—"}</dd>
-          </>
-        )}
-        <dt className="text-gray-500">Staff</dt>
-        <dd>{appointment.staff.displayName}</dd>
-        <dt className="text-gray-500">Meeting</dt>
-        <dd>{appointment.locationType === "ONLINE" ? "Online" : "In person"}</dd>
-        {appointment.location && (
-          <>
-            <dt className="text-gray-500">
-              {appointment.locationType === "ONLINE" ? "Link" : "Address"}
-            </dt>
-            <dd className="flex items-center gap-2">
-              <span>{appointment.location}</span>
-              {appointment.locationType === "IN_PERSON" && enableMapsNavigation && (
-                <a
-                  href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(appointment.location)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary-300 px-2 py-0.5 text-xs text-primary-700 hover:bg-primary-50"
-                >
-                  Open in Google Maps
-                </a>
-              )}
-            </dd>
-          </>
-        )}
-        <dt className="text-gray-500">Payment</dt>
-        <dd>{appointment.paymentStatus}</dd>
-      </dl>
+      {editing ? (
+        <form onSubmit={saveEdits} className="grid grid-cols-2 gap-3 text-sm">
+          {!isShift(appointment) && (
+            <label className="col-span-2 flex flex-col gap-1">
+              Client
+              <select
+                value={editClientId}
+                onChange={(e) => setEditClientId(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1"
+              >
+                <option value="">— (internal/shift)</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(!isShift(appointment) || showJobType) && (
+            <label className="flex flex-col gap-1">
+              Service
+              <select
+                value={editServiceTypeId}
+                onChange={(e) => setEditServiceTypeId(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1"
+              >
+                <option value="">—</option>
+                {serviceTypes.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="flex flex-col gap-1">
+            Staff
+            <select
+              value={editStaffId}
+              onChange={(e) => setEditStaffId(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            >
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.displayName}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            Starts
+            <input
+              type="datetime-local"
+              value={editStart}
+              onChange={(e) => setEditStart(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Ends
+            <input
+              type="datetime-local"
+              value={editEnd}
+              onChange={(e) => setEditEnd(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Meeting
+            <select
+              value={editLocationType}
+              onChange={(e) => setEditLocationType(e.target.value as "IN_PERSON" | "ONLINE")}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            >
+              <option value="IN_PERSON">In person</option>
+              <option value="ONLINE">Online</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            {editLocationType === "ONLINE" ? "Link" : "Address"}
+            <input
+              value={editLocation}
+              onChange={(e) => setEditLocation(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Price charged ($)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={editPriceCharged}
+              onChange={(e) => setEditPriceCharged(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            Payment
+            <select
+              value={editPaymentStatus}
+              onChange={(e) => setEditPaymentStatus(e.target.value)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            >
+              <option value="UNPAID">Unpaid</option>
+              <option value="PAID">Paid</option>
+              <option value="WAIVED">Waived</option>
+              <option value="REFUNDED">Refunded</option>
+            </select>
+          </label>
 
-      {(!isShift(appointment) || showColorKey) && (
+          {editError && <p className="col-span-2 text-sm text-red-600">{editError}</p>}
+
+          <div className="col-span-2 mt-1 flex gap-2">
+            <button
+              type="submit"
+              disabled={editSaving}
+              className="rounded-md bg-primary-500 px-3 py-1 text-sm text-white hover:bg-primary-600 disabled:opacity-50"
+            >
+              {editSaving ? "Saving..." : "Save changes"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false);
+                setEditError(null);
+              }}
+              className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-600 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      ) : (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          <dt className="text-gray-500">Client</dt>
+          <dd>{appointment.client?.name ?? "— (internal/shift)"}</dd>
+          {appointment.client?.email && (
+            <>
+              <dt className="text-gray-500">Email</dt>
+              <dd>{appointment.client.email}</dd>
+            </>
+          )}
+          {appointment.client?.phone && (
+            <>
+              <dt className="text-gray-500">Phone</dt>
+              <dd>{appointment.client.phone}</dd>
+            </>
+          )}
+          {(!isShift(appointment) || showJobType) && (
+            <>
+              <dt className="text-gray-500">Service</dt>
+              <dd>{appointment.serviceType?.name ?? "—"}</dd>
+            </>
+          )}
+          <dt className="text-gray-500">Staff</dt>
+          <dd>{appointment.staff.displayName}</dd>
+          <dt className="text-gray-500">Meeting</dt>
+          <dd>{appointment.locationType === "ONLINE" ? "Online" : "In person"}</dd>
+          {appointment.location && (
+            <>
+              <dt className="text-gray-500">
+                {appointment.locationType === "ONLINE" ? "Link" : "Address"}
+              </dt>
+              <dd className="flex items-center gap-2">
+                <span>{appointment.location}</span>
+                {appointment.locationType === "IN_PERSON" && enableMapsNavigation && (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(appointment.location)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full border border-primary-300 px-2 py-0.5 text-xs text-primary-700 hover:bg-primary-50"
+                  >
+                    Open in Google Maps
+                  </a>
+                )}
+              </dd>
+            </>
+          )}
+          <dt className="text-gray-500">Payment</dt>
+          <dd>{appointment.paymentStatus}</dd>
+        </dl>
+      )}
+
+      {!editing && (!isShift(appointment) || showColorKey) && (
       <div className="mt-4 border-t border-primary-100 pt-3">
         <h3 className="mb-2 text-sm font-medium text-primary-700">Color key</h3>
         {canEdit ? (
@@ -2069,7 +2305,7 @@ function AppointmentDetailPanel({
       </div>
       )}
 
-      {canViewEstimates && (!isShift(appointment) || showJobEstimate) && (
+      {!editing && canViewEstimates && (!isShift(appointment) || showJobEstimate) && (
         <div className="mt-4 border-t border-primary-100 pt-3">
           <h3 className="mb-2 text-sm font-medium text-primary-700">Job estimate</h3>
           {canEditEstimates ? (
@@ -2136,7 +2372,7 @@ function AppointmentDetailPanel({
         </div>
       )}
 
-      {canFindCoverage && appointment.status !== "CANCELLED" && (
+      {!editing && canFindCoverage && appointment.status !== "CANCELLED" && (
         <div className="mt-4 border-t border-primary-100 pt-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-primary-700">Need this covered?</h3>
@@ -2178,7 +2414,42 @@ function AppointmentDetailPanel({
         </div>
       )}
 
-      {canCancel && appointment.status !== "CANCELLED" && (
+      {!editing && canEdit && appointment.status !== "CANCELLED" && (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {appointment.status !== "COMPLETED" && (
+              <button
+                onClick={() => setOutcomeStatus("COMPLETED")}
+                disabled={outcomeSaving}
+                className="rounded-md border border-green-300 px-3 py-1 text-sm text-green-700 hover:bg-green-50 disabled:opacity-50"
+              >
+                Mark completed
+              </button>
+            )}
+            {appointment.status !== "NO_SHOW" && (
+              <button
+                onClick={() => setOutcomeStatus("NO_SHOW")}
+                disabled={outcomeSaving}
+                className="rounded-md border border-amber-300 px-3 py-1 text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50"
+              >
+                Mark no-show
+              </button>
+            )}
+            {(appointment.status === "COMPLETED" || appointment.status === "NO_SHOW") && (
+              <button
+                onClick={() => setOutcomeStatus("BOOKED")}
+                disabled={outcomeSaving}
+                className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Revert to booked
+              </button>
+            )}
+          </div>
+          {outcomeError && <p className="mt-1 text-sm text-red-600">{outcomeError}</p>}
+        </div>
+      )}
+
+      {!editing && canCancel && appointment.status !== "CANCELLED" && (
         <button
           onClick={cancelAppointment}
           className="mt-4 rounded-md border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
@@ -2334,11 +2605,6 @@ function CreateEntryPanel({
     setClientDropdownOpen(false);
   }
 
-  function toInputValue(d: Date): string {
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
-
   function fail(message: string) {
     setError(message);
     setConflict(false);
@@ -2454,6 +2720,7 @@ function CreateEntryPanel({
           locationType,
           location: location.trim() || null,
           tagId: resolvedTagId,
+          colorKey: resolvedColorKey,
         }),
       });
       onCreated();
@@ -2620,20 +2887,31 @@ function CreateEntryPanel({
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Color key (optional)
         <select
-          value={tagId}
+          value={colorValue}
           onChange={(e) => {
             const next = e.target.value;
-            setTagId(next);
+            setColorValue(next);
             setShowNewTagForm(next === NEW_TAG_VALUE);
           }}
           className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
           <option value="">—</option>
-          {visibleTags.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
+          <optgroup label="Built-in">
+            {baseColorOptionsFor(mode).map((key) => (
+              <option key={key} value={`${BASE_COLOR_VALUE_PREFIX}${key}`}>
+                {EVENT_COLOR_LABELS[key]}
+              </option>
+            ))}
+          </optgroup>
+          {visibleTags.length > 0 && (
+            <optgroup label="Custom">
+              {visibleTags.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
           {canCreateTag && <option value={NEW_TAG_VALUE}>+ Add new color key</option>}
         </select>
       </label>

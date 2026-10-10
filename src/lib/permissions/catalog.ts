@@ -53,6 +53,7 @@ export const PERMISSION_KEYS = [
   "DELETE_SCHEDULE_TEMPLATES",
   "APPLY_SCHEDULE_TEMPLATES",
   "EDIT_CALENDAR_SETTINGS",
+  "EDIT_BOOKING_WIDGET_SETTINGS",
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -92,6 +93,7 @@ export const PERMISSION_LABELS: Record<PermissionKey, string> = {
   DELETE_SCHEDULE_TEMPLATES: "Delete shift-schedule templates",
   APPLY_SCHEDULE_TEMPLATES: "Apply a template to generate real shifts",
   EDIT_CALENDAR_SETTINGS: "Manage calendar settings (holidays, blocked time, event colors, visible hours)",
+  EDIT_BOOKING_WIDGET_SETTINGS: "Manage the public booking widget (bookable services, staff working hours, embed snippet)",
 };
 
 /** Plain starter role names every new tenant gets at signup - a starting point, not a fixed list; the admin can rename, delete, or add to them freely from day one. */
@@ -137,6 +139,7 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     DELETE_SCHEDULE_TEMPLATES: true,
     APPLY_SCHEDULE_TEMPLATES: true,
     EDIT_CALENDAR_SETTINGS: true,
+    EDIT_BOOKING_WIDGET_SETTINGS: true,
   },
   Supervisor: {
     VIEW_STAFF: true,
@@ -178,6 +181,7 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     DELETE_SCHEDULE_TEMPLATES: false,
     APPLY_SCHEDULE_TEMPLATES: true,
     EDIT_CALENDAR_SETTINGS: false,
+    EDIT_BOOKING_WIDGET_SETTINGS: false,
   },
   Employee: {
     VIEW_STAFF: true,
@@ -214,6 +218,7 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     DELETE_SCHEDULE_TEMPLATES: false,
     APPLY_SCHEDULE_TEMPLATES: false,
     EDIT_CALENDAR_SETTINGS: false,
+    EDIT_BOOKING_WIDGET_SETTINGS: false,
   },
   Customer: {
     VIEW_STAFF: false,
@@ -250,6 +255,7 @@ export const DEFAULT_STARTER_ROLE_PERMISSIONS: Record<
     DELETE_SCHEDULE_TEMPLATES: false,
     APPLY_SCHEDULE_TEMPLATES: false,
     EDIT_CALENDAR_SETTINGS: false,
+    EDIT_BOOKING_WIDGET_SETTINGS: false,
   },
 };
 

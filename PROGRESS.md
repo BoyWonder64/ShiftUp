@@ -21,6 +21,44 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Appointments/shifts can now be marked Completed/No-show (ISSUES.md #3)
+`AppointmentStatus` already had `COMPLETED`/`NO_SHOW` as real enum values, but
+nothing - API or UI - could ever set them; every event stayed `BOOKED` until
+cancelled. `PATCH /api/appointments/[id]`'s schema (`src/app/api/appointments/[id]/route.ts`)
+now accepts `status: "BOOKED" | "COMPLETED" | "CANCELLED" | "NO_SHOW"` (was
+`"CANCELLED"` only) - `PENDING_PAYMENT` deliberately excluded, since that's an
+initial-booking-only state, not something set after the fact.
+
+- The existing `CANCELLED` branch (dedicated `CANCEL_SHIFTS`/
+  `CANCEL_APPOINTMENTS` gate, calls `cancelAppointment`) is untouched.
+  `COMPLETED`/`NO_SHOW`/reverting-to-`BOOKED` is a new `outcomeStatusRequested`
+  branch that folds into the same general-edit path as every other field on
+  this route - gated on `EDIT_SHIFTS`/`EDIT_APPOINTMENTS` (not a new
+  permission key) and still subject to the existing Settings > Calendar
+  "Allow editing booked events" tenant-wide switch, same as any other edit.
+- **UI**: `AppointmentDetailPanel` (`SchedulingCalendar.tsx`) gained "Mark
+  completed"/"Mark no-show" buttons next to the existing Cancel button
+  (gated on `canEdit`, hidden once the event is `CANCELLED`), plus a "Revert
+  to booked" button that appears once either outcome is set.
+- Reason/note field deliberately **not** added here - overlaps with the
+  separately-tracked, intentionally more robust "Notes on an appointment"
+  feature request in `TODO.md`; this ships status-only.
+- Verified: `tsc --noEmit` clean, `eslint` clean on both changed files.
+  **Not visually confirmed in the browser this session** - same tooling gap
+  as the entries below. Added to `VERIFY.md`.
+- **Unblocks ISSUES.md #4** (manager no-show/shift reporting dashboard,
+  design already signed off) - still not built, but no longer blocked on
+  this.
+
+### Color key picker now offers the 5 built-in colors, not just custom tags
+Raised 2026-10-09: "right now only the custom keys are present in the drop down. We need to be able to use the rest as well" - the "Color key" control (appointment/shift detail panel + create panel) only ever listed custom `EventTag` rows; the 5 built-in keys from Settings > Event colors (Appointment/Shift/Completed/No-show/Cancelled) were only ever assigned automatically (status/isShift), never pickable by hand.
+
+- **New `Appointment.colorKey`** (migration `add_appointment_color_key`, plain nullable `String`, validated against `EVENT_COLOR_KEYS` at the API layer rather than a DB enum) - mutually exclusive with `tagId` in the UI (selecting one clears the other; not enforced at the DB level, same as every other soft invariant in this app).
+- **`resolveEventColor`** (`src/lib/colors/eventColors.ts`) gained a `colorKey` field on its input, in the same priority slot `tagColor` already held - loses to a terminal status (cancelled/no-show/completed) exactly like a custom tag always has, so this isn't new semantics, just a second source for the same override. New `isEventColorKey` type guard.
+- **API**: `POST /api/appointments` and `PATCH /api/appointments/[id]` both take a new `colorKey` (nullable, `z.enum(EVENT_COLOR_KEYS)`); `createAppointment` (`src/modules/scheduling/service.ts`) passes it through.
+- **UI**: the "Color key" `<select>` in both `AppointmentDetailPanel` and `CreateEntryPanel` (`SchedulingCalendar.tsx`) now lists two `<optgroup>`s - "Built-in" (filtered per entry: appointment-only/shift-only keys hidden on the other kind, completed/no-show/cancelled always shown) and "Custom" (the existing tags) - behind one combined value space (`colorValueFor`/`parseColorValue`, a `base:<key>` prefix for built-in options so it can't collide with a real tag id). `RosterView.tsx` updated to pass `colorKey` through too, so its chips agree with the main calendar.
+- Verified: `tsc --noEmit` clean, `eslint` clean on all changed files, migration applied cleanly (one `_prisma_migrations` checksum-drift hiccup from the `BlockedTime` migration's hand-appended RLS block, fixed by updating the stored checksum to match the already-applied, already-correct file content - no data loss, no reset). **Not visually confirmed in the browser this session** - same tooling gap as the blocked-time entry above. Added to `VERIFY.md`.
+
 ### Removed `Role.level`/rank entirely - staff create/reassign/delete are now hardcoded ADMIN-only
 Raised directly: "the Rank number doesn't make any sense, can we scrap that?" The "Rank" field added in the entry below (same session, a few hours earlier) turned out to have no intuitive meaning to a non-technical admin configuring roles, so rather than keep a confusing number around it's been removed outright, along with the authorization logic it backed.
 

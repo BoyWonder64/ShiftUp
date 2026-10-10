@@ -28,12 +28,18 @@ from whatever an admin configured for appointments, and vice versa.
 
 **Needs:** separate these so Appointments and Shifts each have (and manage)
 their own independent set of job/service types, instead of one shared
-`ServiceType` table referenced by both. Likely means either two separate
-tables, or one table with a hard scope field (mirroring `EventTagScope`,
-see issue #2) enforced everywhere it's read/written - plus splitting
-`ServiceTypeManager.tsx` so each settings page (Appointments vs. Shifts) only
-shows/edits its own list, and `ShiftFormSettings.tsx`'s "Manage job types"
-link points at a shift-owned list instead of the Appointments page's.
+`ServiceType` table referenced by both. **Decided 2026-10-09: two fully
+separate tables** (e.g. `AppointmentServiceType`/`ShiftServiceType`), not
+one shared table with a scope field - a bigger migration than the
+`EventTagScope`-style approach, but a cleaner separation: no shared table
+for two conceptually different things, and no scope-filter checks needed on
+every read. Plus splitting `ServiceTypeManager.tsx` so each settings page
+(Appointments vs. Shifts) owns and edits its own distinct list/component,
+and `ShiftFormSettings.tsx`'s "Manage job types" link points at the new
+shift-owned list instead of the Appointments page's. Every existing
+reference to `ServiceType`/`serviceTypeId` (both API routes and
+`SchedulingCalendar.tsx`) needs auditing and splitting along with the
+migration - not just the settings UI.
 
 ### 2. Color tags live under Staff settings — need to be in Shifts/Appointments, separated from Staff
 
@@ -42,33 +48,17 @@ the app. Full detail in git history / `PROGRESS.md`.
 
 ### 3. No way to update a calendar event after it's created — e.g. logging a no-show
 
-**Status:** Open, raised 2026-10-02.
-
-Once an `Appointment`/shift is created, there's no way to update what
-actually happened on it afterward, beyond cancelling it. `AppointmentStatus`
-(`prisma/schema.prisma`) already has `PENDING_PAYMENT | BOOKED | COMPLETED |
-CANCELLED | NO_SHOW` as real enum values, but `PATCH /api/appointments/[id]`'s
-own validation schema only accepts `status: z.enum(["CANCELLED"])`
-(`src/app/api/appointments/[id]/route.ts`) - there's no path, API or UI, to
-ever mark an event `COMPLETED` or `NO_SHOW`, even though the data model was
-already built to support it. A client/staff no-show (or any job that needs a
-record of what actually happened, not just what was scheduled) currently has
-nowhere to be logged on the event itself.
-
-**Needs:** extend the PATCH route to accept the other status values (with
-whatever permission gating makes sense - likely distinct from whatever gates
-the existing cancel action), and add a real control on the appointment/shift
-detail panel in `SchedulingCalendar.tsx` to set it (today that panel only has
-the Cancel button). Probably also wants an optional free-text reason/note
-alongside the status change ("why was this a no-show") - overlaps with the
-separately-tracked "Notes on an appointment" feature request in `TODO.md`,
-though a single reason field here could ship ahead of that fuller multi-note
-system.
+**Status:** Resolved 2026-10-09 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in `PROGRESS.md`. (The optional free-text reason/note
+alongside the status change was deliberately left out - still tracked under
+the separate, more robust "Notes on an appointment" feature request in
+`TODO.md`.)
 
 ### 4. Manager dashboard for no-show / shift reporting — needs its own new setting
 
-**Status:** Open, raised 2026-10-02. Depends on issue #3 above - there's
-nothing real to report on until events can actually carry a logged outcome.
+**Status:** Open, raised 2026-10-02. Was blocked on issue #3 above - **no
+longer blocked**, since #3 shipped 2026-10-09 and events can now actually
+carry a logged `COMPLETED`/`NO_SHOW` outcome. Still not built.
 
 Once events can carry a real status (no-show, completed, etc.), a Manager or
 Admin needs somewhere to see the aggregate picture across staff/time - "how
@@ -109,8 +99,8 @@ viewing Manager already has visibility into (ties into the existing
 `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` visibility model rather than a
 separate access rule).
 
-**Design proposed 2026-10-02 (still blocked on issue #3, not built)** -
-answers to the open questions above, for sign-off before this is picked up:
+**Design proposed 2026-10-02, approved as-is 2026-10-09 - no longer blocked
+(#3 shipped), ready to build:**
 - **Metrics**: no-show count, completed count, cancelled count, scheduled/
   booked count, completion rate (%), and total hours worked (shifts) - all
   computed over whichever date range is selected, with an optional per-staff

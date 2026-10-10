@@ -77,7 +77,8 @@ export interface CreateAppointmentInput {
   location?: string | null;
   tagId?: string | null;
   colorKey?: string | null;
-  createdByUserId: string;
+  /** Null only for a public self-service booking (source: SELF_SERVICE) - no authenticated session to attribute it to. */
+  createdByUserId: string | null;
   source: "SELF_SERVICE" | "ADMIN";
 }
 

@@ -76,60 +76,60 @@ enum BillingPlan {
 /// All tenant-scoped data carries a tenantId and is additionally isolated at the
 /// database level via Postgres Row-Level Security (see prisma/migrations for the RLS policies).
 model Tenant {
-  id                           String   @id @default(uuid())
-  name                         String
-  slug                         String   @unique
-  timezone                     String   @default("UTC")
+  id                            String   @id @default(uuid())
+  name                          String
+  slug                          String   @unique
+  timezone                      String   @default("UTC")
   /// Admin-configurable: whether a client must be attached when creating an
   /// appointment. Off by default for tenants that book clientless work
   /// (internal-only visits, pure shift scheduling that still uses the
   /// appointment form) - toggled from the Settings admin page.
-  requireClientForAppointments Boolean  @default(true) @map("require_client_for_appointments")
+  requireClientForAppointments  Boolean  @default(true) @map("require_client_for_appointments")
   /// Admin-configurable: whether an in-person appointment's address shows an
   /// "Open in Google Maps" navigation link. On by default - toggled off for
   /// tenants that don't want that link shown (e.g. privacy preference, or
   /// addresses that aren't real navigable locations).
-  enableMapsNavigation         Boolean  @default(true) @map("enable_maps_navigation")
+  enableMapsNavigation          Boolean  @default(true) @map("enable_maps_navigation")
   /// The tenant's company logo, stored as a data: URL (e.g.
   /// "data:image/png;base64,...") rather than a file path - there's no blob
   /// storage wired up in this stack (see PROGRESS.md), and a small logo
   /// comfortably fits in a TEXT column. Null = no logo set. Admin-only to
   /// change (src/app/api/admin/logo/route.ts); shown in AppHeader for
   /// everyone in the tenant.
-  logoDataUrl                  String?  @map("logo_data_url")
+  logoDataUrl                   String?  @map("logo_data_url")
   /// Admin-configurable: which font the tenant's business name is rendered
   /// in (AppHeader, dashboard heading) - one of the keys in
   /// src/lib/fonts/companyNameFonts.ts. Null = the default body font (no
   /// override). Admin-only to change (src/app/api/admin/company-name-font/route.ts).
-  companyNameFont              String?  @map("company_name_font")
+  companyNameFont               String?  @map("company_name_font")
   /// Admin-configurable overrides for the 5 built-in event-type colors
   /// (appointment/shift/completed/noShow/cancelled), stored as a flat
   /// {key: "#rrggbb"} JSON object - only keys actually overridden need be
   /// present; `src/lib/colors/eventColors.ts` fills in the rest from the
   /// hardcoded defaults. Kept as JSON rather than 5 separate columns since
   /// it's always read/written as one unit and never queried by individual key.
-  eventColors                  Json?    @map("event_colors")
+  eventColors                   Json?    @map("event_colors")
   /// Admin-configurable: names of the computed holidays (US federal + major
   /// European, see src/lib/holidays/catalog.ts - computed, not stored) that
   /// show on the calendar, one checkbox per holiday rather than one toggle
   /// per region. Defaults to just the 11 US federal names - keep in sync
   /// with catalog.ts's `DEFAULT_ENABLED_HOLIDAY_NAMES`.
-  enabledHolidayNames          String[] @default(["New Year's Day", "Martin Luther King Jr. Day", "Washington's Birthday", "Memorial Day", "Juneteenth", "Independence Day", "Labor Day", "Columbus Day", "Veterans Day", "Thanksgiving Day", "Christmas Day"]) @map("enabled_holiday_names")
+  enabledHolidayNames           String[] @default(["New Year's Day", "Martin Luther King Jr. Day", "Washington's Birthday", "Memorial Day", "Juneteenth", "Independence Day", "Labor Day", "Columbus Day", "Veterans Day", "Thanksgiving Day", "Christmas Day"]) @map("enabled_holiday_names")
   /// Admin-configurable: which of the *enabled* computed holidays above
   /// should also render as a full-day blocked-time span (see BlockedTime)
   /// instead of just the plain holiday tint - e.g. a business that's fully
   /// closed on Christmas vs. one that just likes the day marked. A name
   /// here with no matching entry in enabledHolidayNames has no effect -
   /// blocking only ever applies on top of a holiday that's actually shown.
-  blockedHolidayNames          String[] @default([]) @map("blocked_holiday_names")
+  blockedHolidayNames           String[] @default([]) @map("blocked_holiday_names")
   /// Admin-configurable (Settings > "Shift form"): whether the shift
   /// create/detail forms show the job type (ServiceType), job estimate, and
   /// color key fields. On by default (today's existing behavior). Only
   /// affects shift mode - the appointment form's equivalent fields are
   /// unaffected by these.
-  showJobTypeOnShiftForm       Boolean  @default(true) @map("show_job_type_on_shift_form")
-  showJobEstimateOnShiftForm   Boolean  @default(true) @map("show_job_estimate_on_shift_form")
-  showColorKeyOnShiftForm      Boolean  @default(true) @map("show_color_key_on_shift_form")
+  showJobTypeOnShiftForm        Boolean  @default(true) @map("show_job_type_on_shift_form")
+  showJobEstimateOnShiftForm    Boolean  @default(true) @map("show_job_estimate_on_shift_form")
+  showColorKeyOnShiftForm       Boolean  @default(true) @map("show_color_key_on_shift_form")
   /// Admin-configurable (Settings > "Shift form"): whether two shifts for the
   /// same staff member are allowed to overlap in time (e.g. an overlapping
   /// handoff, or someone covering two roles at once). Off by default - the
@@ -141,7 +141,7 @@ model Tenant {
   /// switched per tenant. Never applies to appointments (clientId set) -
   /// those stay always-no-overlap via the DB constraint, this setting only
   /// relaxes the rule for clientless shift rows.
-  allowOverlappingShifts       Boolean  @default(false) @map("allow_overlapping_shifts")
+  allowOverlappingShifts        Boolean  @default(false) @map("allow_overlapping_shifts")
   /// Admin-configurable (Settings > Calendar): the Week/Day time gutter's
   /// displayed range, as minutes-from-midnight (0-1440, end > start).
   /// Defaults to the full day (0/1440 - today's existing behavior, no visual
@@ -151,8 +151,8 @@ model Tenant {
   /// is actually bookable; this only controls how much of the 24-hour grid
   /// renders at all, so most businesses can hide the dead overnight space
   /// they never use.
-  calendarStartMinute          Int      @default(0) @map("calendar_start_minute")
-  calendarEndMinute            Int      @default(1440) @map("calendar_end_minute")
+  calendarStartMinute           Int      @default(0) @map("calendar_start_minute")
+  calendarEndMinute             Int      @default(1440) @map("calendar_end_minute")
   /// Admin-configurable (Settings > Calendar): master on/off switch for
   /// editing an appointment/shift once it's booked - reassigning staff,
   /// rescheduling, changing the client/service/location/price/payment
@@ -163,21 +163,37 @@ model Tenant {
   /// default (today's existing behavior); EDIT_SHIFTS/EDIT_APPOINTMENTS/
   /// EDIT_JOB_ESTIMATES still apply on top of this when it's on - this is an
   /// extra tenant-wide gate, not a replacement for the per-role permissions.
-  allowEditingBookedEvents     Boolean  @default(true) @map("allow_editing_booked_events")
+  allowEditingBookedEvents      Boolean  @default(true) @map("allow_editing_booked_events")
+  /// Admin-configurable (Settings > Booking Widget, paid feature - see
+  /// assertBookingWidgetEnabled): master on/off switch for the public,
+  /// unauthenticated self-booking page/embed at /book/<slug>. Off by default -
+  /// turning it on is a deliberate choice distinct from just being on a paid
+  /// plan, same two-gate pattern as schedule templates (paid tier +
+  /// admin-toggleable). See ServiceType.isPubliclyBookable for which services
+  /// actually show up once this is on, and WorkingHours for what makes a
+  /// staff member's time show as bookable at all.
+  publicBookingEnabled          Boolean  @default(false) @map("public_booking_enabled")
+  /// Admin-configurable (Settings > Booking Widget): how soon from "now" a
+  /// public visitor is allowed to book a slot, in minutes - prevents booking
+  /// a slot 2 minutes from now that staff has no chance to see/prepare for.
+  publicBookingMinNoticeMinutes Int      @default(120) @map("public_booking_min_notice_minutes")
+  /// Admin-configurable (Settings > Booking Widget): how many days into the
+  /// future the public booking page shows availability for.
+  publicBookingWindowDays       Int      @default(30) @map("public_booking_window_days")
   /// SUPERADMIN-only (dev console > Customers): blocks every user of this
   /// tenant from logging in. Checked in POST /api/auth/login only - an
   /// already-active session isn't revoked (sessions are stateless, see
   /// src/lib/auth/session.ts), so a disabled tenant's logged-in users keep
   /// working until their session naturally expires or they log out, same
   /// limitation already flagged for password-reset in TODO.md.
-  disabled                     Boolean  @default(false) @map("disabled")
+  disabled                      Boolean  @default(false) @map("disabled")
   /// SUPERADMIN-only (dev console > Customers): leaves this tenant's License
   /// out of the Income page's revenue totals/counts - for test/demo/internal
   /// accounts that shouldn't skew real revenue numbers even if they carry a
   /// paid License for feature-testing purposes.
-  excludeFromIncome            Boolean  @default(false) @map("exclude_from_income")
-  createdAt                    DateTime @default(now()) @map("created_at")
-  updatedAt                    DateTime @updatedAt @map("updated_at")
+  excludeFromIncome             Boolean  @default(false) @map("exclude_from_income")
+  createdAt                     DateTime @default(now()) @map("created_at")
+  updatedAt                     DateTime @updatedAt @map("updated_at")
 
   license License?
   users   User[]
@@ -547,18 +563,24 @@ model WorkingHours {
 /// Appointment is pre-filled with; estimatedDurationMinutes/estimatedValue on
 /// Appointment itself can then be adjusted per actual job.
 model ServiceType {
-  id              String   @id @default(uuid())
-  tenantId        String   @map("tenant_id")
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name            String
-  durationMinutes Int      @map("duration_minutes")
+  id                 String   @id @default(uuid())
+  tenantId           String   @map("tenant_id")
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name               String
+  durationMinutes    Int      @map("duration_minutes")
   /// Null = no price set (e.g. police work that's never billed) - distinct from $0, which is an explicit "free".
-  price           Decimal? @db.Decimal(10, 2)
-  requiresPayment Boolean  @default(false) @map("requires_payment")
+  price              Decimal? @db.Decimal(10, 2)
+  requiresPayment    Boolean  @default(false) @map("requires_payment")
   /// Inactive service types are hidden from new scheduling but kept for existing appointments that reference them.
-  isActive        Boolean  @default(true) @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  isActive           Boolean  @default(true) @map("is_active")
+  /// Admin-configurable (Settings > Booking Widget, paid feature): whether
+  /// this service type shows up as a choice on the public self-booking
+  /// page/embed - separate from isActive, which just governs internal
+  /// (admin/staff) scheduling. A service type can stay active for internal
+  /// use while never being offered publicly.
+  isPubliclyBookable Boolean  @default(false) @map("is_publicly_bookable")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   appointments           Appointment[]
   scheduleTemplateShifts ScheduleTemplateShift[]
@@ -616,7 +638,10 @@ model Appointment {
   locationType             MeetingLocationType @default(IN_PERSON) @map("location_type")
   /// Physical address when locationType is IN_PERSON, or a meeting link/platform note when ONLINE.
   location                 String?             @map("location")
-  createdByUserId          String              @map("created_by_user_id")
+  /// Null only for a public self-service booking (source: SELF_SERVICE,
+  /// created with no authenticated session) - every admin-created row still
+  /// always sets this.
+  createdByUserId          String?             @map("created_by_user_id")
   source                   AppointmentSource   @default(ADMIN)
   /// Optional custom color tag (see EventTag) overriding this entry's
   /// default status-based color on the calendar.

@@ -14,7 +14,8 @@ export type TenantRole = "ADMIN" | "STAFF";
 
 export type TenantContext =
   | { kind: "tenant"; tenantId: string; userId: string; role: TenantRole }
-  | { kind: "system" };
+  | { kind: "system" }
+  | { kind: "public"; tenantId: string };
 
 const storage = new AsyncLocalStorage<TenantContext>();
 
@@ -49,6 +50,29 @@ export async function runInTenantContext<T>(
   fn: (tx: Tx) => Promise<T>
 ): Promise<T> {
   const ctx: TenantContext = { kind: "tenant", tenantId, userId, role };
+  return storage.run(ctx, () =>
+    prisma.$transaction(async (tx) => {
+      await applyContextToTx(tx, ctx);
+      return fn(tx);
+    })
+  );
+}
+
+/**
+ * Runs fn inside a DB transaction scoped to one tenant with no authenticated
+ * user/role at all - for the public, unauthenticated booking-widget routes
+ * only (src/app/api/public/booking/**). RLS still confines every query to
+ * tenantId exactly like runInTenantContext (policies key only on
+ * app.tenant_id/app.is_superadmin, never on role - see the enable_rls
+ * migration), but there is no session to check hasPermission against: each
+ * public route decides for itself exactly what it reads/writes rather than
+ * gating on the permission matrix.
+ */
+export async function runInPublicContext<T>(
+  tenantId: string,
+  fn: (tx: Tx) => Promise<T>
+): Promise<T> {
+  const ctx: TenantContext = { kind: "public", tenantId };
   return storage.run(ctx, () =>
     prisma.$transaction(async (tx) => {
       await applyContextToTx(tx, ctx);

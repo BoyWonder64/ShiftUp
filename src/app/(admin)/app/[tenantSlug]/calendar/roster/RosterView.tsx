@@ -190,7 +190,7 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
                   <div className="mt-3 flex flex-wrap gap-2">
                     {items.map((appt) => {
                       const c = resolveEventColor(
-                        { status: appt.status, isShift: isShift(appt), tagColor: appt.tag?.color },
+                        { status: appt.status, isShift: isShift(appt), tagColor: appt.tag?.color, colorKey: appt.colorKey },
                         colorTriples
                       );
                       const cancelled = appt.status === "CANCELLED";

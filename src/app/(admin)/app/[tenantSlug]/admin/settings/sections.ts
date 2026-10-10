@@ -57,6 +57,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     requirement: "ADMIN",
   },
   {
+    slug: "booking-widget",
+    label: "Booking Widget",
+    description: "Let clients book themselves from your own website - bookable services, staff hours, and the embed snippet.",
+    requirement: "EDIT_BOOKING_WIDGET_SETTINGS",
+  },
+  {
     slug: "account",
     label: "Account",
     description: "Your own login, password, and language preference.",

@@ -84,6 +84,9 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   // to summarize here either; only needed to satisfy
   // Record<PermissionKey, string>'s exhaustiveness.
   EDIT_CALENDAR_SETTINGS: "edit",
+  // Same as EDIT_CALENDAR_SETTINGS above - a Settings-page permission
+  // (Settings > Booking Widget), not in any ACCESS_CATEGORIES list.
+  EDIT_BOOKING_WIDGET_SETTINGS: "edit",
 };
 
 async function buildAccessSummary(tx: Tx, tenantId: string, role: string, roleId: string | null) {
