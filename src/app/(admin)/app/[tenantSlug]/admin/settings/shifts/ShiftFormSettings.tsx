@@ -155,7 +155,7 @@ export function ShiftFormSettings() {
       <p className="mt-4 border-t border-gray-100 pt-3 text-sm text-gray-500">
         Need to add or edit the job types themselves (what shows up in the
         dropdown)?{" "}
-        <a href="#service-types" className="font-medium text-primary-700 hover:underline">
+        <a href="#shift-service-types" className="font-medium text-primary-700 hover:underline">
           Manage job types
         </a>{" "}
         below.

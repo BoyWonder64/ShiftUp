@@ -1,5 +1,5 @@
 import { ShiftFormSettings } from "./ShiftFormSettings";
-import { ServiceTypeManager } from "../appointments/ServiceTypeManager";
+import { ShiftServiceTypeManager } from "./ShiftServiceTypeManager";
 import { requireSettingsSection } from "../access";
 
 export default async function ShiftsSettingsPage({ params }: { params: Promise<{ tenantSlug: string }> }) {
@@ -11,10 +11,9 @@ export default async function ShiftsSettingsPage({ params }: { params: Promise<{
       <h2 className="text-xl font-semibold tracking-tight">Shifts</h2>
       <ShiftFormSettings />
       {/* ShiftFormSettings' own "Manage job types" link points at this
-          section's id (#service-types) - it's the same ServiceType data the
-          Appointments settings page manages, just also relevant here since
-          shift forms pick from it too. */}
-      <ServiceTypeManager />
+          section's own id (#shift-service-types) - ISSUES.md #1 split the
+          shift-only job types out of the Appointments settings page's list. */}
+      <ShiftServiceTypeManager />
     </div>
   );
 }

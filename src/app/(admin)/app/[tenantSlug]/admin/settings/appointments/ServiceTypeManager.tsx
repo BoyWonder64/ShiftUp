@@ -43,6 +43,13 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+/**
+ * Appointment-only job/service types (ISSUES.md #1) - split out from the
+ * formerly-shared `ServiceType` table, which both this Appointments settings
+ * page and the Shifts settings page used to render/edit together. The
+ * Shifts settings page has its own, simpler `ShiftServiceTypeManager`
+ * instead (no price/payment - a shift has neither).
+ */
 export function ServiceTypeManager() {
   const [serviceTypes, setServiceTypes] = useState<ServiceType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,7 +70,7 @@ export function ServiceTypeManager() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await fetchJson<{ serviceTypes: ServiceType[] }>("/api/service-types");
+        const data = await fetchJson<{ serviceTypes: ServiceType[] }>("/api/appointment-service-types");
         setServiceTypes(data.serviceTypes);
       } catch {
         setError("Couldn't load service types.");
@@ -81,7 +88,7 @@ export function ServiceTypeManager() {
     setCreating(true);
     setError(null);
     try {
-      const data = await fetchJson<{ serviceType: ServiceType }>("/api/service-types", {
+      const data = await fetchJson<{ serviceType: ServiceType }>("/api/appointment-service-types", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), durationMinutes: minutes, price: dollars, requiresPayment }),
@@ -111,7 +118,7 @@ export function ServiceTypeManager() {
     setSavingId(id);
     setError(null);
     try {
-      const data = await fetchJson<{ serviceType: ServiceType }>(`/api/service-types/${id}`, {
+      const data = await fetchJson<{ serviceType: ServiceType }>(`/api/appointment-service-types/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -139,7 +146,7 @@ export function ServiceTypeManager() {
     setTogglingId(s.id);
     setError(null);
     try {
-      await fetchJson(`/api/service-types/${s.id}`, {
+      await fetchJson(`/api/appointment-service-types/${s.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: next }),
@@ -156,7 +163,7 @@ export function ServiceTypeManager() {
     setDeletingId(id);
     setError(null);
     try {
-      await fetchJson(`/api/service-types/${id}`, { method: "DELETE" });
+      await fetchJson(`/api/appointment-service-types/${id}`, { method: "DELETE" });
       setServiceTypes((prev) => prev.filter((s) => s.id !== id));
       if (editingId === id) {
         setEditingId(null);
@@ -170,13 +177,13 @@ export function ServiceTypeManager() {
   }
 
   return (
-    <section id="service-types" className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+    <section id="appointment-service-types" className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Service types</h2>
       <p className="mt-1 text-sm text-gray-500">
-        The job types staff pick from when scheduling an appointment or shift - name, default duration, and an
+        The job types staff pick from when scheduling an appointment - name, default duration, and an
         optional price. Leave price blank for work that doesn&apos;t have one (e.g. unbilled visits); an
         explicit $0 is stored separately but displays the same way - neither one shows a price. Turn a
-        service type off to hide it from new scheduling without losing it from past appointments or shifts.
+        service type off to hide it from new scheduling without losing it from past appointments.
       </p>
 
       {loading ? (

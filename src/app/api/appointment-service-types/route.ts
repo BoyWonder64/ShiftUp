@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
       async (tx) => {
         const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_SERVICES");
         if (!allowed) throw new Error("FORBIDDEN");
-        return tx.serviceType.findMany({
+        return tx.appointmentServiceType.findMany({
           where: activeOnly ? { isActive: true } : undefined,
           orderBy: { name: "asc" },
         });
@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
     if (err instanceof Error && (err.message === "UNAUTHENTICATED" || err.message === "FORBIDDEN")) {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
     }
-    console.error("Failed to list service types", err);
+    console.error("Failed to list appointment service types", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }
 }
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       async (tx) => {
         const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "CREATE_SERVICES");
         if (!allowed) throw new Error("FORBIDDEN");
-        return tx.serviceType.create({ data: { tenantId: session.tenantId, ...data } });
+        return tx.appointmentServiceType.create({ data: { tenantId: session.tenantId, ...data } });
       }
     );
 
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     if (err instanceof Error && err.message === "FORBIDDEN") {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
     }
-    console.error("Failed to create service type", err);
+    console.error("Failed to create appointment service type", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }
 }

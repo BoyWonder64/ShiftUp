@@ -2,6 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
 import { AppHeader } from "@/components/AppHeader";
 import { RosterView } from "./RosterView";
 
@@ -17,12 +18,13 @@ export default async function RosterPage({
     redirect("/login");
   }
 
-  const { tenant, canView, canViewScheduleTemplates } = await runInTenantContext(
+  const { tenant, canView, canViewScheduleTemplates, calendarAccess } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
+      const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
       // Manager-facing by design - gated on VIEW_ROSTER (an EMPLOYEE-ish role
       // already has the "All staff" filter on the regular calendar - that gap
       // is tracked separately in TODO.md under "Who can see who isn't
@@ -38,7 +40,18 @@ export default async function RosterPage({
         session.roleId,
         "VIEW_SCHEDULE_TEMPLATES"
       );
-      return { tenant, canView, canViewScheduleTemplates };
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(
+            tx,
+            session.tenantId!,
+            session.role,
+            session.roleId,
+            tenant,
+            license?.tier ?? "BOTH",
+            license?.billingPlan ?? "FREE"
+          )
+        : null;
+      return { tenant, canView, canViewScheduleTemplates, calendarAccess };
     }
   );
 
@@ -56,6 +69,7 @@ export default async function RosterPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        calendarAccess={calendarAccess ?? undefined}
         canViewRoster
         canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}

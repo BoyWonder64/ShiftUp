@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { PERMISSION_KEYS, type PermissionKey } from "@/lib/permissions/catalog";
+import { type PermissionKey } from "@/lib/permissions/catalog";
 import { RoleDetailPanel } from "./RoleDetailPanel";
 
 export interface RoleRow {
@@ -126,7 +126,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
           },
         ],
       },
-      { label: "Roster", keys: ["VIEW_ROSTER"] },
+      { label: "Roster & reports", keys: ["VIEW_ROSTER", "VIEW_SHIFT_REPORTS"] },
       { label: "Job estimates", keys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
     ],
   },
@@ -325,30 +325,18 @@ export function RolesAndPermissionsEditor() {
       <aside className="flex w-full flex-shrink-0 flex-col gap-3 lg:w-64">
         <div className="flex flex-col gap-1 rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
           {roles.length === 0 && <p className="px-2 py-1 text-sm text-gray-400">No roles yet.</p>}
-          {roles.map((role) => {
-            const roleGrants = grants[role.id] ?? ({} as Record<PermissionKey, boolean>);
-            const grantedCount = PERMISSION_KEYS.filter((k) => roleGrants[k]).length;
-            return (
-              <button
-                key={role.id}
-                type="button"
-                onClick={() => setSelectedRoleId(role.id)}
-                className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
-                  role.id === selectedRoleId ? "bg-primary-50 text-primary-700" : "text-gray-700 hover:bg-gray-50"
-                }`}
-              >
-                <span className="truncate">{role.name}</span>
-                <span
-                  title={`${grantedCount} of ${PERMISSION_KEYS.length} permissions granted`}
-                  className={`shrink-0 text-xs font-normal tabular-nums ${
-                    role.id === selectedRoleId ? "text-primary-400" : "text-gray-400"
-                  }`}
-                >
-                  {grantedCount}/{PERMISSION_KEYS.length} granted
-                </span>
-              </button>
-            );
-          })}
+          {roles.map((role) => (
+            <button
+              key={role.id}
+              type="button"
+              onClick={() => setSelectedRoleId(role.id)}
+              className={`flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors ${
+                role.id === selectedRoleId ? "bg-primary-50 text-primary-700" : "text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              <span className="truncate">{role.name}</span>
+            </button>
+          ))}
         </div>
 
         <form

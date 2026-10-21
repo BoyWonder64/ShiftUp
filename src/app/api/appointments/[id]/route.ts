@@ -26,24 +26,34 @@ export async function GET(
       if (!appointment) return null;
 
       // Same VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS scoping as the list
-      // endpoint - without it for this appointment's type, only its own
-      // assigned staff member can fetch it directly by id.
-      const isShift = !appointment.clientId;
+      // endpoint - without it for this entry's kind, only its own assigned
+      // staff member can fetch it directly by id. Keyed on entryKind, not
+      // clientId presence, since a CUSTOM entry can have a client or not
+      // (see the schema's entryKind doc comment).
       const canView = await hasPermission(
         tx,
         session.tenantId,
         session.role,
         session.roleId,
-        isShift ? "VIEW_SHIFTS" : "VIEW_APPOINTMENTS"
+        appointment.entryKind === "SHIFT"
+          ? "VIEW_SHIFTS"
+          : appointment.entryKind === "CUSTOM"
+            ? "VIEW_CUSTOM_CALENDAR"
+            : "VIEW_APPOINTMENTS"
       );
       if (!canView) throw new Error("FORBIDDEN");
-      const canViewAll = await hasPermission(
-        tx,
-        session.tenantId,
-        session.role,
-        session.roleId,
-        isShift ? "VIEW_ALL_SHIFTS" : "VIEW_ALL_APPOINTMENTS"
-      );
+      // CUSTOM entries have no separate "view all" permission - VIEW_CUSTOM_CALENDAR
+      // alone grants seeing every one, same as the all-* keys do for shifts/appointments.
+      const canViewAll =
+        appointment.entryKind === "CUSTOM"
+          ? true
+          : await hasPermission(
+              tx,
+              session.tenantId,
+              session.role,
+              session.roleId,
+              appointment.entryKind === "SHIFT" ? "VIEW_ALL_SHIFTS" : "VIEW_ALL_APPOINTMENTS"
+            );
       if (!canViewAll) {
         const own = await getOwnStaffProfile(tx, session.userId);
         if (own?.id !== appointment.staffId) throw new Error("FORBIDDEN");
@@ -133,8 +143,8 @@ export async function PATCH(
         // Appointment, which don't know about permissions) so the
         // CANCEL_SHIFTS/CANCEL_APPOINTMENTS and EDIT_SHIFTS/EDIT_APPOINTMENTS
         // split below can pick the right key for this specific event.
-        const existing = await tx.appointment.findUniqueOrThrow({ where: { id }, select: { clientId: true } });
-        const isShiftEvent = !existing.clientId;
+        const existing = await tx.appointment.findUniqueOrThrow({ where: { id }, select: { entryKind: true } });
+        const entryKind = existing.entryKind;
 
         if (data.status === "CANCELLED") {
           const canCancel = await hasPermission(
@@ -142,7 +152,7 @@ export async function PATCH(
             session.tenantId,
             session.role,
             session.roleId,
-            isShiftEvent ? "CANCEL_SHIFTS" : "CANCEL_APPOINTMENTS"
+            entryKind === "SHIFT" ? "CANCEL_SHIFTS" : entryKind === "CUSTOM" ? "CANCEL_CUSTOM_ENTRIES" : "CANCEL_APPOINTMENTS"
           );
           if (!canCancel) throw new Error("FORBIDDEN");
           return cancelAppointment(tx, id);
@@ -174,7 +184,7 @@ export async function PATCH(
             session.tenantId,
             session.role,
             session.roleId,
-            isShiftEvent ? "EDIT_SHIFTS" : "EDIT_APPOINTMENTS"
+            entryKind === "SHIFT" ? "EDIT_SHIFTS" : entryKind === "CUSTOM" ? "EDIT_CUSTOM_ENTRIES" : "EDIT_APPOINTMENTS"
           );
           if (!canEdit) throw new Error("FORBIDDEN");
         }
@@ -216,7 +226,16 @@ export async function PATCH(
               ...(colorKeyFieldRequested && { colorKey: data.colorKey }),
               ...(outcomeStatusRequested && { status: data.status }),
               ...(data.clientId !== undefined && { clientId: data.clientId }),
-              ...(data.serviceTypeId !== undefined && { serviceTypeId: data.serviceTypeId }),
+              // Routed to whichever table matches this row's kind
+              // (ISSUES.md #1) - entryKind was read above and never changes
+              // in the same request a serviceTypeId swap would also apply
+              // to. APPOINTMENT picks AppointmentServiceType; SHIFT and
+              // CUSTOM both pick ShiftServiceType (no third ServiceType
+              // table - see the schema's entryKind doc comment).
+              ...(data.serviceTypeId !== undefined &&
+                (entryKind === "APPOINTMENT"
+                  ? { appointmentServiceTypeId: data.serviceTypeId }
+                  : { shiftServiceTypeId: data.serviceTypeId })),
               ...(data.priceCharged !== undefined && { priceCharged: data.priceCharged }),
               ...(data.paymentStatus !== undefined && { paymentStatus: data.paymentStatus }),
             },

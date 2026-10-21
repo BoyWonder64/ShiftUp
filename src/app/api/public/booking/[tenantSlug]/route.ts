@@ -69,6 +69,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       return createAppointment(tx, tenantId, {
         staffId: match.staffId,
+        entryKind: "APPOINTMENT",
         clientId: client.id,
         serviceTypeId: data.serviceTypeId,
         startTime: match.start,

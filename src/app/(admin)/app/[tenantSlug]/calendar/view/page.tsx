@@ -2,6 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
 import { AppHeader } from "@/components/AppHeader";
 import { SchedulingCalendar } from "../SchedulingCalendar";
 
@@ -23,24 +24,28 @@ export default async function ReadOnlyCalendarPage({
     redirect("/login");
   }
 
-  const { tenant, license, canViewRoster, canViewScheduleTemplates } = await runInTenantContext(
-    session.tenantId,
-    session.userId,
-    session.role,
-    async (tx) => {
+  const { tenant, canViewRoster, canViewShiftReports, canViewScheduleTemplates, calendarAccess } =
+    await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
-      const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
-      const canViewScheduleTemplates = await hasPermission(
-        tx,
-        session.tenantId!,
-        session.role,
-        session.roleId,
-        "VIEW_SCHEDULE_TEMPLATES"
-      );
-      return { tenant, license, canViewRoster, canViewScheduleTemplates };
-    }
-  );
+      const [canViewRoster, canViewShiftReports, canViewScheduleTemplates] = await Promise.all([
+        hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER"),
+        hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_SHIFT_REPORTS"),
+        hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_SCHEDULE_TEMPLATES"),
+      ]);
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(
+            tx,
+            session.tenantId!,
+            session.role,
+            session.roleId,
+            tenant,
+            license?.tier ?? "BOTH",
+            license?.billingPlan ?? "FREE"
+          )
+        : null;
+      return { tenant, canViewRoster, canViewShiftReports, canViewScheduleTemplates, calendarAccess };
+    });
 
   if (!tenant || tenant.slug !== tenantSlug) {
     notFound();
@@ -52,7 +57,9 @@ export default async function ReadOnlyCalendarPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        calendarAccess={calendarAccess ?? undefined}
         canViewRoster={canViewRoster}
+        canViewShiftReports={canViewShiftReports}
         canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}
@@ -72,7 +79,7 @@ export default async function ReadOnlyCalendarPage({
           <span className="text-lg text-gray-900">{tenant.name}</span>
           <span className="text-lg text-gray-400">(view only)</span>
         </div>
-        <SchedulingCalendar readOnly licenseTier={license?.tier ?? "BOTH"} />
+        <SchedulingCalendar readOnly calendarKind="all" />
       </main>
     </div>
   );

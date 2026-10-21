@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
 import { AppHeader } from "@/components/AppHeader";
 import {
   ONE_TIME_PRICE_CENTS,
@@ -25,14 +26,25 @@ export default async function BillingPage({
     redirect("/login");
   }
 
-  const { tenant, license } = await runInTenantContext(
+  const { tenant, license, calendarAccess } = await runInTenantContext(
     session.tenantId,
     session.userId,
     "ADMIN",
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
-      return { tenant, license };
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(
+            tx,
+            session.tenantId!,
+            "ADMIN",
+            session.roleId,
+            tenant,
+            license?.tier ?? "BOTH",
+            license?.billingPlan ?? "FREE"
+          )
+        : null;
+      return { tenant, license, calendarAccess };
     }
   );
 
@@ -46,6 +58,7 @@ export default async function BillingPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role="ADMIN"
+        calendarAccess={calendarAccess ?? undefined}
         canViewRoster
         canViewScheduleTemplates
         logoUrl={tenant.logoDataUrl}

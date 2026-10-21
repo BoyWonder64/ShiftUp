@@ -7,6 +7,7 @@ import { enUS } from "date-fns/locale";
 import {
   appointmentTitle,
   fetchJson,
+  isCustomEntry,
   isShift,
   type ApiAppointment,
   type StaffOption,
@@ -35,8 +36,15 @@ function rangeFor(date: Date, granularity: ViewGranularity): { start: Date; end:
   return { start, end };
 }
 
+type KindFilter = "both" | "appointment" | "shift" | "custom";
+
 export function RosterView({ tenantSlug }: { tenantSlug: string }) {
   const [granularity, setGranularity] = useState<ViewGranularity>("week");
+  // Same four-way split as the main calendar's own Appointments/Shifts/
+  // Custom/Both switcher (SchedulingCalendar.tsx) - Roster mixed every kind
+  // together with no way to separate them, raised directly as still-combined
+  // even after that switcher shipped elsewhere.
+  const [kindFilter, setKindFilter] = useState<KindFilter>("both");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [appointments, setAppointments] = useState<ApiAppointment[]>([]);
@@ -81,9 +89,16 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
     };
   }, [range.start, range.end]);
 
+  const filteredAppointments = useMemo(() => {
+    if (kindFilter === "both") return appointments;
+    if (kindFilter === "shift") return appointments.filter(isShift);
+    if (kindFilter === "custom") return appointments.filter(isCustomEntry);
+    return appointments.filter((a) => !isShift(a) && !isCustomEntry(a));
+  }, [appointments, kindFilter]);
+
   const byStaff = useMemo(() => {
     const map = new Map<string, ApiAppointment[]>();
-    for (const appt of appointments) {
+    for (const appt of filteredAppointments) {
       const list = map.get(appt.staffId) ?? [];
       list.push(appt);
       map.set(appt.staffId, list);
@@ -92,7 +107,7 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
       list.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
     }
     return map;
-  }, [appointments]);
+  }, [filteredAppointments]);
 
   function go(delta: number) {
     setAnchorDate((prev) => {
@@ -139,6 +154,30 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
         <p className="text-lg font-medium text-gray-900">{rangeLabel}</p>
 
         <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1 text-sm">
+          {(
+            [
+              ["both", "Both"],
+              ["appointment", "Appointments"],
+              ["shift", "Shifts"],
+              ["custom", "Custom"],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKindFilter(k)}
+              className={`rounded-full px-3 py-1.5 font-medium transition-all duration-150 ${
+                kindFilter === k
+                  ? "bg-white text-primary-700 shadow-sm"
+                  : "text-gray-600 hover:text-primary-600"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1 text-sm">
           {(["day", "week"] as const).map((g) => (
             <button
               key={g}
@@ -164,8 +203,9 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
         <div className="flex flex-col gap-3">
           {staff.map((member) => {
             const items = byStaff.get(member.id) ?? [];
-            const apptCount = items.filter((i) => !isShift(i)).length;
+            const apptCount = items.filter((i) => !isShift(i) && !isCustomEntry(i)).length;
             const shiftCount = items.filter(isShift).length;
+            const customCount = items.filter(isCustomEntry).length;
             return (
               <div key={member.id} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -173,7 +213,7 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
                     <h2 className="text-base font-medium text-gray-900">{member.displayName}</h2>
                     <span className="text-xs text-gray-400">
                       {apptCount} appointment{apptCount === 1 ? "" : "s"} · {shiftCount} shift
-                      {shiftCount === 1 ? "" : "s"}
+                      {shiftCount === 1 ? "" : "s"} · {customCount} custom
                     </span>
                   </div>
                   <Link

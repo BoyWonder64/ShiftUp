@@ -17,11 +17,14 @@ const SETTINGS_SELECT = {
   showColorKeyOnShiftForm: true,
   allowOverlappingShifts: true,
   allowEditingBookedEvents: true,
+  showPaymentStatus: true,
   calendarStartMinute: true,
   calendarEndMinute: true,
   publicBookingEnabled: true,
   publicBookingMinNoticeMinutes: true,
   publicBookingWindowDays: true,
+  appointmentsCalendarEnabled: true,
+  shiftsCalendarEnabled: true,
 } as const;
 
 // Readable by any signed-in tenant member (not just ADMIN) - this drives
@@ -62,6 +65,7 @@ const updateSchema = z
     showColorKeyOnShiftForm: z.boolean(),
     allowOverlappingShifts: z.boolean(),
     allowEditingBookedEvents: z.boolean(),
+    showPaymentStatus: z.boolean(),
     // Minutes-from-midnight bounds on the calendar grid's displayed range
     // (see Tenant.calendarStartMinute/calendarEndMinute) - always sent as a
     // pair (see CalendarHoursSettings.tsx), checked together below since
@@ -71,6 +75,8 @@ const updateSchema = z
     publicBookingEnabled: z.boolean(),
     publicBookingMinNoticeMinutes: z.number().int().min(0).max(10_080),
     publicBookingWindowDays: z.number().int().min(1).max(365),
+    appointmentsCalendarEnabled: z.boolean(),
+    shiftsCalendarEnabled: z.boolean(),
     // Sparse - only the keys being changed need be present; merged onto the
     // existing stored overrides below rather than replacing them wholesale,
     // so changing one color doesn't require resending all five.
@@ -117,7 +123,10 @@ export async function PUT(request: NextRequest) {
         rest.showJobEstimateOnShiftForm !== undefined ||
         rest.showColorKeyOnShiftForm !== undefined ||
         rest.allowOverlappingShifts !== undefined ||
-        rest.allowEditingBookedEvents !== undefined;
+        rest.allowEditingBookedEvents !== undefined ||
+        rest.showPaymentStatus !== undefined ||
+        rest.appointmentsCalendarEnabled !== undefined ||
+        rest.shiftsCalendarEnabled !== undefined;
       if (touchesAdminOnlySettings && session.role !== "ADMIN") throw new Error("FORBIDDEN");
 
       const touchesCalendarSettings =

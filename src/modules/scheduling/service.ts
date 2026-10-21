@@ -28,28 +28,35 @@ function isOverlapConstraintViolation(err: unknown): boolean {
 /**
  * The DB's appointments_no_overlapping_staff_time EXCLUDE constraint (see the
  * add_phase1_scheduling_and_permissions and add_allow_overlapping_shifts
- * migrations) only ever fires for rows with a client attached - a shift
- * (clientId null) is never blocked by Postgres, so whether a staff member's
- * shifts may overlap is enforced here instead, gated on the tenant's
- * Settings > "Shift form" toggle. Known gap: this is a plain read-then-write
- * check inside the same transaction, not a DB-level guarantee, so two
- * concurrent requests creating overlapping shifts for the same staff member
- * at the same instant could both slip through - acceptable at this app's
- * scale, same tradeoff as assertCanAddAppointment's plan-limit check.
+ * migrations) only ever fires for rows with a client attached - any
+ * clientless row (a SHIFT, or a CUSTOM entry with no client - see entryKind)
+ * is never blocked by Postgres, so this app-level check stands in for it
+ * whenever clientId is null, regardless of kind. Only a SHIFT gets the
+ * tenant's Settings > "Shift form" "allow overlapping shifts" escape hatch -
+ * a clientless CUSTOM entry always stays enforced, since there's no
+ * equivalent tenant setting for it. Known gap: this is a plain
+ * read-then-write check inside the same transaction, not a DB-level
+ * guarantee, so two concurrent requests creating overlapping entries for the
+ * same staff member at the same instant could both slip through - acceptable
+ * at this app's scale, same tradeoff as assertCanAddAppointment's plan-limit
+ * check.
  */
-async function assertShiftOverlapAllowed(
+async function assertOverlapAllowedForClientlessEntry(
   tx: Tx,
   tenantId: string,
   staffId: string,
   startTime: Date,
   endTime: Date,
+  entryKind: "SHIFT" | "APPOINTMENT" | "CUSTOM",
   excludeId?: string
 ) {
-  const tenant = await tx.tenant.findUniqueOrThrow({
-    where: { id: tenantId },
-    select: { allowOverlappingShifts: true },
-  });
-  if (tenant.allowOverlappingShifts) return;
+  if (entryKind === "SHIFT") {
+    const tenant = await tx.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { allowOverlappingShifts: true },
+    });
+    if (tenant.allowOverlappingShifts) return;
+  }
 
   const conflict = await tx.appointment.findFirst({
     where: {
@@ -66,6 +73,9 @@ async function assertShiftOverlapAllowed(
 
 export interface CreateAppointmentInput {
   staffId: string;
+  entryKind: "SHIFT" | "APPOINTMENT" | "CUSTOM";
+  /** Required (by the API route, not here) when entryKind is CUSTOM - which named CustomCalendar this entry belongs to. Ignored otherwise. */
+  customCalendarId?: string | null;
   clientId?: string | null;
   serviceTypeId?: string | null;
   startTime: Date;
@@ -86,19 +96,36 @@ export async function createAppointment(tx: Tx, tenantId: string, input: CreateA
   if (input.endTime <= input.startTime) {
     throw new Error("endTime must be after startTime");
   }
-  // A shift is an Appointment row with no clientId - the DB constraint never
-  // covers these (see assertShiftOverlapAllowed), so check explicitly here.
-  // A real appointment (clientId set) always stays DB-enforced below.
+  // A clientless row (SHIFT, or a clientless CUSTOM entry) is never covered
+  // by the DB constraint (see assertOverlapAllowedForClientlessEntry), so
+  // check explicitly here. A row with a client (APPOINTMENT, or a CUSTOM
+  // entry with a client) always stays DB-enforced below.
   if (!input.clientId) {
-    await assertShiftOverlapAllowed(tx, tenantId, input.staffId, input.startTime, input.endTime);
+    await assertOverlapAllowedForClientlessEntry(
+      tx,
+      tenantId,
+      input.staffId,
+      input.startTime,
+      input.endTime,
+      input.entryKind
+    );
   }
   try {
     return await tx.appointment.create({
       data: {
         tenantId,
         staffId: input.staffId,
+        entryKind: input.entryKind,
+        customCalendarId: input.entryKind === "CUSTOM" ? (input.customCalendarId ?? null) : null,
         clientId: input.clientId ?? null,
-        serviceTypeId: input.serviceTypeId ?? null,
+        // A single incoming serviceTypeId is routed to whichever table
+        // actually matches this row's kind (ISSUES.md #1) - APPOINTMENT
+        // picks from AppointmentServiceType, SHIFT and CUSTOM (no third
+        // ServiceType table - see the schema's entryKind doc comment) from
+        // ShiftServiceType. Never both.
+        ...(input.entryKind === "APPOINTMENT"
+          ? { appointmentServiceTypeId: input.serviceTypeId ?? null }
+          : { shiftServiceTypeId: input.serviceTypeId ?? null }),
         startTime: input.startTime,
         endTime: input.endTime,
         priceCharged: input.priceCharged ?? null,
@@ -131,10 +158,10 @@ export async function rescheduleAppointment(tx: Tx, tenantId: string, { id, star
   }
   const existing = await tx.appointment.findUniqueOrThrow({
     where: { id },
-    select: { staffId: true, clientId: true },
+    select: { staffId: true, clientId: true, entryKind: true },
   });
   if (!existing.clientId) {
-    await assertShiftOverlapAllowed(tx, tenantId, existing.staffId, startTime, endTime, id);
+    await assertOverlapAllowedForClientlessEntry(tx, tenantId, existing.staffId, startTime, endTime, existing.entryKind, id);
   }
   try {
     return await tx.appointment.update({
@@ -158,10 +185,10 @@ export async function cancelAppointment(tx: Tx, id: string) {
 export async function reassignAppointmentStaff(tx: Tx, tenantId: string, id: string, staffId: string) {
   const existing = await tx.appointment.findUniqueOrThrow({
     where: { id },
-    select: { startTime: true, endTime: true, clientId: true },
+    select: { startTime: true, endTime: true, clientId: true, entryKind: true },
   });
   if (!existing.clientId) {
-    await assertShiftOverlapAllowed(tx, tenantId, staffId, existing.startTime, existing.endTime, id);
+    await assertOverlapAllowedForClientlessEntry(tx, tenantId, staffId, existing.startTime, existing.endTime, existing.entryKind, id);
   }
   try {
     return await tx.appointment.update({ where: { id }, data: { staffId } });
@@ -247,16 +274,22 @@ export async function findCoverageCandidates(
 
 /**
  * `visibility` implements the VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS permission
- * split: a shift is an Appointment row with `clientId: null`, an appointment
- * has one set - each axis is allowed through independently, and whatever's
- * left over is only shown if it belongs to `ownStaffId`. Passing `undefined`
- * (the coverage-finder caller) keeps the old "see everything" behavior, since
- * that's an internal staffing computation, not a viewer-facing listing.
+ * split, keyed on `entryKind` rather than clientId presence (a CUSTOM entry
+ * can have a client or not, so clientId alone can no longer tell a shift
+ * apart from a custom entry - see the schema's entryKind doc comment): each
+ * axis is allowed through independently, and whatever's left over is only
+ * shown if it belongs to `ownStaffId`. CUSTOM entries have no separate
+ * "all vs. own" permission of their own yet - `canViewCustom` alone grants
+ * seeing every custom entry, same as the all-* axes do for shifts/
+ * appointments. Passing `undefined` (the coverage-finder caller) keeps the
+ * old "see everything" behavior, since that's an internal staffing
+ * computation, not a viewer-facing listing.
  *
- * `canViewShifts`/`canViewAppointments` implement the separate VIEW_SHIFTS/
- * VIEW_APPOINTMENTS permission split (ISSUES.md #6): unlike the all/own axes
- * above, these are a hard type-level gate, ANDed in rather than OR'd - a role
- * lacking VIEW_SHIFTS never sees a shift row at all, not even its own.
+ * `canViewShifts`/`canViewAppointments`/`canViewCustom` implement the
+ * separate VIEW_SHIFTS/VIEW_APPOINTMENTS/VIEW_CUSTOM_CALENDAR permission
+ * split (ISSUES.md #6): unlike the all/own axes above, these are a hard
+ * type-level gate, ANDed in rather than OR'd - a role lacking VIEW_SHIFTS
+ * never sees a shift row at all, not even its own.
  */
 export interface AppointmentVisibility {
   allShifts: boolean;
@@ -264,6 +297,29 @@ export interface AppointmentVisibility {
   ownStaffId: string | null;
   canViewShifts: boolean;
   canViewAppointments: boolean;
+  canViewCustom: boolean;
+}
+
+/**
+ * Exactly one of appointmentServiceType(Id)/shiftServiceType(Id) is ever set
+ * on a row (ISSUES.md #1 - see the schema doc comment) - this merges them
+ * back into the single serviceTypeId/serviceType shape the rest of the app
+ * (API responses, SchedulingCalendar.tsx) reads, so callers don't need to
+ * know which of the two tables a given row's job type actually came from.
+ */
+export function withMergedServiceType<
+  T extends {
+    appointmentServiceTypeId: string | null;
+    shiftServiceTypeId: string | null;
+    appointmentServiceType: unknown;
+    shiftServiceType: unknown;
+  },
+>(row: T) {
+  return {
+    ...row,
+    serviceTypeId: row.appointmentServiceTypeId ?? row.shiftServiceTypeId,
+    serviceType: row.appointmentServiceType ?? row.shiftServiceType,
+  };
 }
 
 export async function listAppointmentsInRange(
@@ -277,14 +333,18 @@ export async function listAppointmentsInRange(
         AND: [
           {
             OR: [
-              ...(visibility.canViewShifts ? [{ clientId: null }] : []),
-              ...(visibility.canViewAppointments ? [{ clientId: { not: null } }] : []),
+              ...(visibility.canViewShifts ? [{ entryKind: "SHIFT" as const }] : []),
+              ...(visibility.canViewAppointments ? [{ entryKind: "APPOINTMENT" as const }] : []),
+              ...(visibility.canViewCustom ? [{ entryKind: "CUSTOM" as const }] : []),
             ],
           },
           {
             OR: [
-              ...(visibility.allShifts ? [{ clientId: null }] : []),
-              ...(visibility.allAppointments ? [{ clientId: { not: null } }] : []),
+              ...(visibility.allShifts ? [{ entryKind: "SHIFT" as const }] : []),
+              ...(visibility.allAppointments ? [{ entryKind: "APPOINTMENT" as const }] : []),
+              // No separate "view all custom entries" permission exists yet -
+              // canViewCustom alone grants seeing every custom entry.
+              ...(visibility.canViewCustom ? [{ entryKind: "CUSTOM" as const }] : []),
               ...(visibility.ownStaffId ? [{ staffId: visibility.ownStaffId }] : []),
             ],
           },
@@ -292,21 +352,23 @@ export async function listAppointmentsInRange(
       }
     : {};
 
-  return tx.appointment.findMany({
+  const rows = await tx.appointment.findMany({
     where: {
       tenantId,
       startTime: { lt: range.end },
       endTime: { gt: range.start },
       ...visibilityFilter,
     },
-    include: { client: true, serviceType: true, staff: true, tag: true },
+    include: { client: true, appointmentServiceType: true, shiftServiceType: true, staff: true, tag: true, customCalendar: { select: { id: true, name: true } } },
     orderBy: { startTime: "asc" },
   });
+  return rows.map(withMergedServiceType);
 }
 
 export async function getAppointmentById(tx: Tx, id: string) {
-  return tx.appointment.findUnique({
+  const row = await tx.appointment.findUnique({
     where: { id },
-    include: { client: true, serviceType: true, staff: true, tag: true },
+    include: { client: true, appointmentServiceType: true, shiftServiceType: true, staff: true, tag: true, customCalendar: { select: { id: true, name: true } } },
   });
+  return row ? withMergedServiceType(row) : null;
 }

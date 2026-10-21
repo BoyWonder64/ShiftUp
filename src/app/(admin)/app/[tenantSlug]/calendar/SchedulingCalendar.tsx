@@ -13,8 +13,6 @@ import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
 import type { PermissionKey } from "@/lib/permissions/catalog";
-import { featuresForTier } from "@/lib/licensing/features";
-import type { LicenseTier } from "@/generated/prisma/client";
 import {
   DEFAULT_EVENT_COLORS,
   EVENT_COLOR_LABELS,
@@ -92,7 +90,7 @@ function TimeGutterHeader() {
   );
 }
 
-type EntryMode = "appointment" | "shift";
+type EntryMode = "appointment" | "shift" | "custom";
 
 /** Thin `ApiAppointment`-shaped wrapper around the shared `resolveEventColor` helper. */
 function resolveAppointmentColor(
@@ -115,18 +113,31 @@ export interface TenantRoleOption {
   id: string;
   name: string;
 }
-interface ServiceTypeOption {
+export interface ServiceTypeOption {
   id: string;
   name: string;
   durationMinutes: number;
-  price: string | null;
+  // Appointment-only (AppointmentServiceType) - absent on a ShiftServiceType
+  // option, since a shift has no price concept (ISSUES.md #1).
+  price?: string | null;
 }
-interface ClientOption {
+export interface ClientOption {
   id: string;
   name: string;
   email: string | null;
   phone: string | null;
   address: string | null;
+}
+/** One of the tenant's named custom calendars (Settings > Calendars > "Custom calendars") and its own independent form field-visibility settings. */
+export interface CustomCalendarOption {
+  id: string;
+  name: string;
+  showClient: boolean;
+  requireClient: boolean;
+  showJobType: boolean;
+  showJobEstimate: boolean;
+  showColorKey: boolean;
+  showPaymentStatus: boolean;
 }
 export interface TagOption {
   id: string;
@@ -150,6 +161,11 @@ export interface BlockedTimeOption {
 export interface ApiAppointment {
   id: string;
   staffId: string;
+  entryKind: "SHIFT" | "APPOINTMENT" | "CUSTOM";
+  // Only set when entryKind is CUSTOM - which named CustomCalendar this
+  // entry belongs to (a tenant can have several).
+  customCalendarId: string | null;
+  customCalendar: { id: string; name: string } | null;
   clientId: string | null;
   serviceTypeId: string | null;
   startTime: string;
@@ -189,6 +205,9 @@ const DRAFT_EVENT_ID = "__draft__";
 const DRAFT_RESOURCE: ApiAppointment = {
   id: DRAFT_EVENT_ID,
   staffId: "",
+  entryKind: "SHIFT",
+  customCalendarId: null,
+  customCalendar: null,
   clientId: null,
   serviceTypeId: null,
   startTime: "",
@@ -266,12 +285,25 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   return data;
 }
 
+// Replaces the old clientId-presence inference (null = shift, set =
+// appointment) now that entryKind is the real source of truth - a CUSTOM
+// entry can have a client or not depending on the tenant's Custom-form
+// settings, so clientId alone can no longer tell SHIFT apart from CUSTOM.
 export function isShift(appt: ApiAppointment): boolean {
-  return !appt.clientId;
+  return appt.entryKind === "SHIFT";
 }
 
-/** A tag tagged BOTH shows on either picker; SHIFT/APPOINTMENT only shows on its own. */
+export function isCustomEntry(appt: ApiAppointment): boolean {
+  return appt.entryKind === "CUSTOM";
+}
+
+function entryModeOf(appt: ApiAppointment): EntryMode {
+  return appt.entryKind === "SHIFT" ? "shift" : appt.entryKind === "CUSTOM" ? "custom" : "appointment";
+}
+
+/** A tag tagged BOTH shows on every picker; SHIFT/APPOINTMENT only shows on its own. Custom entries only ever offer BOTH-scoped tags (no separate CUSTOM tag scope exists). */
 function tagsForMode(tags: TagOption[], mode: EntryMode): TagOption[] {
+  if (mode === "custom") return tags.filter((t) => t.appliesTo === "BOTH");
   const scope = mode === "shift" ? "SHIFT" : "APPOINTMENT";
   return tags.filter((t) => t.appliesTo === "BOTH" || t.appliesTo === scope);
 }
@@ -287,8 +319,9 @@ function tagsForMode(tags: TagOption[], mode: EntryMode): TagOption[] {
  */
 const BASE_COLOR_VALUE_PREFIX = "base:";
 
-/** "completed"/"noShow"/"cancelled" apply to either kind of entry; "appointment"/"shift" only make sense for their own kind. */
+/** "completed"/"noShow"/"cancelled" apply to either kind of entry; "appointment"/"shift" only make sense for their own kind. A custom entry isn't inherently either, so both stay offered. */
 function baseColorOptionsFor(mode: EntryMode): EventColorKey[] {
+  if (mode === "custom") return BASE_LEGEND_KEYS;
   return BASE_LEGEND_KEYS.filter((key) => key !== (mode === "shift" ? "appointment" : "shift"));
 }
 
@@ -306,9 +339,12 @@ function parseColorValue(value: string): { tagId: string | null; colorKey: strin
 
 /** Shared with RosterView.tsx, which renders the same chip label without the "(staff name)" suffix - each chip already sits under that staff member's row. */
 export function appointmentTitle(appt: ApiAppointment): string {
-  return isShift(appt)
-    ? `Shift${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`
-    : `${appt.client?.name ?? "Client"}${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`;
+  if (isShift(appt)) return `Shift${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`;
+  if (isCustomEntry(appt)) {
+    const base = appt.client?.name ?? appt.customCalendar?.name ?? "Custom entry";
+    return `${base}${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`;
+  }
+  return `${appt.client?.name ?? "Client"}${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`;
 }
 
 /**
@@ -354,7 +390,7 @@ function formatDuration(totalMinutes: number | null | undefined): string {
  * the form/panel floats in front of it instead of pushing the page layout
  * around. Closes on Escape or a click on the dimmed backdrop.
  */
-function Modal({
+export function Modal({
   onClose,
   visible = true,
   panelRef,
@@ -459,50 +495,56 @@ function stackingZIndex(start: Date, end: Date): number {
 
 export function SchedulingCalendar({
   readOnly = false,
-  licenseTier = "BOTH",
+  calendarKind,
   initialStaffId,
-  initialCalendarType,
-  canToggleCalendarType = true,
+  customCalendarId,
+  allKinds,
 }: {
   readOnly?: boolean;
-  licenseTier?: LicenseTier;
+  // Which fixed calendar page this is - each of the split pages mounts this
+  // component with its own fixed kind (no more in-toolbar switcher); "all"
+  // is the one page that still shows every kind together and still needs
+  // the Appointment/Shift/pick-a-custom-calendar chooser popup for an
+  // ambiguous slot-drag creation, same as the old "both" calendarType used
+  // to.
+  calendarKind: "appointment" | "shift" | "custom" | "all";
   // Preselects the staff filter - used by the roster drill-down view's
   // "View full calendar" link (?staff=<id>) so landing here already shows
   // just that one employee instead of "All staff".
   initialStaffId?: string;
-  // Preselects the appointment/shift filter - used by deep links
-  // (?type=appointment or ?type=shift) so landing here already shows just
-  // that type instead of "Both". Ignored (falls through to the tier-based
-  // default below) if the tenant's license doesn't actually include that
-  // type.
-  initialCalendarType?: "appointment" | "shift";
-  // Settings > Permissions > VIEW_CALENDAR_TOGGLE - whether this role can see
-  // and use the Appointments/Shifts/Both switcher at all. Defaults to true
-  // so the always-permission-agnostic /calendar/view route (and any other
-  // caller that doesn't pass it) keeps today's behavior; the main /calendar
-  // page explicitly computes and passes the real per-role value.
-  canToggleCalendarType?: boolean;
-} = {}) {
-  const features = useMemo(() => featuresForTier(licenseTier), [licenseTier]);
-  // Default to whichever single calendar the tier actually includes; only
-  // tenants on BOTH get a real choice to make (and the switcher UI only
-  // renders for them - there's nothing to switch between otherwise).
-  const [calendarType, setCalendarType] = useState<"appointment" | "shift" | "both">(() => {
-    if (initialCalendarType === "appointment" && features.appointmentManager) return "appointment";
-    if (initialCalendarType === "shift" && features.shiftManagement) return "shift";
-    return features.appointmentManager && features.shiftManagement
-      ? "both"
-      : features.shiftManagement
-        ? "shift"
-        : "appointment";
-  });
+  // Required when calendarKind === "custom" - which of the tenant's named
+  // CustomCalendar rows this page shows (a tenant can have several). Ignored
+  // for every other calendarKind.
+  customCalendarId?: string;
+  // Only consulted when calendarKind === "all" - which of the three kinds
+  // are actually enabled for this tenant/role (license tier + the Settings >
+  // Calendars on/off toggle + the relevant VIEW_* permission, all already
+  // resolved by the page before mounting this component), so "All" only
+  // shows/creates what's really available instead of everything the license
+  // tier alone would allow. `custom` here just means "at least one custom
+  // calendar is reachable" - which ones is read separately below, from this
+  // component's own self-fetched `/api/custom-calendars` list. Defaults to
+  // allowing all three for callers (like /calendar/view) that don't need
+  // per-kind narrowing.
+  allKinds?: { appointment: boolean; shift: boolean; custom: boolean };
+}) {
+  const kindsOnAllPage = allKinds ?? { appointment: true, shift: true, custom: true };
+  // Whether each kind's UI (create button, filtering, legend entry) should
+  // show on *this* mount - true for the one kind a fixed-kind page renders,
+  // or per-kindsOnAllPage on the combined "All" page.
+  const showAppointmentUI = calendarKind === "appointment" || (calendarKind === "all" && kindsOnAllPage.appointment);
+  const showShiftUI = calendarKind === "shift" || (calendarKind === "all" && kindsOnAllPage.shift);
+  const showCustomUI = calendarKind === "custom" || (calendarKind === "all" && kindsOnAllPage.custom);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   // Settings > Account > "Calendar text size" - per-user, fetched independently of the
   // tenant-wide settings below since it's the viewer's own preference, not shared config.
   // Defaults to the calendar's own (smaller-than-body) baseline until the real value loads.
   const [calendarTextSize, setCalendarTextSize] = useState<CalendarTextSize>("MEDIUM");
   const [staff, setStaff] = useState<StaffOption[]>([]);
-  const [serviceTypes, setServiceTypes] = useState<ServiceTypeOption[]>([]);
+  // Split per ISSUES.md #1 - an appointment's job type and a shift's job type
+  // now come from two independent tables/endpoints, never the same pool.
+  const [appointmentServiceTypes, setAppointmentServiceTypes] = useState<ServiceTypeOption[]>([]);
+  const [shiftServiceTypes, setShiftServiceTypes] = useState<ServiceTypeOption[]>([]);
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [permissions, setPermissions] = useState<Record<PermissionKey, boolean> | null>(null);
   // Admin-configurable (Settings > "Appointment & shift form") - whether
@@ -512,6 +554,10 @@ export function SchedulingCalendar({
   // Same settings section - whether the detail panel shows an "Open in
   // Google Maps" button next to an in-person appointment's address.
   const [enableMapsNavigation, setEnableMapsNavigation] = useState(true);
+  // Same settings section - whether the detail panel shows/lets staff edit
+  // Appointment.paymentStatus at all (ISSUES.md #5). Never applies to
+  // shifts (no client, no price) regardless of this setting.
+  const [showPaymentStatus, setShowPaymentStatus] = useState(true);
   // Tenant-personalized event colors (Settings > "Event colors") -
   // defaults to the original hardcoded palette until the real value loads.
   const [colorTriples, setColorTriples] = useState<Record<EventColorKey, ColorTriple>>(() =>
@@ -525,6 +571,14 @@ export function SchedulingCalendar({
   const [showJobTypeOnShiftForm, setShowJobTypeOnShiftForm] = useState(true);
   const [showJobEstimateOnShiftForm, setShowJobEstimateOnShiftForm] = useState(true);
   const [showColorKeyOnShiftForm, setShowColorKeyOnShiftForm] = useState(true);
+  // The tenant's named custom calendars (Settings > Calendars > "Custom
+  // calendars") - a paid tenant can have several, each with its own
+  // independent field-visibility settings, unlike the single flat set of
+  // toggles Shift/Appointment have. Self-fetched here (not passed as a
+  // prop) since every calendarKind needs it: "custom" pages resolve their
+  // one active calendar's settings from this list by id, and "all" uses it
+  // for the create-mode chooser's per-calendar options.
+  const [customCalendars, setCustomCalendars] = useState<CustomCalendarOption[]>([]);
   // Settings > "Calendar" > "Calendar hours" - minutes-from-midnight bounds
   // on the Week/Day grid's displayed range. Defaults to the full day until
   // the real value loads, same as every other tenant setting here.
@@ -581,10 +635,19 @@ export function SchedulingCalendar({
   });
   const [selected, setSelected] = useState<ApiAppointment | null>(null);
   const [creating, setCreating] = useState<
-    { start: Date; end: Date; mode: EntryMode; defaultStaffId?: string } | null
+    | {
+        start: Date;
+        end: Date;
+        mode: EntryMode;
+        defaultStaffId?: string;
+        // Only meaningful when mode === "custom" - which of the tenant's
+        // named custom calendars this draft belongs to.
+        customCalendarId?: string;
+      }
+    | null
   >(null);
-  // Only populated when calendarType === "both" and a slot is selected - in
-  // that view there's no toggle state to infer the right mode from, so a
+  // Only populated when calendarKind === "all" and a slot is selected - on
+  // that page there's no single kind to infer the right mode from, so a
   // tiny chooser asks once instead of guessing (see onSelectSlot below).
   const [pendingSlot, setPendingSlot] = useState<{ start: Date; end: Date; defaultStaffId?: string } | null>(null);
   // "Group by staff" - splits the Day view into one column per staff member
@@ -703,16 +766,28 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadCustomCalendars = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ customCalendars: CustomCalendarOption[] }>("/api/custom-calendars");
+      setCustomCalendars(data.customCalendars);
+    } catch {
+      // Not fatal - same reasoning as loadTags; a "custom" page with no list
+      // loaded yet just can't resolve its field settings until this retries.
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
-        const [serviceData, permData, settingsData] = await Promise.all([
-          fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/service-types?activeOnly=true"),
+        const [appointmentServiceData, shiftServiceData, permData, settingsData] = await Promise.all([
+          fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/appointment-service-types?activeOnly=true"),
+          fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/shift-service-types?activeOnly=true"),
           fetchJson<{ permissions: Record<PermissionKey, boolean> }>("/api/me/permissions"),
           fetchJson<{
             settings: {
               requireClientForAppointments: boolean;
               enableMapsNavigation: boolean;
+              showPaymentStatus: boolean;
               eventColors: Record<EventColorKey, string>;
               enabledHolidayNames: string[];
               blockedHolidayNames: string[];
@@ -725,10 +800,12 @@ export function SchedulingCalendar({
             };
           }>("/api/tenant-settings"),
         ]);
-        setServiceTypes(serviceData.serviceTypes);
+        setAppointmentServiceTypes(appointmentServiceData.serviceTypes);
+        setShiftServiceTypes(shiftServiceData.serviceTypes);
         setPermissions(permData.permissions);
         setRequireClientForAppointments(settingsData.settings.requireClientForAppointments);
         setEnableMapsNavigation(settingsData.settings.enableMapsNavigation);
+        setShowPaymentStatus(settingsData.settings.showPaymentStatus);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
         setEnabledHolidayNames(settingsData.settings.enabledHolidayNames);
         setBlockedHolidayNames(settingsData.settings.blockedHolidayNames);
@@ -749,9 +826,19 @@ export function SchedulingCalendar({
         loadBlockedTimes(),
         loadRoles(),
         loadCalendarTextSize(),
+        loadCustomCalendars(),
       ]);
     })();
-  }, [loadStaff, loadClients, loadTags, loadHolidays, loadBlockedTimes, loadRoles, loadCalendarTextSize]);
+  }, [
+    loadStaff,
+    loadClients,
+    loadTags,
+    loadHolidays,
+    loadBlockedTimes,
+    loadRoles,
+    loadCalendarTextSize,
+    loadCustomCalendars,
+  ]);
 
   useEffect(() => {
     (async () => {
@@ -872,66 +959,110 @@ export function SchedulingCalendar({
   // rather than a single flat canEdit/canCancel/canCreate boolean.
   const canCreateShift = !readOnly && (permissions?.CREATE_SHIFTS ?? false);
   const canCreateAppointment = !readOnly && (permissions?.CREATE_APPOINTMENTS ?? false);
+  const canCreateCustom = !readOnly && (permissions?.CREATE_CUSTOM_ENTRIES ?? false);
   // Also ANDed with Settings > Calendar > "Allow editing booked events" - a
   // tenant-wide master switch that can lock booked events in place for
   // everyone regardless of role, independent of the per-role EDIT_SHIFTS/
-  // EDIT_APPOINTMENTS permissions themselves.
+  // EDIT_APPOINTMENTS/EDIT_CUSTOM_ENTRIES permissions themselves.
   const canEditShift = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_SHIFTS ?? false);
   const canEditAppointment = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_APPOINTMENTS ?? false);
+  const canEditCustom = !readOnly && allowEditingBookedEvents && (permissions?.EDIT_CUSTOM_ENTRIES ?? false);
   const canCancelShift = !readOnly && (permissions?.CANCEL_SHIFTS ?? false);
   const canCancelAppointment = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
+  const canCancelCustom = !readOnly && (permissions?.CANCEL_CUSTOM_ENTRIES ?? false);
   // Generic "is the Create group worth showing at all" / "can anything on
   // this grid ever be dragged" checks - the specific buttons/accessors below
   // still each gate on their own specific permission, not this.
-  const canCreate = canCreateShift || canCreateAppointment;
-  const canEdit = canEditShift || canEditAppointment;
+  const canCreate = canCreateShift || canCreateAppointment || canCreateCustom;
+  const canEdit = canEditShift || canEditAppointment || canEditCustom;
   const canEditEvent = useCallback(
-    (appt: ApiAppointment) => (isShift(appt) ? canEditShift : canEditAppointment),
-    [canEditShift, canEditAppointment]
+    (appt: ApiAppointment) => (isShift(appt) ? canEditShift : isCustomEntry(appt) ? canEditCustom : canEditAppointment),
+    [canEditShift, canEditAppointment, canEditCustom]
   );
   const canCancelEvent = useCallback(
-    (appt: ApiAppointment) => (isShift(appt) ? canCancelShift : canCancelAppointment),
-    [canCancelShift, canCancelAppointment]
+    (appt: ApiAppointment) =>
+      isShift(appt) ? canCancelShift : isCustomEntry(appt) ? canCancelCustom : canCancelAppointment,
+    [canCancelShift, canCancelAppointment, canCancelCustom]
   );
   const canCreateForMode = useCallback(
-    (mode: EntryMode) => (mode === "shift" ? canCreateShift : canCreateAppointment),
-    [canCreateShift, canCreateAppointment]
+    (mode: EntryMode) => (mode === "shift" ? canCreateShift : mode === "custom" ? canCreateCustom : canCreateAppointment),
+    [canCreateShift, canCreateAppointment, canCreateCustom]
   );
   const canViewAllShifts = permissions?.VIEW_ALL_SHIFTS ?? false;
   const canViewAllAppointments = permissions?.VIEW_ALL_APPOINTMENTS ?? false;
-  // Whether the Everyone/Just mine toggle is worth showing for whatever the
-  // calendar is currently filtered to - no point offering it for a type the
-  // viewer can never see beyond their own anyway.
+  // Whether the Everyone/Just mine toggle is worth showing for whatever
+  // this page shows - no point offering it for a kind the viewer can never
+  // see beyond their own anyway. Custom entries have no VIEW_ALL_* concept of
+  // their own yet, so they don't affect this toggle's visibility.
   const canToggleViewScope =
-    calendarType === "shift"
+    calendarKind === "shift"
       ? canViewAllShifts
-      : calendarType === "appointment"
+      : calendarKind === "appointment"
         ? canViewAllAppointments
         : canViewAllShifts || canViewAllAppointments;
 
-  // Whether dragging a new selection on the grid as currently filtered is
-  // allowed at all - same ternary-on-calendarType shape as canToggleViewScope
-  // above. "both" can't know which type a drag means (hence the pendingSlot
-  // picker below), so it's allowed as long as either is creatable.
+  // Whether dragging a new selection on the grid as currently shown is
+  // allowed at all - same ternary-on-calendarKind shape as canToggleViewScope
+  // above. "all" can't know which kind a drag means (hence the pendingSlot
+  // picker below), so it's allowed as long as any shown kind is creatable.
   const canCreateForCurrentType =
-    calendarType === "shift"
+    calendarKind === "shift"
       ? canCreateShift
-      : calendarType === "appointment"
+      : calendarKind === "appointment"
         ? canCreateAppointment
-        : canCreateShift || canCreateAppointment;
+        : calendarKind === "custom"
+          ? canCreateCustom
+          : (showShiftUI && canCreateShift) || (showAppointmentUI && canCreateAppointment) || (showCustomUI && canCreateCustom);
+
+  // Which of the fetched custom calendars this "custom" page is actually
+  // showing - resolved by id rather than assuming the list has only one, now
+  // that a tenant can have several. Undefined until the list has loaded or
+  // if the id doesn't match anything (e.g. it was just deleted elsewhere).
+  const activeCustomCalendar = useMemo(
+    () => customCalendars.find((c) => c.id === customCalendarId),
+    [customCalendars, customCalendarId]
+  );
+
+  // Resolves a given custom calendar id's field-visibility settings for the
+  // create/detail panels, with a safe fallback (all fields shown, no client)
+  // for the brief window before the list has loaded or if the id no longer
+  // matches anything (e.g. the calendar was just deleted elsewhere).
+  const customSettingsFor = useCallback(
+    (id: string | null | undefined) => {
+      const found = customCalendars.find((c) => c.id === id);
+      return {
+        showClient: found?.showClient ?? false,
+        requireClient: found?.requireClient ?? false,
+        showJobType: found?.showJobType ?? true,
+        showJobEstimate: found?.showJobEstimate ?? true,
+        showColorKey: found?.showColorKey ?? true,
+        showPaymentStatus: found?.showPaymentStatus ?? false,
+      };
+    },
+    [customCalendars]
+  );
 
   const visibleEvents = useMemo(() => {
     let list = staffFilter === "all" ? events : events.filter((e) => e.resource.staffId === staffFilter);
-    if (calendarType === "appointment") list = list.filter((e) => !isShift(e.resource));
-    else if (calendarType === "shift") list = list.filter((e) => isShift(e.resource));
+    if (calendarKind === "all") {
+      list = list.filter(
+        (e) =>
+          (showAppointmentUI && !isShift(e.resource) && !isCustomEntry(e.resource)) ||
+          (showShiftUI && isShift(e.resource)) ||
+          (showCustomUI && isCustomEntry(e.resource))
+      );
+    } else if (calendarKind === "appointment") list = list.filter((e) => !isShift(e.resource) && !isCustomEntry(e.resource));
+    else if (calendarKind === "shift") list = list.filter((e) => isShift(e.resource));
+    else if (calendarKind === "custom")
+      list = list.filter((e) => isCustomEntry(e.resource) && e.resource.customCalendarId === customCalendarId);
     return list;
-  }, [events, staffFilter, calendarType]);
+  }, [events, staffFilter, calendarKind, showAppointmentUI, showShiftUI, showCustomUI, customCalendarId]);
 
   // The pending create/shift form is rendered as a real calendar event (a
   // dashed "ghost" block) so its selection stays visible and can be dragged/
   // resized directly on the grid, instead of disappearing the moment the
   // mouse is released (react-big-calendar's own slot-selection highlight is
-  // only ever momentary). `pendingSlot` (calendarType === "both", mode not
+  // only ever momentary). `pendingSlot` (calendarKind === "all", mode not
   // chosen yet - see onSelectSlot) gets the same treatment as `creating` so
   // the selection still holds its position while the Appointment/Shift
   // popup is up, not just once a mode's been picked - previously this block
@@ -948,7 +1079,14 @@ export function SchedulingCalendar({
       // The "(drag to adjust)" hint itself is appended by EventContent, not
       // baked in here, so it can render smaller than the rest of the label
       // and be dropped once creationCount passes the onboarding threshold.
-      title: draftSlot.mode === "shift" ? "New shift" : draftSlot.mode === "appointment" ? "New appointment" : "New event",
+      title:
+        draftSlot.mode === "shift"
+          ? "New shift"
+          : draftSlot.mode === "appointment"
+            ? "New appointment"
+            : draftSlot.mode === "custom"
+              ? "New custom entry"
+              : "New event",
       start: draftSlot.start,
       end: draftSlot.end,
       // In "Group by staff" Day view, resourceAccessor reads staffId off
@@ -1121,20 +1259,18 @@ export function SchedulingCalendar({
   // color is explained on the legend the same way the 5 built-in colors are.
   const legendItems = useMemo(() => {
     const base = BASE_LEGEND_KEYS.filter(
-      (key) =>
-        (calendarType !== "shift" || key !== "appointment") &&
-        (calendarType !== "appointment" || key !== "shift")
+      (key) => (key !== "appointment" || showAppointmentUI || showCustomUI) && (key !== "shift" || showShiftUI)
     ).map((key) => ({ key, label: EVENT_COLOR_LABELS[key], color: colorTriples[key].bg }));
     const tagItems = tags
       .filter(
         (t) =>
           t.appliesTo === "BOTH" ||
-          (calendarType !== "shift" && t.appliesTo === "APPOINTMENT") ||
-          (calendarType !== "appointment" && t.appliesTo === "SHIFT")
+          (t.appliesTo === "APPOINTMENT" && showAppointmentUI) ||
+          (t.appliesTo === "SHIFT" && showShiftUI)
       )
       .map((t) => ({ key: t.id, label: t.name, color: t.color }));
     return [...base, ...tagItems];
-  }, [calendarType, colorTriples, tags]);
+  }, [showAppointmentUI, showShiftUI, showCustomUI, colorTriples, tags]);
 
   // Bounds the Week/Day grid to the tenant's configured calendarStartMinute/
   // calendarEndMinute range (Settings > Calendar > "Calendar hours",
@@ -1309,31 +1445,6 @@ export function SchedulingCalendar({
             </div>
           )}
 
-          {/* Only worth showing a switcher when the tier actually includes both -
-              otherwise there's nothing to switch to, so it's just noise - and
-              only when this role holds VIEW_CALENDAR_TOGGLE. */}
-          {features.appointmentManager && features.shiftManagement && canToggleCalendarType && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Calendar</span>
-              <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
-                {(["appointment", "shift", "both"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setCalendarType(t)}
-                    className={`rounded-full px-2.5 py-1 font-medium capitalize transition-all duration-150 ${
-                      calendarType === t
-                        ? "bg-primary-500 text-white shadow-sm"
-                        : "text-gray-600 hover:text-primary-600"
-                    }`}
-                  >
-                    {t === "appointment" ? "Appointments" : t === "shift" ? "Shifts" : "Both"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Settings > Permissions > VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS -
               only rendered when the viewer actually holds the relevant
               permission for whatever's currently shown; without it they're
@@ -1418,7 +1529,7 @@ export function SchedulingCalendar({
                 buttons, not toggles, so they don't need the white rounded-full
                 container the toggle-pill groups elsewhere in this bar use. */}
             <div className="inline-flex items-center gap-1.5 text-xs">
-              {features.appointmentManager && canCreateAppointment && (
+              {showAppointmentUI && canCreateAppointment && (
                 <button
                   onClick={() =>
                     setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
@@ -1428,7 +1539,7 @@ export function SchedulingCalendar({
                   + Add appointment
                 </button>
               )}
-              {features.shiftManagement && canCreateShift && (
+              {showShiftUI && canCreateShift && (
                 <button
                   onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
                   className="rounded-full bg-shift-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-shift-600"
@@ -1436,6 +1547,44 @@ export function SchedulingCalendar({
                   + Schedule shift
                 </button>
               )}
+              {/* Fixed-kind "custom" page - always exactly one relevant
+                  calendar (this page's own). The combined "all" page can
+                  have several, so it gets one quick-create button per
+                  custom calendar instead of a single ambiguous one. */}
+              {showCustomUI && canCreateCustom && calendarKind === "custom" && activeCustomCalendar && (
+                <button
+                  onClick={() =>
+                    setCreating({
+                      ...nextHourSlot(),
+                      mode: "custom",
+                      defaultStaffId: resourceStaff[0]?.id,
+                      customCalendarId: activeCustomCalendar.id,
+                    })
+                  }
+                  className="rounded-full bg-gray-600 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-gray-700"
+                >
+                  + Add {activeCustomCalendar.name} entry
+                </button>
+              )}
+              {showCustomUI &&
+                canCreateCustom &&
+                calendarKind === "all" &&
+                customCalendars.map((cc) => (
+                  <button
+                    key={cc.id}
+                    onClick={() =>
+                      setCreating({
+                        ...nextHourSlot(),
+                        mode: "custom",
+                        defaultStaffId: resourceStaff[0]?.id,
+                        customCalendarId: cc.id,
+                      })
+                    }
+                    className="rounded-full bg-gray-600 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-gray-700"
+                  >
+                    + Add {cc.name}
+                  </button>
+                ))}
               {/* Always rendered (space reserved via `invisible`, not conditionally
                   mounted) so this button appearing doesn't grow the row's content
                   width and reflow the rest of the toolbar - that reflow was the
@@ -1575,19 +1724,20 @@ export function SchedulingCalendar({
                     // is just the other way to move it.
                     setCreating((prev) => {
                       if (prev) return { ...prev, start: slot.start, end: slot.end, defaultStaffId: defaultStaffId ?? prev.defaultStaffId };
-                      // The grid itself only reflects one calendarType at a time, so
-                      // a click/drag there should create whichever type is being
-                      // viewed - "both" has no single answer to infer, hence the
-                      // popup instead of defaulting silently.
-                      if (calendarType === "both") {
+                      // A fixed-kind page always knows which kind a click/drag
+                      // means. "all" shows every kind together, so there's no
+                      // single answer to infer - hence the chooser popup instead
+                      // of defaulting silently.
+                      if (calendarKind === "all") {
                         setPendingSlot({ start: slot.start, end: slot.end, defaultStaffId });
                         return prev;
                       }
                       return {
                         start: slot.start,
                         end: slot.end,
-                        mode: calendarType === "shift" ? "shift" : "appointment",
+                        mode: calendarKind,
                         defaultStaffId,
+                        ...(calendarKind === "custom" ? { customCalendarId } : {}),
                       };
                     });
                   }}
@@ -1633,10 +1783,10 @@ export function SchedulingCalendar({
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <h2 className="text-lg font-medium">Add as...</h2>
             <p className="mt-1 text-sm text-gray-500">
-              This calendar shows both appointments and shifts - which one is this?
+              This calendar shows every kind together - which one is this?
             </p>
-            <div className="mt-4 flex gap-3">
-              {canCreateAppointment && (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {showAppointmentUI && canCreateAppointment && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1648,7 +1798,7 @@ export function SchedulingCalendar({
                   Appointment
                 </button>
               )}
-              {canCreateShift && (
+              {showShiftUI && canCreateShift && (
                 <button
                   type="button"
                   onClick={() => {
@@ -1660,6 +1810,24 @@ export function SchedulingCalendar({
                   Shift
                 </button>
               )}
+              {/* One button per named custom calendar, rather than a single
+                  generic "Custom" - now that a tenant can have several, this
+                  popup is also where the viewer picks which one. */}
+              {showCustomUI &&
+                canCreateCustom &&
+                customCalendars.map((cc) => (
+                  <button
+                    key={cc.id}
+                    type="button"
+                    onClick={() => {
+                      setCreating({ ...pendingSlot, mode: "custom", customCalendarId: cc.id });
+                      setPendingSlot(null);
+                    }}
+                    className="flex-1 rounded-lg bg-gray-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700"
+                  >
+                    {cc.name}
+                  </button>
+                ))}
             </div>
             <button
               type="button"
@@ -1683,12 +1851,16 @@ export function SchedulingCalendar({
             start={creating.start}
             end={creating.end}
             mode={creating.mode}
+            customCalendarId={creating.customCalendarId}
             defaultStaffId={creating.defaultStaffId}
             onRangeChange={(start, end) =>
               setCreating((prev) => (prev ? { ...prev, start, end } : prev))
             }
             staff={staff}
-            serviceTypes={serviceTypes}
+            // Custom entries pick from the shift service-type list (no price/
+            // payment concept, same as a shift) rather than needing a third
+            // ServiceType table - see the schema's entryKind doc comment.
+            serviceTypes={creating.mode === "appointment" ? appointmentServiceTypes : shiftServiceTypes}
             clients={clients}
             tags={tags}
             roles={roles}
@@ -1696,6 +1868,7 @@ export function SchedulingCalendar({
             showJobType={showJobTypeOnShiftForm}
             showJobEstimate={showJobEstimateOnShiftForm}
             showColorKey={showColorKeyOnShiftForm}
+            customSettings={customSettingsFor(creating.customCalendarId)}
             canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
             canCreateStaff={permissions?.CREATE_STAFF ?? false}
             canCreateClient={permissions?.CREATE_CLIENTS ?? false}
@@ -1724,15 +1897,17 @@ export function SchedulingCalendar({
             canFindCoverage={canEditEvent(selected)}
             readOnly={readOnly}
             enableMapsNavigation={enableMapsNavigation}
+            showPaymentStatus={showPaymentStatus}
             showJobType={showJobTypeOnShiftForm}
             showJobEstimate={showJobEstimateOnShiftForm}
             showColorKey={showColorKeyOnShiftForm}
+            customSettings={customSettingsFor(selected.customCalendarId)}
             colorTriples={colorTriples}
             tags={tags}
             staff={staff}
-            serviceTypes={serviceTypes}
+            serviceTypes={isShift(selected) || isCustomEntry(selected) ? shiftServiceTypes : appointmentServiceTypes}
             clients={clients}
-            canCreateTag={isShift(selected) ? canCreateShift : canCreateAppointment}
+            canCreateTag={isShift(selected) ? canCreateShift : isCustomEntry(selected) ? canCreateCustom : canCreateAppointment}
             onTagCreated={loadTags}
             onClose={() => setSelected(null)}
             onChanged={() => {
@@ -1765,7 +1940,7 @@ function StatusPill({
   );
 }
 
-function AppointmentDetailPanel({
+export function AppointmentDetailPanel({
   appointment,
   permissions,
   allowEditingBookedEvents,
@@ -1774,9 +1949,11 @@ function AppointmentDetailPanel({
   canFindCoverage,
   readOnly = false,
   enableMapsNavigation,
+  showPaymentStatus,
   showJobType,
   showJobEstimate,
   showColorKey,
+  customSettings,
   colorTriples,
   tags,
   staff,
@@ -1798,12 +1975,28 @@ function AppointmentDetailPanel({
   canFindCoverage: boolean;
   readOnly?: boolean;
   enableMapsNavigation: boolean;
-  // Admin-configurable (Settings > "Shift form") - only applies when this
-  // appointment is a shift (isShift(appointment)); appointments always show
-  // these fields regardless.
+  // Admin-configurable (Settings > "Appointment form") - never shown for a
+  // shift regardless of this setting, since a shift has no client/price to
+  // begin with. Custom entries use customSettings.showPaymentStatus instead.
+  showPaymentStatus: boolean;
+  // Admin-configurable (Settings > "Shift form") - only applies to shift
+  // entries; appointments always show these fields regardless, and custom
+  // entries use customSettings' equivalents instead.
   showJobType: boolean;
   showJobEstimate: boolean;
   showColorKey: boolean;
+  // Admin-configurable (Settings > Calendars > "Custom form") - the same
+  // show/hide shape as the shift-form toggles above, just for the third
+  // entry kind, plus showClient/requireClient since a custom entry doesn't
+  // inherently need a client the way an appointment does.
+  customSettings: {
+    showClient: boolean;
+    requireClient: boolean;
+    showJobType: boolean;
+    showJobEstimate: boolean;
+    showColorKey: boolean;
+    showPaymentStatus: boolean;
+  };
   colorTriples: Record<EventColorKey, ColorTriple>;
   tags: TagOption[];
   staff: StaffOption[];
@@ -1839,8 +2032,19 @@ function AppointmentDetailPanel({
   );
   const [value, setValue] = useState(appointment.estimatedValue ?? "");
   const [saving, setSaving] = useState(false);
-  const entryMode: EntryMode = isShift(appointment) ? "shift" : "appointment";
+  const entryMode: EntryMode = entryModeOf(appointment);
   const visibleTags = tagsForMode(tags, entryMode);
+  // Resolves each shift-only toggle (showJobType etc.) against the right
+  // settings source for this entry's actual kind: appointments always show
+  // (today's existing behavior), shifts use the shift-form toggles, and
+  // custom entries use their own independently-configured toggles.
+  const effectiveShowClient = entryMode === "appointment" ? true : entryMode === "custom" ? customSettings.showClient : false;
+  const effectiveShowJobType = entryMode === "shift" ? showJobType : entryMode === "custom" ? customSettings.showJobType : true;
+  const effectiveShowJobEstimate =
+    entryMode === "shift" ? showJobEstimate : entryMode === "custom" ? customSettings.showJobEstimate : true;
+  const effectiveShowColorKey = entryMode === "shift" ? showColorKey : entryMode === "custom" ? customSettings.showColorKey : true;
+  const effectiveShowPaymentStatus =
+    entryMode === "appointment" ? showPaymentStatus : entryMode === "custom" ? customSettings.showPaymentStatus : false;
   const [colorValue, setColorValue] = useState(() => colorValueFor(appointment));
   const [savingTag, setSavingTag] = useState(false);
   const [showNewTagForm, setShowNewTagForm] = useState(false);
@@ -1877,7 +2081,7 @@ function AppointmentDetailPanel({
       body: JSON.stringify({
         name: newTagName.trim(),
         color: newTagColor,
-        appliesTo: entryMode === "shift" ? "SHIFT" : "APPOINTMENT",
+        appliesTo: entryMode === "shift" ? "SHIFT" : entryMode === "custom" ? "BOTH" : "APPOINTMENT",
       }),
     });
     onTagCreated();
@@ -1977,9 +2181,10 @@ function AppointmentDetailPanel({
           startTime: start.toISOString(),
           endTime: end.toISOString(),
           staffId: editStaffId,
-          // Never sent for a shift - clientId only means anything on a real
-          // appointment, same as the create form's mode === "appointment" gate.
-          ...(isShift(appointment) ? {} : { clientId: editClientId || null }),
+          // Only sent when the client field actually shows for this entry's
+          // kind - never for a shift, and for a custom entry only when
+          // customSettings.showClient is on.
+          ...(effectiveShowClient ? { clientId: editClientId || null } : {}),
           serviceTypeId: editServiceTypeId || null,
           locationType: editLocationType,
           location: editLocation.trim() || null,
@@ -2005,7 +2210,13 @@ function AppointmentDetailPanel({
     <div className="rounded-xl border border-primary-100 bg-linear-to-br from-primary-50 to-white p-5 shadow-sm">
       <div className="mb-3 flex items-start justify-between">
         <div>
-          <h2 className="text-lg font-medium">{isShift(appointment) ? "Shift details" : "Appointment details"}</h2>
+          <h2 className="text-lg font-medium">
+            {entryMode === "shift"
+              ? "Shift details"
+              : entryMode === "custom"
+                ? `${appointment.customCalendar?.name ?? "Custom"} details`
+                : "Appointment details"}
+          </h2>
           <div className="mt-1">
             <StatusPill appointment={appointment} colorTriples={colorTriples} />
           </div>
@@ -2028,7 +2239,7 @@ function AppointmentDetailPanel({
 
       {editing ? (
         <form onSubmit={saveEdits} className="grid grid-cols-2 gap-3 text-sm">
-          {!isShift(appointment) && (
+          {effectiveShowClient && (
             <label className="col-span-2 flex flex-col gap-1">
               Client
               <select
@@ -2045,7 +2256,7 @@ function AppointmentDetailPanel({
               </select>
             </label>
           )}
-          {(!isShift(appointment) || showJobType) && (
+          {effectiveShowJobType && (
             <label className="flex flex-col gap-1">
               Service
               <select
@@ -2124,19 +2335,21 @@ function AppointmentDetailPanel({
               className="rounded-md border border-gray-300 px-2 py-1"
             />
           </label>
-          <label className="flex flex-col gap-1">
-            Payment
-            <select
-              value={editPaymentStatus}
-              onChange={(e) => setEditPaymentStatus(e.target.value)}
-              className="rounded-md border border-gray-300 px-2 py-1"
-            >
-              <option value="UNPAID">Unpaid</option>
-              <option value="PAID">Paid</option>
-              <option value="WAIVED">Waived</option>
-              <option value="REFUNDED">Refunded</option>
-            </select>
-          </label>
+          {effectiveShowPaymentStatus && (
+            <label className="flex flex-col gap-1">
+              Payment
+              <select
+                value={editPaymentStatus}
+                onChange={(e) => setEditPaymentStatus(e.target.value)}
+                className="rounded-md border border-gray-300 px-2 py-1"
+              >
+                <option value="UNPAID">Unpaid</option>
+                <option value="PAID">Paid</option>
+                <option value="WAIVED">Waived</option>
+                <option value="REFUNDED">Refunded</option>
+              </select>
+            </label>
+          )}
 
           {editError && <p className="col-span-2 text-sm text-red-600">{editError}</p>}
 
@@ -2162,8 +2375,12 @@ function AppointmentDetailPanel({
         </form>
       ) : (
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-          <dt className="text-gray-500">Client</dt>
-          <dd>{appointment.client?.name ?? "— (internal/shift)"}</dd>
+          {effectiveShowClient && (
+            <>
+              <dt className="text-gray-500">Client</dt>
+              <dd>{appointment.client?.name ?? "— (internal/shift)"}</dd>
+            </>
+          )}
           {appointment.client?.email && (
             <>
               <dt className="text-gray-500">Email</dt>
@@ -2176,7 +2393,7 @@ function AppointmentDetailPanel({
               <dd>{appointment.client.phone}</dd>
             </>
           )}
-          {(!isShift(appointment) || showJobType) && (
+          {effectiveShowJobType && (
             <>
               <dt className="text-gray-500">Service</dt>
               <dd>{appointment.serviceType?.name ?? "—"}</dd>
@@ -2206,12 +2423,16 @@ function AppointmentDetailPanel({
               </dd>
             </>
           )}
-          <dt className="text-gray-500">Payment</dt>
-          <dd>{appointment.paymentStatus}</dd>
+          {effectiveShowPaymentStatus && (
+            <>
+              <dt className="text-gray-500">Payment</dt>
+              <dd>{appointment.paymentStatus}</dd>
+            </>
+          )}
         </dl>
       )}
 
-      {!editing && (!isShift(appointment) || showColorKey) && (
+      {!editing && effectiveShowColorKey && (
       <div className="mt-4 border-t border-primary-100 pt-3">
         <h3 className="mb-2 text-sm font-medium text-primary-700">Color key</h3>
         {canEdit ? (
@@ -2305,7 +2526,7 @@ function AppointmentDetailPanel({
       </div>
       )}
 
-      {!editing && canViewEstimates && (!isShift(appointment) || showJobEstimate) && (
+      {!editing && canViewEstimates && effectiveShowJobEstimate && (
         <div className="mt-4 border-t border-primary-100 pt-3">
           <h3 className="mb-2 text-sm font-medium text-primary-700">Job estimate</h3>
           {canEditEstimates ? (
@@ -2454,7 +2675,7 @@ function AppointmentDetailPanel({
           onClick={cancelAppointment}
           className="mt-4 rounded-md border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
         >
-          Cancel {isShift(appointment) ? "shift" : "appointment"}
+          Cancel {entryMode === "shift" ? "shift" : entryMode === "custom" ? "entry" : "appointment"}
         </button>
       )}
     </div>
@@ -2468,6 +2689,7 @@ function CreateEntryPanel({
   start: startTime,
   end: endTime,
   mode,
+  customCalendarId,
   defaultStaffId,
   onRangeChange,
   staff,
@@ -2479,6 +2701,7 @@ function CreateEntryPanel({
   showJobType,
   showJobEstimate,
   showColorKey,
+  customSettings,
   canEditEstimates,
   canCreateStaff,
   canCreateClient,
@@ -2492,6 +2715,9 @@ function CreateEntryPanel({
   start: Date;
   end: Date;
   mode: EntryMode;
+  // Only meaningful when mode === "custom" - which of the tenant's named
+  // custom calendars this entry is being created on.
+  customCalendarId?: string;
   // Set when the slot that opened this panel was selected inside a specific
   // staff member's column ("Group by staff" Day view) - preselects that
   // staff member instead of defaulting to the first one in the list.
@@ -2508,13 +2734,25 @@ function CreateEntryPanel({
   roles: TenantRoleOption[];
   // Admin-configurable per tenant (Settings > "Appointment & shift
   // form") - whether an appointment must have a client attached. Never
-  // applies to mode === "shift", which has no client field at all.
+  // applies to mode === "shift", which has no client field at all. Custom
+  // entries use customSettings.requireClient instead.
   requireClient: boolean;
   // Admin-configurable (Settings > "Shift form") - only applies when
-  // mode === "shift"; the appointment form always shows these.
+  // mode === "shift"; the appointment form always shows these. Custom
+  // entries use customSettings' equivalents instead.
   showJobType: boolean;
   showJobEstimate: boolean;
   showColorKey: boolean;
+  // Admin-configurable (Settings > Calendars > "Custom form") - only
+  // consulted when mode === "custom".
+  customSettings: {
+    showClient: boolean;
+    requireClient: boolean;
+    showJobType: boolean;
+    showJobEstimate: boolean;
+    showColorKey: boolean;
+    showPaymentStatus: boolean;
+  };
   canEditEstimates: boolean;
   canCreateStaff: boolean;
   canCreateClient: boolean;
@@ -2535,6 +2773,14 @@ function CreateEntryPanel({
   const [newStaffRoleId, setNewStaffRoleId] = useState(() => roles[0]?.id ?? "");
   const [serviceTypeId, setServiceTypeId] = useState("");
   const visibleTags = tagsForMode(tags, mode);
+  // Resolves each shift-only toggle against the right settings source for
+  // this panel's mode, same resolution AppointmentDetailPanel uses.
+  const effectiveShowClient = mode === "appointment" ? true : mode === "custom" ? customSettings.showClient : false;
+  const effectiveRequireClient = mode === "appointment" ? requireClient : customSettings.requireClient;
+  const effectiveShowJobType = mode === "shift" ? showJobType : mode === "custom" ? customSettings.showJobType : true;
+  const effectiveShowJobEstimate =
+    mode === "shift" ? showJobEstimate : mode === "custom" ? customSettings.showJobEstimate : true;
+  const effectiveShowColorKey = mode === "shift" ? showColorKey : mode === "custom" ? customSettings.showColorKey : true;
   const [colorValue, setColorValue] = useState("");
   const [showNewTagForm, setShowNewTagForm] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -2631,7 +2877,7 @@ function CreateEntryPanel({
       fail("End time must be after start time.");
       return;
     }
-    if (mode === "appointment") {
+    if (effectiveShowClient) {
       if (showNewClientForm) {
         if (!clientQuery.trim()) {
           fail("Enter the new client's name.");
@@ -2641,7 +2887,7 @@ function CreateEntryPanel({
           fail("Address and confirm address don't match.");
           return;
         }
-      } else if (requireClient && !selectedClientId) {
+      } else if (effectiveRequireClient && !selectedClientId) {
         fail("Pick a client, or add a new one.");
         return;
       }
@@ -2677,7 +2923,7 @@ function CreateEntryPanel({
             body: JSON.stringify({
               name: newTagName.trim(),
               color: newTagColor,
-              appliesTo: mode === "shift" ? "SHIFT" : "APPOINTMENT",
+              appliesTo: mode === "shift" ? "SHIFT" : mode === "custom" ? "BOTH" : "APPOINTMENT",
             }),
           });
           resolvedTagId = tag.id;
@@ -2688,7 +2934,7 @@ function CreateEntryPanel({
       }
 
       let clientId: string | null = null;
-      if (mode === "appointment" && showNewClientForm) {
+      if (effectiveShowClient && showNewClientForm) {
         const { client } = await fetchJson<{ client: { id: string } }>("/api/clients", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2701,7 +2947,7 @@ function CreateEntryPanel({
         });
         clientId = client.id;
         onClientCreated();
-      } else if (mode === "appointment" && selectedClientId) {
+      } else if (effectiveShowClient && selectedClientId) {
         clientId = selectedClientId;
       }
 
@@ -2709,6 +2955,8 @@ function CreateEntryPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          entryKind: mode === "shift" ? "SHIFT" : mode === "custom" ? "CUSTOM" : "APPOINTMENT",
+          customCalendarId: mode === "custom" ? customCalendarId : undefined,
           staffId: resolvedStaffId,
           clientId,
           serviceTypeId: serviceTypeId || null,
@@ -2725,7 +2973,7 @@ function CreateEntryPanel({
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : `Couldn't create ${mode}.`);
+      setError(err instanceof Error ? err.message : `Couldn't create ${mode === "custom" ? "entry" : mode}.`);
       setConflict(err instanceof ApiError && err.status === 409);
     } finally {
       setSubmitting(false);
@@ -2738,11 +2986,15 @@ function CreateEntryPanel({
       className={`flex flex-col gap-3 rounded-xl border p-5 shadow-sm ${
         mode === "shift"
           ? "border-shift-100 bg-linear-to-br from-shift-50 to-white"
-          : "border-primary-100 bg-linear-to-br from-primary-50 to-white"
+          : mode === "custom"
+            ? "border-gray-200 bg-linear-to-br from-gray-50 to-white"
+            : "border-primary-100 bg-linear-to-br from-primary-50 to-white"
       }`}
     >
       <div className="flex items-start justify-between">
-        <h2 className="text-lg font-medium">{mode === "shift" ? "New shift" : "New appointment"}</h2>
+        <h2 className="text-lg font-medium">
+          {mode === "shift" ? "New shift" : mode === "custom" ? "New custom entry" : "New appointment"}
+        </h2>
         <button type="button" onClick={onClose} className="text-sm font-medium text-[#BD3039] hover:underline">
           Cancel
         </button>
@@ -2865,9 +3117,9 @@ function CreateEntryPanel({
         </div>
       )}
 
-      {(mode !== "shift" || showJobType) && (
+      {effectiveShowJobType && (
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
-        {mode === "shift" ? "Job type (optional)" : "Service (optional)"}
+        {mode === "appointment" ? "Service (optional)" : "Job type (optional)"}
         <select
           value={serviceTypeId}
           onChange={(e) => setServiceTypeId(e.target.value)}
@@ -2883,7 +3135,7 @@ function CreateEntryPanel({
       </label>
       )}
 
-      {(mode !== "shift" || showColorKey) && (
+      {effectiveShowColorKey && (
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Color key (optional)
         <select
@@ -2917,7 +3169,7 @@ function CreateEntryPanel({
       </label>
       )}
 
-      {(mode !== "shift" || showColorKey) && showNewTagForm && (
+      {effectiveShowColorKey && showNewTagForm && (
         <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <label className="flex flex-col gap-1 text-sm">
             Color key name
@@ -2939,9 +3191,9 @@ function CreateEntryPanel({
         </div>
       )}
 
-      {mode === "appointment" && (
+      {effectiveShowClient && (
         <div ref={clientBoxRef} className="relative flex w-full max-w-xs flex-col gap-1 text-sm">
-          Client{requireClient ? "" : " (optional)"}
+          Client{effectiveRequireClient ? "" : " (optional)"}
           <input
             value={clientQuery}
             onChange={(e) => {
@@ -3093,7 +3345,7 @@ function CreateEntryPanel({
         />
       </label>
 
-      {canEditEstimates && (mode !== "shift" || showJobEstimate) && (
+      {canEditEstimates && effectiveShowJobEstimate && (
         <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <label className="flex items-center gap-2 text-sm font-medium text-gray-700">
             <input
@@ -3151,10 +3403,18 @@ function CreateEntryPanel({
         className={`self-start rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 disabled:opacity-50 ${
           mode === "shift"
             ? "bg-shift-500 hover:bg-[radial-gradient(circle_at_center,var(--color-shift-500)_0%,var(--color-shift-700)_100%)] hover:shadow-md"
-            : "bg-primary-500 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
+            : mode === "custom"
+              ? "bg-gray-600 hover:bg-[radial-gradient(circle_at_center,#4b5563_0%,#1f2937_100%)] hover:shadow-md"
+              : "bg-primary-500 hover:bg-[radial-gradient(circle_at_center,var(--color-primary-500)_0%,var(--color-primary-700)_100%)] hover:shadow-md"
         }`}
       >
-        {submitting ? "Creating..." : mode === "shift" ? "Create shift" : "Create appointment"}
+        {submitting
+          ? "Creating..."
+          : mode === "shift"
+            ? "Create shift"
+            : mode === "custom"
+              ? "Create custom entry"
+              : "Create appointment"}
       </button>
     </form>
   );

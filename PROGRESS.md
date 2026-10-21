@@ -21,6 +21,116 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Four interrupted-session features reconciled: service type split, shift reports, payment status, and public booking widget finished - plus a stale local build-cache trap worth remembering
+
+Picked up four features already mid-flight in the working tree from an
+interrupted prior session (uncommitted, no PROGRESS.md entry yet, `ISSUES.md`
+still showing three of them as "Open") rather than started fresh - asked the
+user how to prioritize before touching anything, since the booking widget was
+broken (missing files) and the ServiceType split looked like (but turned out
+not to be) a much bigger, separate unfinished change. All of `ISSUES.md`'s 6
+tracked issues are now resolved.
+
+- **Shift/no-show reports dashboard (ISSUES.md #4)**: found **already fully
+  implemented** to the exact spec signed off in `ISSUES.md` - new `Reports`
+  page (`calendar/reports/`, `ReportsView.tsx`), `GET /api/reports/shifts`,
+  `modules/reports/service.ts` (`listEventsForReport`), gated on the new
+  `VIEW_SHIFT_REPORTS` permission key (defaults Manager/Supervisor, not tied
+  to `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS` - deliberately always
+  tenant-wide for whoever holds it, per the signed-off design). Aggregate
+  tiles + status/staff/service-type filters + drill-down into the real
+  appointment detail panel, exactly as scoped. Correctly built against the
+  new split service-type model (`OR`s `appointmentServiceTypeId`/
+  `shiftServiceTypeId`). Nothing left to build - just `ISSUES.md`/`VERIFY.md`
+  hadn't caught up.
+
+- **ServiceType split (ISSUES.md #1)**: found **already fully implemented**
+  - schema split into `AppointmentServiceType`/`ShiftServiceType`, the
+  migration (`20261010040000_split_service_types_and_payment_toggle`, hand-
+  written with a real data-migration: a service type used by any real
+  (client-having) appointment copies into `AppointmentServiceType`, one used
+  by a shift or schedule-template-shift copies into `ShiftServiceType`, used
+  by both copies into both under the same id, used by neither defaults to
+  Appointments) already applied to the dev DB, and every consuming file
+  (`scheduling/service.ts`, `templates.ts`, the API routes, `ServiceTypeManager.tsx` /
+  new `ShiftServiceTypeManager.tsx`) already updated to match. Nothing left
+  to build here - just the docs (`ISSUES.md` #1, this entry, `VERIFY.md`)
+  hadn't caught up to reflect it as done.
+- **Appointment payment status, both pieces (ISSUES.md #5)**: also found
+  **already fully implemented**, not just the visibility half. New
+  `Tenant.showPaymentStatus` (default on, same migration as the ServiceType
+  split above) toggles whether the Payment field shows at all
+  (`AppointmentFormSettings.tsx`). The field itself is no longer permanently
+  stuck read-only at `UNPAID` - `SchedulingCalendar.tsx`'s detail-panel edit
+  form has a real `editPaymentStatus` dropdown (Unpaid/Paid/Waived/Refunded),
+  and `PATCH /api/appointments/[id]` accepts `paymentStatus` as one of the
+  general booking-fields edits (same `EDIT_APPOINTMENTS` gate as price/
+  client/service). Nothing left to build - same "docs hadn't caught up" gap
+  as #1/#4 above.
+- **Public booking widget - genuinely incomplete, now finished**: Settings >
+  Booking Widget's `BookingWidgetSettings.tsx` imported `WorkingHoursEditor`
+  and `EmbedSnippet` - neither existed anywhere, so the app didn't compile.
+  Built both:
+  - **`WorkingHoursEditor.tsx`**: per-staff weekly availability editor (staff
+    picker + add/remove day-of-week time windows, same half-hour `<select>`
+    convention as `CalendarHoursSettings.tsx`), backed by the already-existing
+    `GET`/`PUT /api/staff/[id]/working-hours`.
+  - **`EmbedSnippet.tsx`** + new **`public/booking-widget.js`**: a copy-paste
+    `<script data-tenant="...">` snippet that injects a self-resizing iframe
+    pointing at `/book/[tenantSlug]?embed=1`, resized via the
+    `shiftup-booking-resize` `postMessage` `BookingPage.tsx` already posts
+    (origin-and-source checked on receipt).
+  - Also fixed two **pre-existing `react-hooks/set-state-in-effect` lint
+    violations** in the already-written `BookingPage.tsx` (a direct
+    `void loadSlots()` call in an effect, where `loadSlots` itself calls
+    `setState` synchronously before its first `await`) - wrapped in the
+    established IIFE pattern (see the react-hooks/set-state-in-effect note
+    further down this file) rather than leaving it to fail lint.
+- **A real environment trap, worth remembering for next session**: this
+  project directory sits somewhere the filesystem can report a file as
+  missing or stale-empty (confirmed via `ls`/`Read`/`Glob` *and* a real
+  Prisma CLI P3015 error) when it's actually present with full content
+  moments later - a cloud-sync placeholder/hydration delay, not a tool
+  caching issue (ruled out since the Prisma CLI's own `fs` calls hit it too).
+  This cost real time chasing phantom "25 tsc errors" that were actually
+  stale reads of already-fixed files. **Fix that worked**: force-read every
+  file's bytes recursively (`Get-ChildItem -Recurse -File | ForEach-Object
+  { [IO.File]::ReadAllBytes($_.FullName) }`) across `src/`, `prisma/`,
+  `public/`, and the root `*.md` docs specifically (missed them the first
+  pass - they're not under any of those three directories) before trusting
+  any "this is broken" conclusion. Combined with two separate *stale-cache*
+  traps that compounded the confusion - a stale `tsconfig.tsbuildinfo` (delete
+  it; `tsc --noEmit` can otherwise report clean on files it didn't really
+  recheck) and stale Next.js 16 route/layout types after deleting `.next`
+  (`npx next typegen` regenerates `LayoutProps`/etc. without a full build).
+- **Verified**: `prisma generate` + `prisma migrate status` (DB confirmed
+  already migrated via a direct query against `_prisma_migrations` and
+  `information_schema.tables` - the split tables exist, `service_types` is
+  gone), `tsc --noEmit` clean, `eslint .` clean across the **entire**
+  project, full `vitest run` **89/89 passing** across all 13 test files.
+  **Not yet confirmed in the browser** - added to `VERIFY.md` (both the
+  ServiceType split and the booking widget).
+
+### Roster and the new Reports dashboard can now split Appointments/Shifts apart
+
+Raised directly right after the Reports dashboard write-up above landed:
+"the calendar is still combined, we need to add the option to combine them,
+or have them be on the same page." The main calendar's own Appointments/
+Shifts/Both switcher (`SchedulingCalendar.tsx`) already does this; Roster and
+the new Reports page didn't - both always mixed both kinds into one list
+with no way to split them.
+
+- **`ReportsView.tsx`**: new "Kind" filter (Both/Appointments/Shifts,
+  client-side only - everything's already fetched per the date/staff/service
+  filters) sitting alongside the existing Status/Staff/Service filters.
+  `filteredEvents` (the kind-filtered set) now feeds the tiles, the per-staff
+  breakdown, and the drill-down list - all three narrow together.
+- **`RosterView.tsx`**: same Both/Appointments/Shifts pill switcher added
+  next to the existing Day/Week toggle, filtering each staff member's chip
+  row (and their appointment/shift counts) client-side.
+- Verified: `tsc --noEmit` clean, `eslint` clean on both changed files.
+  **Not yet confirmed in the browser** - added to `VERIFY.md`.
+
 ### Appointments/shifts can now be marked Completed/No-show (ISSUES.md #3)
 `AppointmentStatus` already had `COMPLETED`/`NO_SHOW` as real enum values, but
 nothing - API or UI - could ever set them; every event stayed `BOOKED` until

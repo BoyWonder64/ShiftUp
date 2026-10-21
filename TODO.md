@@ -11,15 +11,9 @@ app — rather than left here as done-but-unconfirmed clutter.
 ## Issues
 
 Bugs, data-model problems, and known gaps now live in **`ISSUES.md`**, not
-here - this file is feature requests/backlog only. **Still open, at the top
-of that file (as of 2026-10-02):** service types wrongly shared between
-Appointments and Shifts (#1); no way to update a calendar event after it's
-created (e.g. log a no-show - `AppointmentStatus` already has
-`NO_SHOW`/`COMPLETED` but nothing can set them, #3); the manager no-show/shift
-reporting dashboard that depends on #3 (#4, design proposed but not built);
-and appointment payment status having no way to actually update it (#5).
-**Resolved** (#2, #6) — moved to `VERIFY.md` for you to confirm. See
-`ISSUES.md` for full detail on the open ones.
+here - this file is feature requests/backlog only. **All 6 tracked issues
+are now resolved** (as of 2026-10-10) — moved to `VERIFY.md` for you to
+confirm. See `ISSUES.md` if you want the full history.
 
 ## New feature requests (not started)
 
@@ -160,6 +154,33 @@ and appointment payment status having no way to actually update it (#5).
   not re-litigated.
 - ~~Reusable shift-schedule templates, a new page for the staff manager.~~
   **Done 2026-10-02 — moved to `VERIFY.md`.**
+- **Fix the schedule-templates builder UI - a visual week preview instead of a
+  bare day-number input.** Raised 2026-10-09. Today in
+  `ScheduleTemplatesView.tsx`, building a template's shifts means typing a raw
+  "Day (0-`periodLengthDays - 1`)" number (`shiftDayOffset` state, the add-shift
+  form around lines 470-480) with no indication of which weekday that maps to -
+  doesn't read sensibly at a glance. Two related asks raised together:
+  - **The day you're setting should read as a weekday, not just an integer
+    offset** - e.g. label it "Day 0 (Mon)", "Day 1 (Tue)", ... for a 7-day
+    template, since `dayOffset` is relative to whatever date the template gets
+    applied from later (see the existing "relative to the period's start, not
+    a real calendar date" note at line 438) - this is a display label over the
+    existing offset, not a newly-stored day-of-week.
+  - **A live visual week preview while building the template** - add a row
+    rendered as a small calendar/week grid (one column per day) showing each
+    shift in its day's column as it's added/removed, instead of (or in
+    addition to) today's flat list of "Day N · time · staff" rows (the `<ul>`
+    around lines 442-467). Should update immediately in the builder itself -
+    distinct from the existing "Apply to a week" section's dry-run preview
+    (lines 538-629), which only appears after a real `periodStart` date is
+    picked for applying; this new preview is about visualizing the template's
+    own shape while building it, before any real date is involved.
+  Needs scoping before building: does the week-grid preview only make sense
+  for `periodLengthDays === 7` (a literal calendar week), or does it need to
+  generalize to longer periods (templates allow 1-90 days today via the
+  existing min/max)? A grid stops reading as "a small calendar" much past two
+  weeks, so this may need a different layout (or a scroll/paginated grid) for
+  longer templates.
 - **Sign in with Google (OAuth)** - raised 2026-10-01 as "two-factor
   authentication, possibly via Google," which was actually two different
   features (OAuth login vs. TOTP 2FA). **Decided 2026-10-09: build OAuth
@@ -294,6 +315,142 @@ and appointment payment status having no way to actually update it (#5).
   of (or alongside) the free-text field, and a fallback to the existing
   free-text field when no account is connected. Real design/integration
   work, not a form-field add.
+- **Multiple tags per appointment/shift, with one marked dominant.** Raised
+  2026-10-09. Today `Appointment.tagId` (`prisma/schema.prisma`) is a single
+  optional FK to one `EventTag` - the "Color key" picker in
+  `SchedulingCalendar.tsx` is single-select, and picking a custom tag vs. one
+  of the 5 built-in `colorKey` values is already mutually exclusive (see the
+  schema comment at line ~698). This asks for an entry to carry *several*
+  tags at once, with the user choosing which one is dominant (i.e. which
+  tag's color actually renders - `resolveEventColor` in
+  `src/lib/colors/eventColors.ts` currently takes a single `tagColor`/
+  `colorKey` and has no concept of picking among several). Needs:
+  - A real many-to-many join table (e.g. `AppointmentTag`: `appointmentId`,
+    `tagId`, plus a way to mark exactly one row dominant per appointment -
+    either an `isDominant` boolean enforced app-side to be unique per
+    appointment, or an explicit ordered position) replacing the single
+    `tagId` column - a schema/migration change, not just a UI change.
+  - UI rework of the "Color key" control from single-select to multi-select
+    plus a dominant-picker (radio/star among the selected tags) in both the
+    create and edit panels.
+  - `resolveEventColor` needs to resolve from the dominant tag's color
+    instead of a single `tagColor`, still losing to a terminal status
+    (CANCELLED/NO_SHOW/COMPLETED) same as today.
+  - Where else a single tag is assumed today (roster drill-down, any
+    tag-based filtering) needs auditing once this becomes a list.
+- **Schedule-template shift builder should reuse the real create-shift
+  workflow, not a bare add-shift form.** Raised 2026-10-09. Today
+  `TemplateDetail`'s add-shift form (`ScheduleTemplatesView.tsx`, the form
+  around lines 469-535) only collects day offset, start/end time, staff, and
+  job type - it has none of the other fields the real "New shift" panel in
+  `SchedulingCalendar.tsx` collects (location type **online vs. in-person**
+  plus the address/meeting-link text field, the tag/color-key picker, job
+  estimate), and `ScheduleTemplateShift` (`prisma/schema.prisma`) has no
+  columns for any of them - so a template-created shift always comes out
+  `locationType: IN_PERSON` with no tag, regardless of what the real form
+  would ask. Per the user: the template's shift-adding step should go
+  through **the same workflow as creating a real shift** on the calendar,
+  not a separately-scoped subset of fields - so this isn't just "add an
+  online/in-person toggle," it's bringing the template add-shift form in
+  line with whatever `SchedulingCalendar.tsx`'s create-shift panel asks for
+  (including respecting the existing per-tenant `showJobType`/
+  `showJobEstimate`/`showColorKey` toggles from `ShiftFormSettings.tsx`, same
+  as the real form does). Needs:
+  - `ScheduleTemplateShift` schema additions for whichever fields the real
+    form has that the template doesn't yet (`locationType`, `location`,
+    `tagId`/`colorKey`, estimate fields) - mirroring `Appointment`'s columns.
+  - The add-shift form and shift list in `ScheduleTemplatesView.tsx`
+    rewritten to match the real form's field set/behavior instead of staying
+    a hand-maintained subset that drifts from it over time.
+  - The apply logic (`src/modules/scheduling/templates.ts`, `applyTemplate`)
+    updated to copy the new fields onto the real `Appointment` rows it
+    creates, the same way it already copies `shiftServiceTypeId` today.
+  - Interacts with the multiple-tags/dominant-tag item above if that ships
+    first - the template form's tag picker should match whatever the real
+    form's picker looks like by the time this is built.
+- **Dashboard's "Upcoming appointments" stat should show a small list,
+  linking each item to its spot on the calendar.** Raised 2026-10-09. Today
+  `DashboardPage`'s `StatCard` (`src/app/(admin)/app/[tenantSlug]/dashboard/page.tsx`,
+  lines 280-296, 302-314) just renders a bare count that links generically to
+  `/app/${tenantSlug}/calendar` - no way to see *which* appointments make up
+  that number without leaving the dashboard and finding them manually. Wants:
+  under/alongside the count, a small list of the actual upcoming items (e.g.
+  the next handful by `startTime`), each one a link that takes you straight
+  to that specific appointment on the calendar - not just the calendar's
+  landing view. **Needs new deep-link support that doesn't exist yet**:
+  `/calendar/page.tsx` today only reads `staff`/`type` query params (filters),
+  nothing that opens to a specific date or a specific event/appointment id -
+  so this needs a new query param (e.g. `?eventId=`) that `SchedulingCalendar.tsx`
+  reads on load to jump its view to that event's date and open its detail
+  panel, which the calendar doesn't support from a URL today. Should pair
+  with fixing the miscounting bug tracked in `ISSUES.md` (today's count
+  silently includes shifts) so the list this shows matches whatever the
+  fixed count actually represents.
+- **Fully separate the Shifts and Appointments calendars - today it's still
+  one shared calendar.** Raised 2026-10-09. Per the user, even after the
+  existing "Appointments/Shifts/Both" switcher (`calendarType` state in
+  `SchedulingCalendar.tsx`, the toolbar control around lines 1328-1345,
+  backed by the `VIEW_CALENDAR_TOGGLE` permission - see the now-done TODO
+  item below, "A per-role permission for the calendar's
+  Appointments/Shifts/Both switcher"), this still isn't real separation -
+  it's one `SchedulingCalendar` component instance with one grid/toolbar/view
+  (month/week/day, combined/by-staff layout, etc.) whose events just get
+  *filtered* by `calendarType` client-side before rendering, not two
+  genuinely independent calendars. Needs scoping before building:
+  - What does "fully separate" mean concretely - two distinct routes/pages
+    (e.g. `/calendar/appointments` and `/calendar/shifts`) each with their
+    own `SchedulingCalendar` mount and independent view state (current
+    date, month/week/day, layout), instead of one page with a type filter?
+    Or the same page/URL but two independently-scrollable/configurable
+    calendar panes shown at once?
+  - Does each separated calendar need its own saved view preferences (e.g.
+    the by-staff/combined layout toggle, or the calendar-size resize item
+    already in this file) independently of the other, or do settings still
+    apply globally across both?
+  - Interacts with the existing `features.appointmentManager`/
+    `features.shiftManagement` tier gating (a tenant can be licensed for
+    only one of the two) - a tenant with just one license tier presumably
+    only gets that one calendar, not a switcher with a disabled/empty
+    second option.
+  - Interacts with the roster (`/calendar/roster`, grouped by staff across
+    both kinds today) and the manager dashboard/shift-reports work
+    (`ISSUES.md` #4) - worth deciding whether those stay combined views even
+    if the main calendar splits, since "how many no-shows this week" and
+    roster's per-staff grouping both currently assume one shared event pool.
+- **A setting to base public-booking availability on actual scheduled
+  shifts, not just the generic `WorkingHours` template.** Raised 2026-10-09.
+  Today `listAvailableSlotsByStaff` (`src/modules/scheduling/availability.ts`,
+  lines ~99-144) computes a staff member's publicly bookable windows purely
+  from their recurring `WorkingHours` rows (a weekly day-of-week/start-end
+  template, same one `WorkingHoursEditor.tsx` edits) - it fetches that staff
+  member's real `Appointment` rows too (lines 105-113), but only to treat
+  them as **busy blockers** (`blockedByAppointment`, line 136) subtracted
+  from the `WorkingHours` windows, exactly like a client appointment would
+  block another one. A scheduled **shift** (`clientId` null) gets the same
+  treatment as a booked appointment there - it's never treated as the thing
+  that *creates* availability, which is backwards from how a shift
+  conceptually works (it's when that staff member is actually at work and
+  bookable, not when they're busy). This asks for a per-tenant toggle so
+  availability can instead be **derived from real scheduled shifts** - a
+  client can only publicly book a time that falls inside a staff member's
+  actual shift for that day, rather than their general recurring hours
+  template. Needs:
+  - The new mode needs its own slot-generation path alongside (not
+    replacing) the existing `WorkingHours`-based one - admin picks which
+    model a tenant uses, presumably in Settings > Booking Widget next to
+    the other `publicBookingEnabled`-gated controls.
+  - Resolving the double-duty conflict this creates: if a shift itself now
+    *grants* availability, what still counts as "busy" within that shift
+    window (e.g. another appointment already booked against the same staff
+    member in that slot) needs to keep blocking, while the shift row itself
+    stops being treated as a blocker the way it is today.
+  - Interacts with `BlockedTime`/approved `TimeOff`/holidays - those should
+    presumably still subtract from shift-derived availability the same way
+    they already subtract from `WorkingHours`-derived availability today.
+  - Interacts with the booking-widget's `collapseForDisplay` logic (the
+    public availability GET route, per the doc comment on
+    `listAvailableSlotsByStaff`) and the booking confirmation route, which
+    both assume slots come from one availability model today.
 - **Time estimates in minutes or hours, interchangeably.** Job time estimates
   are currently a single "minutes" field - let the user enter/view in either
   unit.

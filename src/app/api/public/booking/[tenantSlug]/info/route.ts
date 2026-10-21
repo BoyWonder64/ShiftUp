@@ -13,7 +13,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         where: { id: tenantId },
         select: { name: true, logoDataUrl: true },
       });
-      const serviceTypes = await tx.serviceType.findMany({
+      const serviceTypes = await tx.appointmentServiceType.findMany({
         where: { isActive: true, isPubliclyBookable: true },
         orderBy: { name: "asc" },
         select: { id: true, name: true, durationMinutes: true, price: true },

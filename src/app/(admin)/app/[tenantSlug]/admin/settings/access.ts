@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext, type Tx, type TenantRole } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
 import { SETTINGS_SECTIONS, type SettingsSection } from "./sections";
 
 async function canAccessSection(
@@ -36,12 +37,10 @@ export const getSettingsContext = cache(async (tenantSlug: string) => {
   const role: TenantRole = session.role;
   const { userId, roleId, tenantId } = session;
 
-  const { tenant, visibleSections, canViewRoster, canViewScheduleTemplates } = await runInTenantContext(
-    tenantId,
-    userId,
-    role,
-    async (tx) => {
+  const { tenant, visibleSections, canViewRoster, canViewScheduleTemplates, calendarAccess } =
+    await runInTenantContext(tenantId, userId, role, async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: tenantId } });
+      const license = await tx.license.findUnique({ where: { tenantId } });
       const visibleSections: SettingsSection[] = [];
       for (const section of SETTINGS_SECTIONS) {
         if (await canAccessSection(tx, tenantId, role, roleId, section)) {
@@ -50,9 +49,11 @@ export const getSettingsContext = cache(async (tenantSlug: string) => {
       }
       const canViewRoster = await hasPermission(tx, tenantId, role, roleId, "VIEW_ROSTER");
       const canViewScheduleTemplates = await hasPermission(tx, tenantId, role, roleId, "VIEW_SCHEDULE_TEMPLATES");
-      return { tenant, visibleSections, canViewRoster, canViewScheduleTemplates };
-    }
-  );
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(tx, tenantId, role, roleId, tenant, license?.tier ?? "BOTH", license?.billingPlan ?? "FREE")
+        : null;
+      return { tenant, visibleSections, canViewRoster, canViewScheduleTemplates, calendarAccess };
+    });
 
   if (!tenant || tenant.slug !== tenantSlug) {
     notFound();
@@ -67,6 +68,7 @@ export const getSettingsContext = cache(async (tenantSlug: string) => {
     isAdmin: role === "ADMIN",
     canViewRoster,
     canViewScheduleTemplates,
+    calendarAccess,
   };
 });
 

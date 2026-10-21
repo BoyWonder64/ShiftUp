@@ -44,7 +44,7 @@ describe("scheduling/availability", () => {
       await tx.timeOff.deleteMany({ where: { tenantId } });
       await tx.blockedTime.deleteMany({ where: { tenantId } });
       await tx.workingHours.deleteMany({ where: { tenantId } });
-      await tx.serviceType.deleteMany({ where: { tenantId } });
+      await tx.appointmentServiceType.deleteMany({ where: { tenantId } });
       await tx.staffProfile.deleteMany({ where: { tenantId } });
       await tx.user.deleteMany({ where: { tenantId } });
       await tx.license.deleteMany({ where: { tenantId } });
@@ -54,7 +54,7 @@ describe("scheduling/availability", () => {
   });
 
   async function makeService(tx: Tx, durationMinutes: number, forTenantId: string = tenantId) {
-    return tx.serviceType.create({
+    return tx.appointmentServiceType.create({
       data: {
         tenantId: forTenantId,
         name: `Service ${Math.random().toString(36).slice(2, 7)}`,
@@ -68,7 +68,7 @@ describe("scheduling/availability", () => {
   it("rejects a service type that isn't publicly bookable", async () => {
     await runInSystemContext(async (tx) => {
       const staff = await createTestStaff(tx, tenantId, null, "s1");
-      const service = await tx.serviceType.create({
+      const service = await tx.appointmentServiceType.create({
         data: { tenantId, name: "Internal only", durationMinutes: 60, isPubliclyBookable: false },
       });
       const monday = nextDateOnWeekday(1, 7);
@@ -115,6 +115,7 @@ describe("scheduling/availability", () => {
       const tenOClock = addMinutes(monday, 10 * 60);
       await createAppointment(tx, tenantId, {
         staffId: staff.staffProfile.id,
+        entryKind: "SHIFT",
         clientId: null,
         startTime: tenOClock,
         endTime: addMinutes(tenOClock, 60),
@@ -196,6 +197,7 @@ describe("scheduling/availability", () => {
       const tenOClock = addMinutes(monday, 10 * 60);
       await createAppointment(tx, tenantId, {
         staffId: staff.staffProfile.id,
+        entryKind: "SHIFT",
         clientId: null,
         startTime: tenOClock,
         endTime: addMinutes(tenOClock, 30),
@@ -281,7 +283,7 @@ describe("scheduling/availability", () => {
 
       await tx.appointment.deleteMany({ where: { tenantId: tenant.id } });
       await tx.workingHours.deleteMany({ where: { tenantId: tenant.id } });
-      await tx.serviceType.deleteMany({ where: { tenantId: tenant.id } });
+      await tx.appointmentServiceType.deleteMany({ where: { tenantId: tenant.id } });
       await tx.staffProfile.deleteMany({ where: { tenantId: tenant.id } });
       await tx.user.deleteMany({ where: { tenantId: tenant.id } });
       await tx.license.deleteMany({ where: { tenantId: tenant.id } });

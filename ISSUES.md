@@ -11,7 +11,8 @@ unconfirmed clutter.
 
 ### 1. Service types are shared between Appointments and Shifts — need to be separated
 
-**Status:** Open, raised 2026-10-02.
+**Status:** Resolved 2026-10-10 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in `PROGRESS.md`/git history.
 
 Today there's a single `ServiceType` table (`prisma/schema.prisma`), and both
 `Appointment.serviceTypeId` and `ScheduleTemplateShift.serviceTypeId` point at
@@ -56,7 +57,9 @@ the separate, more robust "Notes on an appointment" feature request in
 
 ### 4. Manager dashboard for no-show / shift reporting — needs its own new setting
 
-**Status:** Open, raised 2026-10-02. Was blocked on issue #3 above - **no
+**Status:** Resolved 2026-10-10 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in `PROGRESS.md`/git history. (Original scoping below
+kept for context.) Was blocked on issue #3 above - **no
 longer blocked**, since #3 shipped 2026-10-09 and events can now actually
 carry a logged `COMPLETED`/`NO_SHOW` outcome. Still not built.
 
@@ -123,7 +126,11 @@ separate access rule).
 
 ### 5. Appointment payment status is shown (e.g. "UNPAID") but there's no way to update it
 
-**Status:** Open, raised 2026-10-02. Related to issue #3 above (same shape of
+**Status:** Resolved 2026-10-10 — moved to `VERIFY.md` for you to confirm in
+the app. Full detail in `PROGRESS.md`/git history. Both pieces below are
+done: the `showPaymentStatus` toggle (piece 1) and a real editable Payment
+dropdown on the detail panel backed by `PATCH /api/appointments/[id]` (piece
+2). (Original write-up kept below for context.) Related to issue #3 above (same shape of
 problem - a status field the data model supports but nothing lets you change
 after the fact) but a separate enum: this is `PaymentStatus`
 (`UNPAID | PAID | WAIVED | REFUNDED`, `prisma/schema.prisma`), not
@@ -160,6 +167,17 @@ the app. Full detail in git history / `PROGRESS.md`.
 
 ## Bugs / UX fixes
 
+- ~~**The per-role "X/Y granted" permission-count badge doesn't make sense -
+  remove it.**~~ **Resolved 2026-10-13 — moved to `VERIFY.md`.** Removed
+  entirely (not fixed - the user confirmed the badge itself wasn't useful
+  summary information, not just its math).
+- ~~**Dashboard's "Upcoming appointments" stat counts shifts too, not just
+  appointments.**~~ **Resolved 2026-10-13 — moved to `VERIFY.md`.** Now
+  filters on `entryKind: "APPOINTMENT"` (the real source of truth post the
+  calendar-split work, not the older `clientId`-based fix this entry
+  originally proposed). The optional "separate upcoming shifts stat" idea
+  from the original write-up was not built - still undecided, not re-raised
+  here as a new ask.
 - ~~**"Group by staff" Day view: the time-of-day column on the left
   visually glitches / floats in front of things it shouldn't.**~~
   **Resolved 2026-10-03 — moved to `VERIFY.md`.**
@@ -237,15 +255,18 @@ the app. Full detail in git history / `PROGRESS.md`.
     self-service booking portal. **Venmo was considered and deliberately not
     built** — it needs its own Braintree/PayPal integration (separate from
     Stripe entirely), not worth the complexity for a B2B software purchase.
-- **No part of `SchedulingCalendar`'s client-fetched UI can be confirmed by curl.**
+- **`SchedulingCalendar`'s client-fetched UI can't be confirmed by curl alone
+  — but real browser verification is possible in this dev environment.**
   Its permissions/staff/events all load via `useEffect` after hydration, so a
   server-rendered curl check always sees `permissions = null` and skips every
-  block gated on it — the buttons, the staff filter, drag/resize, and the
-  color-coded events are all correct by code review and their underlying API
-  calls are genuinely tested, but none of their actual on-screen behavior has
-  been clicked through in a real browser (none available in the dev
-  environment). This is also why a future bug report in this area can't be
-  diagnosed from this side alone - a manual pass with specific symptoms helps a lot.
+  block gated on it. **Updated 2026-10-13**: a headless Chromium (via
+  Playwright, installed on demand with `npm install --no-save playwright` +
+  `npx playwright install chromium`) does work here and was used to click
+  through the calendar-split/custom-calendars work end to end this session -
+  screenshots, real clicks/fills, console-error checks, the works. Not a
+  standing dependency (removed after each use), so still worth a manual pass
+  with specific symptoms for anything that isn't already covered, but "no
+  browser available" is no longer true.
 - **`WorkingHours` isn't used anywhere yet.** The model exists but nothing
   populates it or constrains bookable times to it — the calendar only
   prevents literal double-booking, not booking outside a staff member's

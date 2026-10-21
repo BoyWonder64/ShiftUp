@@ -31,10 +31,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_SERVICES");
       if (!allowed) throw new Error("FORBIDDEN");
 
-      const existing = await tx.serviceType.findUnique({ where: { id } });
+      const existing = await tx.appointmentServiceType.findUnique({ where: { id } });
       if (!existing || existing.tenantId !== session.tenantId) throw new Error("NOT_FOUND");
 
-      return tx.serviceType.update({ where: { id }, data: parsed.data });
+      return tx.appointmentServiceType.update({ where: { id }, data: parsed.data });
     });
 
     return NextResponse.json({ serviceType });
@@ -48,7 +48,36 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (err instanceof Error && err.message === "NOT_FOUND") {
       return NextResponse.json({ error: "Not found." }, { status: 404 });
     }
-    console.error("Failed to update service type", err);
+    console.error("Failed to update appointment service type", err);
+    return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
+  }
+}
+
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  try {
+    const session = await requireTenantSession();
+
+    await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
+      const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "DELETE_SERVICES");
+      if (!allowed) throw new Error("FORBIDDEN");
+
+      const result = await tx.appointmentServiceType.deleteMany({ where: { id, tenantId: session.tenantId } });
+      if (result.count === 0) throw new Error("NOT_FOUND");
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    if (err instanceof Error && err.message === "UNAUTHENTICATED") {
+      return NextResponse.json({ error: "Not authorized." }, { status: 401 });
+    }
+    if (err instanceof Error && err.message === "FORBIDDEN") {
+      return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    if (err instanceof Error && err.message === "NOT_FOUND") {
+      return NextResponse.json({ error: "Not found." }, { status: 404 });
+    }
+    console.error("Failed to delete appointment service type", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }
 }

@@ -4,7 +4,7 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { createAppointment, listAppointmentsInRange, SchedulingConflictError } from "@/modules/scheduling/service";
-import { assertCanAddAppointment, PlanLimitError } from "@/lib/licensing/limits";
+import { assertCanAddAppointment, assertCustomCalendarEnabled, PlanLimitError } from "@/lib/licensing/limits";
 import { EVENT_COLOR_KEYS } from "@/lib/colors/eventColors";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
 
@@ -49,11 +49,12 @@ export async function GET(request: NextRequest) {
       session.userId,
       session.role,
       async (tx) => {
-        const [canViewShifts, canViewAppointments] = await Promise.all([
+        const [canViewShifts, canViewAppointments, canViewCustom] = await Promise.all([
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_SHIFTS"),
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_APPOINTMENTS"),
+          hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_CUSTOM_CALENDAR"),
         ]);
-        if (!canViewShifts && !canViewAppointments) throw new Error("FORBIDDEN");
+        if (!canViewShifts && !canViewAppointments && !canViewCustom) throw new Error("FORBIDDEN");
         const [canViewEstimates, canViewAllShifts, canViewAllAppointments] = await Promise.all([
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_JOB_ESTIMATES"),
           hasPermission(tx, session.tenantId, session.role, session.roleId, "VIEW_ALL_SHIFTS"),
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
           tx,
           session.tenantId,
           { start: new Date(parsed.data.start), end: new Date(parsed.data.end) },
-          { allShifts, allAppointments, ownStaffId: own?.id ?? null, canViewShifts, canViewAppointments }
+          { allShifts, allAppointments, ownStaffId: own?.id ?? null, canViewShifts, canViewAppointments, canViewCustom }
         );
         return rows.map((row) => redactEstimates(row, canViewEstimates));
       }
@@ -85,6 +86,11 @@ export async function GET(request: NextRequest) {
 
 const createSchema = z.object({
   staffId: z.string().uuid(),
+  entryKind: z.enum(["SHIFT", "APPOINTMENT", "CUSTOM"]),
+  // Required (validated below, not here, since zod can't easily express
+  // "required only when entryKind === CUSTOM") when entryKind is CUSTOM -
+  // which of the tenant's named custom calendars this entry belongs to.
+  customCalendarId: z.string().uuid().optional().nullable(),
   clientId: z.string().uuid().optional().nullable(),
   serviceTypeId: z.string().uuid().optional().nullable(),
   startTime: z.string().datetime(),
@@ -119,15 +125,27 @@ export async function POST(request: NextRequest) {
             session.tenantId,
             session.role,
             session.roleId,
-            data.clientId ? "CREATE_APPOINTMENTS" : "CREATE_SHIFTS"
+            data.entryKind === "SHIFT"
+              ? "CREATE_SHIFTS"
+              : data.entryKind === "CUSTOM"
+                ? "CREATE_CUSTOM_ENTRIES"
+                : "CREATE_APPOINTMENTS"
           ),
           hasPermission(tx, session.tenantId, session.role, session.roleId, "EDIT_JOB_ESTIMATES"),
         ]);
         if (!canCreate) throw new Error("FORBIDDEN");
+        if (data.entryKind === "CUSTOM") {
+          await assertCustomCalendarEnabled(tx, session.tenantId);
+          if (!data.customCalendarId) throw new Error("CUSTOM_CALENDAR_REQUIRED");
+          const customCalendar = await tx.customCalendar.findUnique({ where: { id: data.customCalendarId } });
+          if (!customCalendar || customCalendar.tenantId !== session.tenantId) throw new Error("NOT_FOUND");
+        }
         await assertCanAddAppointment(tx, session.tenantId);
 
         return createAppointment(tx, session.tenantId, {
           staffId: data.staffId,
+          entryKind: data.entryKind,
+          customCalendarId: data.entryKind === "CUSTOM" ? data.customCalendarId : null,
           clientId: data.clientId,
           serviceTypeId: data.serviceTypeId,
           startTime: new Date(data.startTime),
@@ -152,6 +170,12 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof Error && err.message === "FORBIDDEN") {
       return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    if (err instanceof Error && err.message === "CUSTOM_CALENDAR_REQUIRED") {
+      return NextResponse.json({ error: "customCalendarId is required for a custom entry." }, { status: 400 });
+    }
+    if (err instanceof Error && err.message === "NOT_FOUND") {
+      return NextResponse.json({ error: "That custom calendar doesn't exist." }, { status: 404 });
     }
     if (err instanceof SchedulingConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

@@ -13,7 +13,7 @@ import { createAppointment, SchedulingConflictError } from "./service";
 
 const shiftInclude = {
   staff: { select: { id: true, displayName: true } },
-  serviceType: { select: { id: true, name: true } },
+  shiftServiceType: { select: { id: true, name: true } },
 } as const;
 
 export interface ScheduleTemplateShiftInput {
@@ -99,7 +99,7 @@ export async function cloneTemplate(tx: Tx, tenantId: string, id: string, name: 
         dayOffset: s.dayOffset,
         startMinute: s.startMinute,
         endMinute: s.endMinute,
-        serviceTypeId: s.serviceTypeId,
+        shiftServiceTypeId: s.shiftServiceTypeId,
       })),
     });
   }
@@ -111,7 +111,7 @@ async function assertStaffAndServiceBelongToTenant(tx: Tx, tenantId: string, sta
   const staff = await tx.staffProfile.findFirst({ where: { id: staffId, tenantId } });
   if (!staff) throw new Error("INVALID_STAFF");
   if (serviceTypeId) {
-    const serviceType = await tx.serviceType.findFirst({ where: { id: serviceTypeId, tenantId } });
+    const serviceType = await tx.shiftServiceType.findFirst({ where: { id: serviceTypeId, tenantId } });
     if (!serviceType) throw new Error("INVALID_SERVICE_TYPE");
   }
 }
@@ -135,7 +135,7 @@ export async function addTemplateShift(
       dayOffset: input.dayOffset,
       startMinute: input.startMinute,
       endMinute: input.endMinute,
-      serviceTypeId: input.serviceTypeId ?? null,
+      shiftServiceTypeId: input.serviceTypeId ?? null,
     },
     include: shiftInclude,
   });
@@ -164,7 +164,7 @@ export async function updateTemplateShift(
       tx,
       tenantId,
       input.staffId ?? existing.staffId,
-      input.serviceTypeId !== undefined ? input.serviceTypeId : existing.serviceTypeId
+      input.serviceTypeId !== undefined ? input.serviceTypeId : existing.shiftServiceTypeId
     );
   }
 
@@ -175,7 +175,7 @@ export async function updateTemplateShift(
       dayOffset: input.dayOffset,
       startMinute: input.startMinute,
       endMinute: input.endMinute,
-      serviceTypeId: input.serviceTypeId === undefined ? undefined : input.serviceTypeId,
+      shiftServiceTypeId: input.serviceTypeId === undefined ? undefined : input.serviceTypeId,
     },
     include: shiftInclude,
   });
@@ -254,8 +254,8 @@ export async function planTemplateApply(
       templateShiftId: shift.id,
       staffId: shift.staffId,
       staffName: shift.staff.displayName,
-      serviceTypeId: shift.serviceTypeId,
-      serviceTypeName: shift.serviceType?.name ?? null,
+      serviceTypeId: shift.shiftServiceTypeId,
+      serviceTypeName: shift.shiftServiceType?.name ?? null,
       dayOffset: shift.dayOffset,
       startTime: shiftStart,
       endTime: shiftEnd,
@@ -303,6 +303,7 @@ export async function applyTemplate(
     try {
       const appointment = await createAppointment(tx, tenantId, {
         staffId: item.staffId,
+        entryKind: "SHIFT",
         clientId: null,
         serviceTypeId: item.serviceTypeId,
         startTime: item.startTime,

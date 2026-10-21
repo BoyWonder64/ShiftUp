@@ -5,6 +5,7 @@ import { getTenantBySlug, createTenant, isValidSlug } from "@/modules/tenancy/se
 import { createFreeLicense } from "@/modules/licensing/service";
 import { createUser, findUserByEmail, findUserByUsername, isValidUsername } from "@/modules/identity/service";
 import { seedDefaultRolesForTenant } from "@/lib/permissions/service";
+import { seedDefaultDashboardMetrics } from "@/modules/dashboard/service";
 import {
   createSessionToken,
   SESSION_COOKIE_NAME,
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
       const tenant = await createTenant(tx, { name: businessName, slug, timezone });
       await createFreeLicense(tx, tenant.id, featureTier);
       await seedDefaultRolesForTenant(tx, tenant.id);
+      await seedDefaultDashboardMetrics(tx, tenant.id);
       const user = await createUser(tx, {
         tenantId: tenant.id,
         email,

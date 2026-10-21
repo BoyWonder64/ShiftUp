@@ -116,7 +116,14 @@ export function BookingPage({ tenantSlug }: { tenantSlug: string }) {
   }
 
   useEffect(() => {
-    if (step === "slot") void loadSlots();
+    // IIFE-wrapped rather than `void loadSlots()` directly, to satisfy
+    // react-hooks/set-state-in-effect - same pattern noted in PROGRESS.md
+    // for RoleManager.tsx/StaffManager.tsx's initial-load effects.
+    if (step === "slot") {
+      (async () => {
+        await loadSlots();
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, date]);
 

@@ -3,6 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { getCurrentSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
 import { AppHeader } from "@/components/AppHeader";
 import { ScheduleTemplatesView } from "./ScheduleTemplatesView";
 
@@ -18,7 +19,7 @@ export default async function ScheduleTemplatesPage({
     redirect("/login");
   }
 
-  const { tenant, license, canView, canViewRoster } = await runInTenantContext(
+  const { tenant, license, canView, canViewRoster, canViewShiftReports, calendarAccess } = await runInTenantContext(
     session.tenantId,
     session.userId,
     session.role,
@@ -30,7 +31,25 @@ export default async function ScheduleTemplatesPage({
       // tenant-defined now.
       const canView = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_SCHEDULE_TEMPLATES");
       const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
-      return { tenant, license, canView, canViewRoster };
+      const canViewShiftReports = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SHIFT_REPORTS"
+      );
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(
+            tx,
+            session.tenantId!,
+            session.role,
+            session.roleId,
+            tenant,
+            license?.tier ?? "BOTH",
+            license?.billingPlan ?? "FREE"
+          )
+        : null;
+      return { tenant, license, canView, canViewRoster, canViewShiftReports, calendarAccess };
     }
   );
 
@@ -54,7 +73,9 @@ export default async function ScheduleTemplatesPage({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={session.role}
+        calendarAccess={calendarAccess ?? undefined}
         canViewRoster={canViewRoster}
+        canViewShiftReports={canViewShiftReports}
         canViewScheduleTemplates
         logoUrl={tenant.logoDataUrl}
         companyNameFont={tenant.companyNameFont}

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 interface Settings {
   requireClientForAppointments: boolean;
   enableMapsNavigation: boolean;
+  showPaymentStatus: boolean;
 }
 
 export function AppointmentFormSettings() {
@@ -103,6 +104,24 @@ export function AppointmentFormSettings() {
               <span className="text-gray-500">
                 Adds a navigation button next to an appointment&apos;s address in
                 its detail view, linking out to Google Maps directions.
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={settings.showPaymentStatus}
+              onChange={() => toggle("showPaymentStatus")}
+              disabled={savingKey === "showPaymentStatus"}
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            <span className="text-sm">
+              <span className="font-medium text-gray-900">Show payment status</span>
+              <br />
+              <span className="text-gray-500">
+                Shows a Paid/Unpaid/Waived/Refunded field on the appointment
+                detail panel. Turn off if your business doesn&apos;t bill
+                per-appointment. Never shown on shifts either way.
               </span>
             </span>
           </label>

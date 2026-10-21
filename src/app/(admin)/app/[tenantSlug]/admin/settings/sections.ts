@@ -39,6 +39,18 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     requirement: "EDIT_CALENDAR_SETTINGS",
   },
   {
+    slug: "calendars",
+    label: "Calendars",
+    description: "Turn the Appointments, Shifts, and Custom calendars on or off, and configure the Custom calendar's form fields.",
+    requirement: "ADMIN",
+  },
+  {
+    slug: "dashboard",
+    label: "Dashboard",
+    description: "Build your own dashboard stat tiles - rename, delete, or add new counting metrics.",
+    requirement: "ADMIN",
+  },
+  {
     slug: "company-profile",
     label: "Company Profile",
     description: "Your business logo and branding.",

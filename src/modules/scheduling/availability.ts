@@ -44,7 +44,7 @@ export async function listAvailableSlotsByStaff(
         blockedHolidayNames: true,
       },
     }),
-    tx.serviceType.findUnique({ where: { id: input.serviceTypeId } }),
+    tx.appointmentServiceType.findUnique({ where: { id: input.serviceTypeId } }),
   ]);
 
   if (!tenant.publicBookingEnabled) {

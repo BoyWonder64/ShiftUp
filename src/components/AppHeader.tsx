@@ -5,11 +5,20 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { companyNameFontFamily } from "@/lib/fonts/companyNameFonts";
+import type { CalendarNavAccess } from "@/lib/permissions/calendarAccess";
 
 interface AppHeaderProps {
   tenantSlug: string;
   businessName: string;
   role: "ADMIN" | "STAFF";
+  // Which of the 4 calendar pages (Appointments/Shifts/Custom/All) to show
+  // in the Calendar dropdown - computed server-side per page via
+  // getCalendarNavAccess (license tier + Settings > Calendars toggle +
+  // VIEW_* permission for each). Omitted falls back to the old pre-split
+  // two-item dropdown (just "Full calendar" -> /calendar, which itself
+  // redirects to whichever page is actually reachable) for any page that
+  // hasn't been updated to compute the real per-kind access yet.
+  calendarAccess?: CalendarNavAccess;
   // Whether to show the Roster link - computed server-side per page via the
   // VIEW_ROSTER permission (roles are tenant-defined now, not a fixed enum,
   // so this can't be decided from `role` alone the way it used to be).
@@ -18,6 +27,10 @@ interface AppHeaderProps {
   // VIEW_SCHEDULE_TEMPLATES - a separate permission from VIEW_ROSTER, so
   // computed independently rather than implied by it.
   canViewScheduleTemplates: boolean;
+  // ISSUES.md #4 - the manager reporting dashboard, gated on its own
+  // dedicated VIEW_SHIFT_REPORTS permission (deliberately not implied by
+  // VIEW_ROSTER - see the Reports page's doc comment).
+  canViewShiftReports?: boolean;
   // The tenant's own company logo (admin-controlled, see
   // admin/settings/company-profile/LogoSettings.tsx) - distinct from the ShiftUp platform mark
   // below, which always shows regardless of whether a tenant has set one.
@@ -98,7 +111,9 @@ export function AppHeader({
   tenantSlug,
   businessName,
   role,
+  calendarAccess,
   canViewRoster,
+  canViewShiftReports,
   canViewScheduleTemplates,
   logoUrl,
   companyNameFont,
@@ -113,14 +128,27 @@ export function AppHeader({
   const qs = searchParams.toString();
   const currentHref = qs ? `${pathname}?${qs}` : pathname;
 
-  const calendarItems: NavItem[] = [
-    { href: `${base}/calendar`, label: t("fullCalendar") },
-    { href: `${base}/calendar/view`, label: t("viewOnly") },
-  ];
-  const calendarActive = pathname === `${base}/calendar` || pathname === `${base}/calendar/view`;
+  const calendarItems: NavItem[] = calendarAccess
+    ? [
+        ...(calendarAccess.appointments ? [{ href: `${base}/calendar/appointments`, label: t("appointmentsCalendar") }] : []),
+        ...(calendarAccess.shifts ? [{ href: `${base}/calendar/shifts`, label: t("shiftsCalendar") }] : []),
+        // One nav item per named custom calendar - a tenant can have
+        // several, each its own page, rather than one flat "Custom" link.
+        ...calendarAccess.customCalendars.map((cc) => ({ href: `${base}/calendar/custom/${cc.id}`, label: cc.name })),
+        ...(calendarAccess.all ? [{ href: `${base}/calendar/all`, label: t("allCalendars") }] : []),
+        { href: `${base}/calendar/view`, label: t("viewOnly") },
+      ]
+    : [
+        { href: `${base}/calendar`, label: t("fullCalendar") },
+        { href: `${base}/calendar/view`, label: t("viewOnly") },
+      ];
+  const calendarActive = calendarItems.some((item) => pathname === item.href) || pathname === `${base}/calendar`;
 
   const staffItems: NavItem[] = [
     ...(role === "ADMIN" || canViewRoster ? [{ href: `${base}/calendar/roster`, label: t("roster") }] : []),
+    ...(role === "ADMIN" || canViewShiftReports
+      ? [{ href: `${base}/calendar/reports`, label: t("reports") }]
+      : []),
     { href: `${base}/time-off`, label: t("timeOff") },
     ...(role === "ADMIN" || canViewScheduleTemplates
       ? [{ href: `${base}/schedule-templates`, label: t("scheduleTemplates") }]
@@ -130,6 +158,7 @@ export function AppHeader({
   // A dropdown's trigger reads "active" whenever the current page is any of its own items.
   const staffActive =
     pathname === `${base}/calendar/roster` ||
+    pathname === `${base}/calendar/reports` ||
     pathname === `${base}/time-off` ||
     pathname === `${base}/schedule-templates`;
 

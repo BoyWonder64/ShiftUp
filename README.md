@@ -25,6 +25,9 @@ their role grants them.
   suggestions.
 - **Schedule templates** — reusable weekly shift patterns that can be
   applied to any week (paid feature).
+- **Manager reporting** — a filterable no-show/completion/hours-worked
+  dashboard across staff and date ranges, with drill-down into the
+  underlying events.
 - **Holidays** — federal holidays computed automatically, plus
   tenant-defined custom holidays.
 - **Billing** — Stripe-powered licensing with free, one-time, and

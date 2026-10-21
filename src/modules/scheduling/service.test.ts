@@ -60,6 +60,7 @@ describe("scheduling/service", () => {
         await expect(
           createAppointment(tx, tenantId, {
             staffId: staffAId,
+            entryKind: "SHIFT",
             startTime: base,
             endTime: base,
             createdByUserId,
@@ -75,6 +76,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const appt = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -91,6 +93,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(2));
         await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -101,6 +104,7 @@ describe("scheduling/service", () => {
         await expect(
           createAppointment(tx, tenantId, {
             staffId: staffAId,
+            entryKind: "SHIFT",
             startTime: overlapStart,
             endTime: overlapEnd,
             createdByUserId,
@@ -118,6 +122,7 @@ describe("scheduling/service", () => {
           const end = new Date(start.getTime() + hours(2));
           await createAppointment(tx, tenantId, {
             staffId: staffAId,
+            entryKind: "SHIFT",
             startTime: start,
             endTime: end,
             createdByUserId,
@@ -127,6 +132,7 @@ describe("scheduling/service", () => {
           const overlapEnd = new Date(overlapStart.getTime() + hours(2));
           const appt = await createAppointment(tx, tenantId, {
             staffId: staffAId,
+            entryKind: "SHIFT",
             startTime: overlapStart,
             endTime: overlapEnd,
             createdByUserId,
@@ -146,6 +152,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(2));
         await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "APPOINTMENT",
           clientId: client.id,
           startTime: start,
           endTime: end,
@@ -157,6 +164,7 @@ describe("scheduling/service", () => {
         await expect(
           createAppointment(tx, tenantId, {
             staffId: staffAId,
+            entryKind: "APPOINTMENT",
             clientId: client.id,
             startTime: overlapStart,
             endTime: overlapEnd,
@@ -173,6 +181,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(2));
         const appt = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -181,6 +190,7 @@ describe("scheduling/service", () => {
         await cancelAppointment(tx, appt.id);
         const overlapping = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -198,6 +208,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const appt = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -215,6 +226,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const appt = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -237,6 +249,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -246,6 +259,7 @@ describe("scheduling/service", () => {
         const otherEnd = new Date(otherStart.getTime() + hours(1));
         const other = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: otherStart,
           endTime: otherEnd,
           createdByUserId,
@@ -265,6 +279,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const appt = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -281,6 +296,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         await createAppointment(tx, tenantId, {
           staffId: staffBId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -288,6 +304,7 @@ describe("scheduling/service", () => {
         });
         const apptForA = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -296,6 +313,186 @@ describe("scheduling/service", () => {
         await expect(reassignAppointmentStaff(tx, tenantId, apptForA.id, staffBId)).rejects.toThrow(
           SchedulingConflictError
         );
+      });
+    });
+  });
+
+  describe("CUSTOM entries", () => {
+    it("creates a clientless CUSTOM entry tied to a customCalendarId", async () => {
+      await runInSystemContext(async (tx) => {
+        const calendar = await tx.customCalendar.create({ data: { tenantId, name: "Site Visits" } });
+        const start = new Date(base.getTime() + hours(1150));
+        const end = new Date(start.getTime() + hours(1));
+        const appt = await createAppointment(tx, tenantId, {
+          staffId: staffAId,
+          entryKind: "CUSTOM",
+          customCalendarId: calendar.id,
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+        expect(appt.entryKind).toBe("CUSTOM");
+        expect(appt.customCalendarId).toBe(calendar.id);
+        expect(appt.clientId).toBeNull();
+      });
+    });
+
+    it("rejects an overlapping clientless CUSTOM entry even when the tenant's allowOverlappingShifts is on", async () => {
+      await runInSystemContext(async (tx) => {
+        await tx.tenant.update({ where: { id: tenantId }, data: { allowOverlappingShifts: true } });
+        try {
+          const calendar = await tx.customCalendar.create({ data: { tenantId, name: "Overlap Test" } });
+          const start = new Date(base.getTime() + hours(1160));
+          const end = new Date(start.getTime() + hours(2));
+          await createAppointment(tx, tenantId, {
+            staffId: staffAId,
+            entryKind: "CUSTOM",
+            customCalendarId: calendar.id,
+            startTime: start,
+            endTime: end,
+            createdByUserId,
+            source: "ADMIN",
+          });
+          const overlapStart = new Date(start.getTime() + hours(1));
+          const overlapEnd = new Date(overlapStart.getTime() + hours(2));
+          // allowOverlappingShifts only ever relaxes SHIFT entries - a
+          // clientless CUSTOM entry has no equivalent escape hatch.
+          await expect(
+            createAppointment(tx, tenantId, {
+              staffId: staffAId,
+              entryKind: "CUSTOM",
+              customCalendarId: calendar.id,
+              startTime: overlapStart,
+              endTime: overlapEnd,
+              createdByUserId,
+              source: "ADMIN",
+            })
+          ).rejects.toThrow(SchedulingConflictError);
+        } finally {
+          await tx.tenant.update({ where: { id: tenantId }, data: { allowOverlappingShifts: false } });
+        }
+      });
+    });
+
+    it("a clientless CUSTOM entry does not conflict with an overlapping SHIFT for a different staff member", async () => {
+      await runInSystemContext(async (tx) => {
+        const calendar = await tx.customCalendar.create({ data: { tenantId, name: "Cross Staff" } });
+        const start = new Date(base.getTime() + hours(1170));
+        const end = new Date(start.getTime() + hours(1));
+        await createAppointment(tx, tenantId, {
+          staffId: staffAId,
+          entryKind: "SHIFT",
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+        const custom = await createAppointment(tx, tenantId, {
+          staffId: staffBId,
+          entryKind: "CUSTOM",
+          customCalendarId: calendar.id,
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+        expect(custom.id).toBeTruthy();
+      });
+    });
+
+    it("listAppointmentsInRange includes the custom calendar's name on a CUSTOM row", async () => {
+      await runInSystemContext(async (tx) => {
+        const calendar = await tx.customCalendar.create({ data: { tenantId, name: "Named Calendar" } });
+        const start = new Date(base.getTime() + hours(1180));
+        const end = new Date(start.getTime() + hours(1));
+        await createAppointment(tx, tenantId, {
+          staffId: staffAId,
+          entryKind: "CUSTOM",
+          customCalendarId: calendar.id,
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+        const results = await listAppointmentsInRange(tx, tenantId, { start, end: new Date(end.getTime() + 1) });
+        const row = results.find((r) => r.customCalendarId === calendar.id);
+        expect(row?.customCalendar?.name).toBe("Named Calendar");
+      });
+    });
+
+    it("canViewCustom is a hard gate separate from canViewShifts/canViewAppointments", async () => {
+      await runInSystemContext(async (tx) => {
+        const calendar = await tx.customCalendar.create({ data: { tenantId, name: "Gate Test" } });
+        const start = new Date(base.getTime() + hours(1190));
+        const end = new Date(start.getTime() + hours(1));
+        const custom = await createAppointment(tx, tenantId, {
+          staffId: staffAId,
+          entryKind: "CUSTOM",
+          customCalendarId: calendar.id,
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+
+        const withoutCustomView: AppointmentVisibility = {
+          allShifts: true,
+          allAppointments: true,
+          ownStaffId: staffAId,
+          canViewShifts: true,
+          canViewAppointments: true,
+          canViewCustom: false,
+        };
+        const hidden = await listAppointmentsInRange(
+          tx,
+          tenantId,
+          { start, end: new Date(end.getTime() + 1) },
+          withoutCustomView
+        );
+        expect(hidden.map((r) => r.id)).not.toContain(custom.id);
+
+        const withCustomView: AppointmentVisibility = { ...withoutCustomView, canViewCustom: true };
+        const shown = await listAppointmentsInRange(
+          tx,
+          tenantId,
+          { start, end: new Date(end.getTime() + 1) },
+          withCustomView
+        );
+        expect(shown.map((r) => r.id)).toContain(custom.id);
+      });
+    });
+
+    it("canViewCustom alone shows every custom entry, even someone else's, with no separate all/own split", async () => {
+      await runInSystemContext(async (tx) => {
+        const calendar = await tx.customCalendar.create({ data: { tenantId, name: "All Own Test" } });
+        const start = new Date(base.getTime() + hours(1200));
+        const end = new Date(start.getTime() + hours(1));
+        const custom = await createAppointment(tx, tenantId, {
+          staffId: staffBId, // not the viewer's own staff id below
+          entryKind: "CUSTOM",
+          customCalendarId: calendar.id,
+          startTime: start,
+          endTime: end,
+          createdByUserId,
+          source: "ADMIN",
+        });
+
+        const visibility: AppointmentVisibility = {
+          allShifts: false,
+          allAppointments: false,
+          ownStaffId: staffAId, // viewer is staffA, entry belongs to staffB
+          canViewShifts: true,
+          canViewAppointments: true,
+          canViewCustom: true,
+        };
+        const results = await listAppointmentsInRange(
+          tx,
+          tenantId,
+          { start, end: new Date(end.getTime() + 1) },
+          visibility
+        );
+        expect(results.map((r) => r.id)).toContain(custom.id);
       });
     });
   });
@@ -314,6 +511,7 @@ describe("scheduling/service", () => {
         const shiftEnd = new Date(shiftStart.getTime() + hours(2));
         const targetAppt = await createAppointment(tx, tenant.id, {
           staffId: target.staffProfile.id,
+          entryKind: "SHIFT",
           startTime: shiftStart,
           endTime: shiftEnd,
           createdByUserId: target.user.id,
@@ -323,6 +521,7 @@ describe("scheduling/service", () => {
         // busy: overlaps the target shift directly.
         await createAppointment(tx, tenant.id, {
           staffId: busy.staffProfile.id,
+          entryKind: "SHIFT",
           startTime: shiftStart,
           endTime: shiftEnd,
           createdByUserId: target.user.id,
@@ -343,6 +542,7 @@ describe("scheduling/service", () => {
         weekStart.setUTCHours(0, 0, 0, 0);
         await createAppointment(tx, tenant.id, {
           staffId: loaded.staffProfile.id,
+          entryKind: "SHIFT",
           startTime: weekStart,
           endTime: new Date(weekStart.getTime() + hours(10)),
           createdByUserId: target.user.id,
@@ -380,6 +580,7 @@ describe("scheduling/service", () => {
         const client = await createTestClient(tx, tenantId, "visclient");
         await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -387,6 +588,7 @@ describe("scheduling/service", () => {
         }); // shift
         await createAppointment(tx, tenantId, {
           staffId: staffBId,
+          entryKind: "APPOINTMENT",
           clientId: client.id,
           startTime: start,
           endTime: end,
@@ -405,6 +607,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const shift = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -417,6 +620,7 @@ describe("scheduling/service", () => {
           ownStaffId: staffAId,
           canViewShifts: false, // gate closed, even though allShifts is true
           canViewAppointments: true,
+          canViewCustom: false,
         };
         const results = await listAppointmentsInRange(tx, tenantId, { start, end: new Date(end.getTime() + 1) }, visibility);
         expect(results.map((r) => r.id)).not.toContain(shift.id);
@@ -429,6 +633,7 @@ describe("scheduling/service", () => {
         const end = new Date(start.getTime() + hours(1));
         const ownShift = await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -436,6 +641,7 @@ describe("scheduling/service", () => {
         });
         const othersShift = await createAppointment(tx, tenantId, {
           staffId: staffBId,
+          entryKind: "SHIFT",
           startTime: start,
           endTime: end,
           createdByUserId,
@@ -448,6 +654,7 @@ describe("scheduling/service", () => {
           ownStaffId: staffAId,
           canViewShifts: true,
           canViewAppointments: true,
+          canViewCustom: false,
         };
         const results = await listAppointmentsInRange(tx, tenantId, { start, end: new Date(end.getTime() + 1) }, visibility);
         const ids = results.map((r) => r.id);

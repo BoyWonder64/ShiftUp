@@ -19,8 +19,8 @@ interface TemplateShift {
   dayOffset: number;
   startMinute: number;
   endMinute: number;
-  serviceTypeId: string | null;
-  serviceType: { id: string; name: string } | null;
+  shiftServiceTypeId: string | null;
+  shiftServiceType: { id: string; name: string } | null;
 }
 
 interface Template {
@@ -84,7 +84,7 @@ export function ScheduleTemplatesView() {
     const [templatesData, staffData, serviceTypesData] = await Promise.all([
       fetchJson<{ templates: Template[] }>("/api/schedule-templates"),
       fetchJson<{ staff: Array<{ id: string; displayName: string }> }>("/api/staff"),
-      fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/service-types?activeOnly=true"),
+      fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/shift-service-types?activeOnly=true"),
     ]);
     setTemplates(templatesData.templates);
     setStaff(staffData.staff.map((s) => ({ id: s.id, displayName: s.displayName })));
@@ -450,7 +450,7 @@ function TemplateDetail({
                   <span className="font-medium text-gray-900">Day {s.dayOffset}</span>{" "}
                   <span className="text-gray-500">
                     · {formatMinutes(s.startMinute)}–{formatMinutes(s.endMinute)} · {s.staff.displayName}
-                    {s.serviceType && ` · ${s.serviceType.name}`}
+                    {s.shiftServiceType && ` · ${s.shiftServiceType.name}`}
                   </span>
                 </span>
                 <button

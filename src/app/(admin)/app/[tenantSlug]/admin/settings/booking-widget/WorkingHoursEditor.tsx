@@ -7,16 +7,17 @@ interface StaffOption {
   displayName: string;
 }
 
-interface WorkingHoursRow {
+interface WorkingHoursWindow {
   dayOfWeek: number;
   startMinute: number;
   endMinute: number;
 }
 
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/** Human-readable label for a minutes-from-midnight value, e.g. 450 -> "7:30 AM". Same convention as CalendarHoursSettings.tsx. */
+/** Human-readable label for a minutes-from-midnight value, e.g. 450 -> "7:30 AM". 1440 -> "Midnight". */
 function formatMinutes(minutes: number): string {
+  if (minutes === 1440) return "Midnight";
   const h24 = Math.floor(minutes / 60) % 24;
   const m = minutes % 60;
   const period = h24 < 12 ? "AM" : "PM";
@@ -24,29 +25,30 @@ function formatMinutes(minutes: number): string {
   return `${h12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
-const TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => i * 30); // every half hour, 0 (Midnight) .. 1410 (11:30 PM)
+/** Every half hour of the day, 0 (Midnight) through 1440 (Midnight, end-of-day). */
+const TIME_OPTIONS = Array.from({ length: 49 }, (_, i) => i * 30);
 
-/** One day's window, or null = not working that day - the UI's simplification of WorkingHours (one window per day, not an arbitrary list), enforced here, not at the DB level. */
-type DayWindow = { startMinute: number; endMinute: number } | null;
-
-function rowsToWindows(rows: WorkingHoursRow[]): DayWindow[] {
-  const windows: DayWindow[] = Array(7).fill(null);
-  for (const r of rows) {
-    windows[r.dayOfWeek] = { startMinute: r.startMinute, endMinute: r.endMinute };
-  }
-  return windows;
-}
-
-/** Per-staff-member weekly bookable hours (WorkingHours) - what the public booking widget's availability engine reads to decide when that staff member can be booked at all. */
+/**
+ * A staff member's recurring weekly availability (WorkingHours) - what the
+ * public booking engine (src/modules/scheduling/availability.ts) reads to
+ * decide whether a staff member is bookable at all. Distinct from
+ * Tenant.calendarStartMinute/endMinute (just the internal calendar grid's
+ * display range) - a staff member with no working hours set here never
+ * shows up on the public booking page, regardless of that setting.
+ */
 export function WorkingHoursEditor() {
-  const [staffOptions, setStaffOptions] = useState<StaffOption[]>([]);
-  const [selectedStaffId, setSelectedStaffId] = useState<string>("");
-  const [windows, setWindows] = useState<DayWindow[]>(Array(7).fill(null));
+  const [staffList, setStaffList] = useState<StaffOption[]>([]);
+  const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
+  const [windows, setWindows] = useState<WorkingHoursWindow[]>([]);
   const [loadingStaff, setLoadingStaff] = useState(true);
-  const [loadingHours, setLoadingHours] = useState(false);
+  const [loadingWindows, setLoadingWindows] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [newDay, setNewDay] = useState(1);
+  const [newStart, setNewStart] = useState(9 * 60);
+  const [newEnd, setNewEnd] = useState(17 * 60);
 
   useEffect(() => {
     (async () => {
@@ -58,7 +60,7 @@ export function WorkingHoursEditor() {
           id: s.id,
           displayName: s.displayName,
         }));
-        setStaffOptions(options);
+        setStaffList(options);
         if (options.length > 0) setSelectedStaffId(options[0].id);
       } catch {
         setError("Couldn't load staff.");
@@ -71,18 +73,26 @@ export function WorkingHoursEditor() {
   useEffect(() => {
     if (!selectedStaffId) return;
     let cancelled = false;
-    setLoadingHours(true);
-    setSaved(false);
     (async () => {
+      setLoadingWindows(true);
+      setSaved(false);
       try {
         const res = await fetch(`/api/staff/${selectedStaffId}/working-hours`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed to load");
-        if (!cancelled) setWindows(rowsToWindows(data.workingHours));
+        if (!cancelled) {
+          setWindows(
+            data.workingHours.map((w: WorkingHoursWindow) => ({
+              dayOfWeek: w.dayOfWeek,
+              startMinute: w.startMinute,
+              endMinute: w.endMinute,
+            }))
+          );
+        }
       } catch {
         if (!cancelled) setError("Couldn't load working hours.");
       } finally {
-        if (!cancelled) setLoadingHours(false);
+        if (!cancelled) setLoadingWindows(false);
       }
     })();
     return () => {
@@ -90,24 +100,38 @@ export function WorkingHoursEditor() {
     };
   }, [selectedStaffId]);
 
+  function addWindow() {
+    if (newEnd <= newStart) {
+      setError("End time must be after start time.");
+      return;
+    }
+    setError(null);
+    setSaved(false);
+    setWindows((prev) =>
+      [...prev, { dayOfWeek: newDay, startMinute: newStart, endMinute: newEnd }].sort(
+        (a, b) => a.dayOfWeek - b.dayOfWeek || a.startMinute - b.startMinute
+      )
+    );
+  }
+
+  function removeWindow(index: number) {
+    setSaved(false);
+    setWindows((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function save() {
+    if (!selectedStaffId) return;
     setSaving(true);
     setSaved(false);
     setError(null);
     try {
-      const body = {
-        windows: windows
-          .map((w, dayOfWeek) => (w ? { dayOfWeek, startMinute: w.startMinute, endMinute: w.endMinute } : null))
-          .filter((w): w is { dayOfWeek: number; startMinute: number; endMinute: number } => w !== null),
-      };
       const res = await fetch(`/api/staff/${selectedStaffId}/working-hours`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ windows }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to save");
-      setWindows(rowsToWindows(data.workingHours));
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't save.");
@@ -120,24 +144,24 @@ export function WorkingHoursEditor() {
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Staff working hours</h2>
       <p className="mt-1 text-sm text-gray-500">
-        When each staff member is available to be booked publicly - a staff member with no hours set here never
-        shows up on the public booking page at all, regardless of which services are bookable.
+        When each staff member is open to be booked publicly. A staff member with no working hours set here
+        never shows up as bookable, even while public booking is on.
       </p>
 
       {loadingStaff ? (
         <p className="mt-4 text-sm text-gray-400">Loading...</p>
-      ) : staffOptions.length === 0 ? (
+      ) : staffList.length === 0 ? (
         <p className="mt-4 text-sm text-gray-400">No staff yet - add one under Settings &gt; Staff.</p>
       ) : (
-        <div className="mt-4 flex flex-col gap-3">
+        <div className="mt-4 flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm">
             Staff member
             <select
-              value={selectedStaffId}
+              value={selectedStaffId ?? ""}
               onChange={(e) => setSelectedStaffId(e.target.value)}
               className="w-56 rounded-md border border-gray-300 px-2 py-1"
             >
-              {staffOptions.map((s) => (
+              {staffList.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.displayName}
                 </option>
@@ -145,90 +169,101 @@ export function WorkingHoursEditor() {
             </select>
           </label>
 
-          {loadingHours ? (
+          {loadingWindows ? (
             <p className="text-sm text-gray-400">Loading...</p>
           ) : (
-            <div className="flex flex-col gap-2">
-              {DAY_LABELS.map((label, dayOfWeek) => {
-                const w = windows[dayOfWeek];
-                return (
-                  <div key={dayOfWeek} className="flex items-center gap-3 text-sm">
-                    <label className="flex w-28 items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={w !== null}
-                        onChange={(e) => {
-                          setSaved(false);
-                          setWindows((prev) => {
-                            const next = [...prev];
-                            next[dayOfWeek] = e.target.checked ? { startMinute: 9 * 60, endMinute: 17 * 60 } : null;
-                            return next;
-                          });
-                        }}
-                        className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                      />
-                      {label}
-                    </label>
-                    {w && (
-                      <>
-                        <select
-                          value={w.startMinute}
-                          onChange={(e) => {
-                            setSaved(false);
-                            setWindows((prev) => {
-                              const next = [...prev];
-                              next[dayOfWeek] = { ...w, startMinute: Number(e.target.value) };
-                              return next;
-                            });
-                          }}
-                          className="rounded-md border border-gray-300 px-2 py-1"
-                        >
-                          {TIME_OPTIONS.map((m) => (
-                            <option key={m} value={m}>
-                              {formatMinutes(m)}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="text-gray-400">to</span>
-                        <select
-                          value={w.endMinute}
-                          onChange={(e) => {
-                            setSaved(false);
-                            setWindows((prev) => {
-                              const next = [...prev];
-                              next[dayOfWeek] = { ...w, endMinute: Number(e.target.value) };
-                              return next;
-                            });
-                          }}
-                          className="rounded-md border border-gray-300 px-2 py-1"
-                        >
-                          {[...TIME_OPTIONS, 1440].map((m) => (
-                            <option key={m} value={m}>
-                              {m === 1440 ? "Midnight" : formatMinutes(m)}
-                            </option>
-                          ))}
-                        </select>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
+            <>
+              {windows.length === 0 ? (
+                <p className="text-sm text-gray-400">No working hours set yet.</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {windows.map((w, i) => (
+                    <li
+                      key={i}
+                      className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm"
+                    >
+                      <span>
+                        <span className="font-medium text-gray-900">{DAY_LABELS[w.dayOfWeek]}</span>{" "}
+                        <span className="text-gray-500">
+                          {formatMinutes(w.startMinute)} – {formatMinutes(w.endMinute)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeWindow(i)}
+                        className="text-xs text-gray-400 hover:text-red-600"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-              <div className="mt-1 flex items-center gap-3">
+              <div className="flex flex-wrap items-end gap-2 border-t border-gray-100 pt-3">
+                <label className="flex flex-col gap-1 text-xs">
+                  Day
+                  <select
+                    value={newDay}
+                    onChange={(e) => setNewDay(Number(e.target.value))}
+                    className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                  >
+                    {DAY_LABELS.map((label, i) => (
+                      <option key={i} value={i}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs">
+                  Starts
+                  <select
+                    value={newStart}
+                    onChange={(e) => setNewStart(Number(e.target.value))}
+                    className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                  >
+                    {TIME_OPTIONS.filter((m) => m < 1440).map((m) => (
+                      <option key={m} value={m}>
+                        {formatMinutes(m)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs">
+                  Ends
+                  <select
+                    value={newEnd}
+                    onChange={(e) => setNewEnd(Number(e.target.value))}
+                    className="rounded-md border border-gray-300 px-2 py-1 text-sm"
+                  >
+                    {TIME_OPTIONS.filter((m) => m > 0).map((m) => (
+                      <option key={m} value={m}>
+                        {formatMinutes(m)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="button"
+                  onClick={addWindow}
+                  className="rounded-lg border border-primary-300 px-3 py-1.5 text-sm font-medium text-primary-600 hover:bg-primary-50"
+                >
+                  + Add window
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
                   onClick={() => void save()}
-                  disabled={saving || windows.some((w) => w && w.endMinute <= w.startMinute)}
                   className="rounded-lg bg-primary-500 px-4 py-1.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-600 disabled:opacity-50"
                 >
                   {saving ? "Saving..." : "Save"}
                 </button>
                 {saved && <span className="text-sm text-green-600">Saved.</span>}
-                {windows.some((w) => w && w.endMinute <= w.startMinute) && (
-                  <span className="text-sm text-red-600">End time must be after start time.</span>
-                )}
               </div>
-            </div>
+            </>
           )}
         </div>
       )}

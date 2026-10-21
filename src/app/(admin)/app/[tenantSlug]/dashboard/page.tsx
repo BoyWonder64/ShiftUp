@@ -6,6 +6,8 @@ import { runInTenantContext, type Tx } from "@/lib/tenant-context";
 import { featuresForTier } from "@/lib/licensing/features";
 import { hasPermission } from "@/lib/permissions/service";
 import type { PermissionKey } from "@/lib/permissions/catalog";
+import { getCalendarNavAccess } from "@/lib/permissions/calendarAccess";
+import { computeMetricValue, listDashboardMetrics } from "@/modules/dashboard/service";
 import { AppHeader } from "@/components/AppHeader";
 import { companyNameFontFamily } from "@/lib/fonts/companyNameFonts";
 
@@ -63,11 +65,20 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   EDIT_APPOINTMENTS: "reschedule",
   CANCEL_SHIFTS: "cancel",
   CANCEL_APPOINTMENTS: "cancel",
+  // Not in any ACCESS_CATEGORIES list below - the Custom calendar is its own
+  // separate page/permission set, not folded into the "appointments"
+  // category above; only needed to satisfy Record<PermissionKey, string>'s
+  // exhaustiveness.
+  VIEW_CUSTOM_CALENDAR: "view",
+  CREATE_CUSTOM_ENTRIES: "create",
+  EDIT_CUSTOM_ENTRIES: "reschedule",
+  CANCEL_CUSTOM_ENTRIES: "cancel",
   VIEW_JOB_ESTIMATES: "view",
   EDIT_JOB_ESTIMATES: "edit",
   VIEW_TIME_OFF: "view",
   APPROVE_TIME_OFF: "edit",
   VIEW_ROSTER: "view",
+  VIEW_SHIFT_REPORTS: "view",
   VIEW_CALENDAR_TOGGLE: "view",
   // Not in any ACCESS_CATEGORIES list below (VIEW_APPOINTMENTS already
   // contributes "view" to the "appointments" category) - these two only need
@@ -129,12 +140,26 @@ export default async function DashboardPage({
     async (tx) => {
       const tenant = await tx.tenant.findUnique({ where: { id: session.tenantId! } });
       const license = await tx.license.findUnique({ where: { tenantId: session.tenantId! } });
-      const staffCount = await tx.staffProfile.count();
-      const upcomingCount = await tx.appointment.count({
-        where: { startTime: { gte: new Date() }, status: { not: "CANCELLED" } },
-      });
+      // Settings > Dashboard - a tenant-built list of stat tiles (replaces
+      // the old two hardcoded ones, see seedDefaultDashboardMetrics) each
+      // computed to an actual number here.
+      const dashboardMetricDefs = await listDashboardMetrics(tx, session.tenantId!);
+      const dashboardMetrics = await Promise.all(
+        dashboardMetricDefs.map(async (metric) => ({
+          id: metric.id,
+          label: metric.label,
+          value: await computeMetricValue(tx, session.tenantId!, metric),
+        }))
+      );
       const accessSummary = await buildAccessSummary(tx, session.tenantId!, session.role, session.roleId);
       const canViewRoster = await hasPermission(tx, session.tenantId!, session.role, session.roleId, "VIEW_ROSTER");
+      const canViewShiftReports = await hasPermission(
+        tx,
+        session.tenantId!,
+        session.role,
+        session.roleId,
+        "VIEW_SHIFT_REPORTS"
+      );
       const canViewScheduleTemplates = await hasPermission(
         tx,
         session.tenantId!,
@@ -145,15 +170,27 @@ export default async function DashboardPage({
       // The tenant's own name for this user's role (e.g. "Plumber"), or null
       // for ADMIN/SUPERADMIN, which aren't tenant-defined roles.
       const customRole = session.roleId ? await tx.role.findUnique({ where: { id: session.roleId } }) : null;
+      const calendarAccess = tenant
+        ? await getCalendarNavAccess(
+            tx,
+            session.tenantId!,
+            session.role,
+            session.roleId,
+            tenant,
+            license?.tier ?? "BOTH",
+            license?.billingPlan ?? "FREE"
+          )
+        : null;
       return {
         tenant,
         license,
-        staffCount,
-        upcomingCount,
+        dashboardMetrics,
         accessSummary,
         canViewRoster,
+        canViewShiftReports,
         canViewScheduleTemplates,
         customRole,
+        calendarAccess,
       };
     }
   );
@@ -180,7 +217,9 @@ export default async function DashboardPage({
         tenantSlug={tenantSlug}
         businessName={result.tenant.name}
         role={session.role}
+        calendarAccess={result.calendarAccess ?? undefined}
         canViewRoster={result.canViewRoster}
+        canViewShiftReports={result.canViewShiftReports}
         canViewScheduleTemplates={result.canViewScheduleTemplates}
         logoUrl={result.tenant.logoDataUrl}
         companyNameFont={result.tenant.companyNameFont}
@@ -268,12 +307,9 @@ export default async function DashboardPage({
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <StatCard label={t("staffStat")} value={result.staffCount} href={`/app/${tenantSlug}/calendar`} />
-          <StatCard
-            label={t("upcomingAppointments")}
-            value={result.upcomingCount}
-            href={`/app/${tenantSlug}/calendar`}
-          />
+          {result.dashboardMetrics.map((metric) => (
+            <StatCard key={metric.id} label={metric.label} value={metric.value} href={`/app/${tenantSlug}/calendar`} />
+          ))}
           <Link
             href={`/app/${tenantSlug}/calendar`}
             className="group flex flex-col justify-between rounded-xl border border-primary-100 bg-linear-to-br from-primary-50 to-white p-5 shadow-sm transition-all hover:shadow-md"

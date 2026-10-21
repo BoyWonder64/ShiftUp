@@ -10,7 +10,7 @@ export default async function SettingsLayout({
   params: Promise<{ tenantSlug: string }>;
 }) {
   const { tenantSlug } = await params;
-  const { role, tenant, visibleSections, canViewRoster, canViewScheduleTemplates } =
+  const { role, tenant, visibleSections, canViewRoster, canViewScheduleTemplates, calendarAccess } =
     await getSettingsContext(tenantSlug);
 
   return (
@@ -19,6 +19,7 @@ export default async function SettingsLayout({
         tenantSlug={tenantSlug}
         businessName={tenant.name}
         role={role}
+        calendarAccess={calendarAccess ?? undefined}
         canViewRoster={canViewRoster}
         canViewScheduleTemplates={canViewScheduleTemplates}
         logoUrl={tenant.logoDataUrl}

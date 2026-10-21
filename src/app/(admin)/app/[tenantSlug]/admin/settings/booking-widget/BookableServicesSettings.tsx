@@ -20,7 +20,7 @@ export function BookableServicesSettings() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/service-types");
+        const res = await fetch("/api/appointment-service-types");
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Failed to load");
         setServiceTypes(data.serviceTypes.filter((s: ServiceType) => s.isActive));
@@ -38,7 +38,7 @@ export function BookableServicesSettings() {
     setTogglingId(s.id);
     setError(null);
     try {
-      const res = await fetch(`/api/service-types/${s.id}`, {
+      const res = await fetch(`/api/appointment-service-types/${s.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isPubliclyBookable: next }),

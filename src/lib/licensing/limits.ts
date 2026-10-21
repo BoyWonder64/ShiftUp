@@ -83,6 +83,24 @@ export async function assertBookingWidgetEnabled(tx: Tx, tenantId: string): Prom
   }
 }
 
+/**
+ * Named custom calendars (CustomCalendar model) - a tenant can create as
+ * many as it wants, each with its own entries and field settings, but only
+ * on a paid plan. Unlike the booking widget/schedule templates there's no
+ * second admin on/off switch layered on top - a calendar's own existence is
+ * what makes it live (deleting it is the only way to turn one off), so this
+ * is the single gate: checked when creating a new CustomCalendar, and a
+ * FREE-plan tenant can't create a CUSTOM entry either (enforced at
+ * POST /api/appointments) even if it somehow still has one from before a
+ * downgrade.
+ */
+export async function assertCustomCalendarEnabled(tx: Tx, tenantId: string): Promise<void> {
+  const plan = await getBillingPlan(tx, tenantId);
+  if (plan === "FREE") {
+    throw new PlanLimitError("Custom calendars are a paid feature. Upgrade to create one.");
+  }
+}
+
 /** Throws PlanLimitError if creating one more Appointment would exceed the FREE plan's rolling-30-day cap. */
 export async function assertCanAddAppointment(tx: Tx, tenantId: string): Promise<void> {
   const plan = await getBillingPlan(tx, tenantId);

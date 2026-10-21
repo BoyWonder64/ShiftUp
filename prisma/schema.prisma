@@ -72,6 +72,63 @@ enum BillingPlan {
   @@map("billing_plan")
 }
 
+/// What kind of calendar entry an Appointment row actually is. Replaces the
+/// old clientId-presence inference (null = shift, set = appointment) now
+/// that there are three real kinds, not two - CUSTOM entries can have a
+/// client or not depending on the tenant's own Custom-form settings, so
+/// clientId alone can no longer tell SHIFT apart from CUSTOM. Backfilled from
+/// the old inference on migration (see the entry_kind migration).
+enum EntryKind {
+  SHIFT
+  APPOINTMENT
+  CUSTOM
+
+  @@map("entry_kind")
+}
+
+/// What a DashboardMetric actually counts. STAFF_COUNT ignores every other
+/// filter field on the row (there's nothing to filter a headcount by yet);
+/// APPOINTMENT_COUNT is a generic count over the shared Appointment table,
+/// narrowed by entryKindFilter/dateRange/statusFilter below.
+enum DashboardMetricType {
+  STAFF_COUNT
+  APPOINTMENT_COUNT
+
+  @@map("dashboard_metric_type")
+}
+
+/// Which slice of time a DashboardMetric's count covers, compared against
+/// Appointment.startTime. UPCOMING is today's existing "Upcoming
+/// appointments" tile's definition (startTime >= now).
+enum DashboardMetricDateRange {
+  ALL_TIME
+  UPCOMING
+  PAST
+  TODAY
+  THIS_WEEK
+  THIS_MONTH
+
+  @@map("dashboard_metric_date_range")
+}
+
+/// Which AppointmentStatus value(s) a DashboardMetric's count includes.
+/// EXCLUDE_CANCELLED (not one specific status, but an exclusion) is today's
+/// existing "Upcoming appointments" tile's definition and the sensible
+/// default for a new metric - the other options narrow to exactly one status
+/// (including CANCELLED itself, for a tenant that wants to count
+/// cancellations specifically) or ANY (no filter at all).
+enum DashboardMetricStatusFilter {
+  ANY
+  EXCLUDE_CANCELLED
+  PENDING_PAYMENT
+  BOOKED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+
+  @@map("dashboard_metric_status_filter")
+}
+
 /// A tenant is one customer business (a therapy practice, a plumbing company, etc.).
 /// All tenant-scoped data carries a tenantId and is additionally isolated at the
 /// database level via Postgres Row-Level Security (see prisma/migrations for the RLS policies).
@@ -164,6 +221,13 @@ model Tenant {
   /// EDIT_JOB_ESTIMATES still apply on top of this when it's on - this is an
   /// extra tenant-wide gate, not a replacement for the per-role permissions.
   allowEditingBookedEvents      Boolean  @default(true) @map("allow_editing_booked_events")
+  /// Admin-configurable (Settings > "Appointment form"): whether the
+  /// appointment detail panel shows/lets staff edit Appointment.paymentStatus
+  /// at all (ISSUES.md #5) - on by default (today's existing display-only
+  /// behavior). Off for tenants that don't bill per-appointment and don't
+  /// want an always-UNPAID field cluttering the panel. Never applies to
+  /// shifts (no client, no price) regardless of this setting.
+  showPaymentStatus             Boolean  @default(true) @map("show_payment_status")
   /// Admin-configurable (Settings > Booking Widget, paid feature - see
   /// assertBookingWidgetEnabled): master on/off switch for the public,
   /// unauthenticated self-booking page/embed at /book/<slug>. Off by default -
@@ -180,6 +244,17 @@ model Tenant {
   /// Admin-configurable (Settings > Booking Widget): how many days into the
   /// future the public booking page shows availability for.
   publicBookingWindowDays       Int      @default(30) @map("public_booking_window_days")
+  /// Admin-configurable (Settings > Calendars): tenant-wide on/off switch for
+  /// each of Appointments/Shifts, independent of whether the license tier
+  /// even includes that module (featuresForTier gates whether a tenant could
+  /// ever use it; this is the separate choice to actually show it). Both
+  /// default on to preserve today's behavior for existing tenants. The
+  /// Custom calendar has no equivalent single toggle - a paid tenant creates
+  /// as many named CustomCalendar rows as it wants (see that model); its own
+  /// existence is what makes it live (see assertCustomCalendarEnabled, still
+  /// required on every create since a FREE-plan tenant can't have any).
+  appointmentsCalendarEnabled   Boolean  @default(true) @map("appointments_calendar_enabled")
+  shiftsCalendarEnabled         Boolean  @default(true) @map("shifts_calendar_enabled")
   /// SUPERADMIN-only (dev console > Customers): blocks every user of this
   /// tenant from logging in. Checked in POST /api/auth/login only - an
   /// already-active session isn't revoked (sessions are stateless, see
@@ -198,22 +273,91 @@ model Tenant {
   license License?
   users   User[]
 
-  staffProfiles          StaffProfile[]
-  workingHours           WorkingHours[]
-  serviceTypes           ServiceType[]
-  clients                Client[]
-  appointments           Appointment[]
-  roles                  Role[]
-  rolePermissions        RolePermission[]
-  roleVisibilities       RoleVisibility[]
-  timeOffs               TimeOff[]
-  eventTags              EventTag[]
-  holidays               Holiday[]
-  blockedTimes           BlockedTime[]
-  scheduleTemplates      ScheduleTemplate[]
-  scheduleTemplateShifts ScheduleTemplateShift[]
+  staffProfiles           StaffProfile[]
+  workingHours            WorkingHours[]
+  appointmentServiceTypes AppointmentServiceType[]
+  shiftServiceTypes       ShiftServiceType[]
+  clients                 Client[]
+  appointments            Appointment[]
+  roles                   Role[]
+  rolePermissions         RolePermission[]
+  roleVisibilities        RoleVisibility[]
+  timeOffs                TimeOff[]
+  eventTags               EventTag[]
+  holidays                Holiday[]
+  blockedTimes            BlockedTime[]
+  scheduleTemplates       ScheduleTemplate[]
+  scheduleTemplateShifts  ScheduleTemplateShift[]
+  customCalendars         CustomCalendar[]
+  dashboardMetrics        DashboardMetric[]
 
   @@map("tenants")
+}
+
+/// A tenant-named, admin-configurable dashboard stat tile (Settings >
+/// Dashboard) - replaces the old two hardcoded tiles ("Staff"/"Upcoming
+/// appointments") with a fully custom list a tenant builds for itself:
+/// rename, delete, reorder, and add as many as wanted. See
+/// src/modules/dashboard/service.ts's computeMetricValue for how a row here
+/// becomes an actual count.
+model DashboardMetric {
+  id              String                      @id @default(uuid())
+  tenantId        String                      @map("tenant_id")
+  tenant          Tenant                      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label           String
+  metricType      DashboardMetricType         @map("metric_type")
+  /// Only meaningful when metricType is APPOINTMENT_COUNT. Null means "every
+  /// kind together" rather than narrowing to one.
+  entryKindFilter EntryKind?                  @map("entry_kind_filter")
+  dateRange       DashboardMetricDateRange    @default(ALL_TIME) @map("date_range")
+  statusFilter    DashboardMetricStatusFilter @default(EXCLUDE_CANCELLED) @map("status_filter")
+  /// Display order on the dashboard - admin-created metrics append in
+  /// creation order by default (no drag-reorder UI yet, same as
+  /// CustomCalendar.sortOrder).
+  sortOrder       Int                         @default(0) @map("sort_order")
+  createdAt       DateTime                    @default(now()) @map("created_at")
+  updatedAt       DateTime                    @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("dashboard_metrics")
+}
+
+/// A tenant-named, admin-configurable "custom" calendar (Settings >
+/// Calendars > "Custom calendars") - a paid-tier tenant can create as many
+/// of these as it wants, each with its own name and its own independent
+/// field-visibility settings for the create/edit form, mirroring the
+/// show/hide shape already used for the Shift form (showJobTypeOnShiftForm
+/// etc. on Tenant) but per-calendar instead of tenant-wide. Entries
+/// (Appointment rows with entryKind CUSTOM) belong to exactly one of these
+/// via customCalendarId - there is no tenant-wide "custom calendar enabled"
+/// flag the way Appointments/Shifts have; a calendar simply existing is what
+/// makes it live (deleting it is the only way to turn one off), though
+/// `assertCustomCalendarEnabled` still gates *creating* one to paid plans.
+model CustomCalendar {
+  id                      String   @id @default(uuid())
+  tenantId                String   @map("tenant_id")
+  tenant                  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name                    String
+  /// Same show/hide shape as Tenant's showJobTypeOnShiftForm etc. - see that
+  /// field's doc comment. showClient/requireClient are a visibility toggle
+  /// (not just requiredness) since a custom entry doesn't inherently need a
+  /// client the way an appointment does.
+  showClient              Boolean  @default(false) @map("show_client")
+  requireClient           Boolean  @default(false) @map("require_client")
+  showJobType             Boolean  @default(true) @map("show_job_type")
+  showJobEstimate         Boolean  @default(true) @map("show_job_estimate")
+  showColorKey            Boolean  @default(true) @map("show_color_key")
+  showPaymentStatus       Boolean  @default(false) @map("show_payment_status")
+  /// Display order in the calendar nav/settings list - admin-created
+  /// calendars append in creation order by default (no reorder UI yet).
+  sortOrder               Int      @default(0) @map("sort_order")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  appointments Appointment[]
+
+  @@index([tenantId])
+  @@map("custom_calendars")
 }
 
 /// A tenant-defined role (e.g. "Officer", "Plumber", "Dispatcher") - fully
@@ -558,11 +702,15 @@ model WorkingHours {
   @@map("working_hours")
 }
 
-/// A service/job template a tenant offers (a therapy session type, a plumbing
-/// call-out type, etc.). durationMinutes/price are the defaults a new
-/// Appointment is pre-filled with; estimatedDurationMinutes/estimatedValue on
-/// Appointment itself can then be adjusted per actual job.
-model ServiceType {
+/// A client-facing job/service template (a therapy session type, a plumbing
+/// call-out type, etc.) - picked on a real Appointment (clientId set).
+/// durationMinutes/price are the defaults a new Appointment is pre-filled
+/// with; estimatedDurationMinutes/estimatedValue on Appointment itself can
+/// then be adjusted per actual job. Split out from the formerly-shared
+/// `ServiceType` table (ISSUES.md #1, 2026-10-09) - an appointment's job type
+/// has a price/payment concept a shift's never did, so the two no longer
+/// share one pool.
+model AppointmentServiceType {
   id                 String   @id @default(uuid())
   tenantId           String   @map("tenant_id")
   tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -577,16 +725,39 @@ model ServiceType {
   /// this service type shows up as a choice on the public self-booking
   /// page/embed - separate from isActive, which just governs internal
   /// (admin/staff) scheduling. A service type can stay active for internal
-  /// use while never being offered publicly.
+  /// use while never being offered publicly. Appointment-only - the public
+  /// booking widget only ever books client-facing appointments, never shifts.
   isPubliclyBookable Boolean  @default(false) @map("is_publicly_bookable")
   createdAt          DateTime @default(now()) @map("created_at")
   updatedAt          DateTime @updatedAt @map("updated_at")
+
+  appointments Appointment[]
+
+  @@index([tenantId])
+  @@map("appointment_service_types")
+}
+
+/// An internal job/shift template (no client, no price - just a name and a
+/// default duration, e.g. "Patrol," "Front desk"). Picked on a shift-mode
+/// Appointment (clientId null) or a ScheduleTemplateShift. Split out from the
+/// formerly-shared `ServiceType` table (ISSUES.md #1, 2026-10-09) - see
+/// AppointmentServiceType's doc comment for why.
+model ShiftServiceType {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  durationMinutes Int      @map("duration_minutes")
+  /// Inactive job types are hidden from new scheduling but kept for existing shifts that reference them.
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   appointments           Appointment[]
   scheduleTemplateShifts ScheduleTemplateShift[]
 
   @@index([tenantId])
-  @@map("service_types")
+  @@map("shift_service_types")
 }
 
 /// A client/customer. Guest-first (per architecture plan) - isGuest clients
@@ -619,34 +790,56 @@ model Client {
 /// not restricted at the DB/RLS level since that's a UI/role concern, not a
 /// tenant-isolation one.
 model Appointment {
-  id                       String              @id @default(uuid())
-  tenantId                 String              @map("tenant_id")
-  tenant                   Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  staffId                  String              @map("staff_id")
-  staff                    StaffProfile        @relation(fields: [staffId], references: [id], onDelete: Restrict)
-  clientId                 String?             @map("client_id")
-  client                   Client?             @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  serviceTypeId            String?             @map("service_type_id")
-  serviceType              ServiceType?        @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
-  startTime                DateTime            @map("start_time")
-  endTime                  DateTime            @map("end_time")
-  status                   AppointmentStatus   @default(BOOKED)
-  priceCharged             Decimal?            @map("price_charged") @db.Decimal(10, 2)
-  paymentStatus            PaymentStatus       @default(UNPAID) @map("payment_status")
-  estimatedDurationMinutes Int?                @map("estimated_duration_minutes")
-  estimatedValue           Decimal?            @map("estimated_value") @db.Decimal(10, 2)
-  locationType             MeetingLocationType @default(IN_PERSON) @map("location_type")
+  id                       String                  @id @default(uuid())
+  tenantId                 String                  @map("tenant_id")
+  tenant                   Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  staffId                  String                  @map("staff_id")
+  staff                    StaffProfile            @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  /// Which of the three calendars this row belongs to - the real source of
+  /// truth for "is this a shift/appointment/custom entry" now (see isShift/
+  /// isCustomEntry in SchedulingCalendar.tsx). Previously inferred purely
+  /// from clientId presence; kept distinct from it because a CUSTOM entry
+  /// can have a client or not depending on the tenant's Custom-form settings,
+  /// so clientId alone can't distinguish SHIFT from CUSTOM anymore.
+  entryKind                EntryKind               @map("entry_kind")
+  /// Which named CustomCalendar this row belongs to - set if and only if
+  /// entryKind is CUSTOM (a tenant can have several custom calendars; this
+  /// is the real scoping key, not just a shared "custom" bucket). Cascades
+  /// on delete - removing a custom calendar removes its entries, same as
+  /// removing the tenant itself does for every row.
+  customCalendarId         String?                 @map("custom_calendar_id")
+  customCalendar           CustomCalendar?         @relation(fields: [customCalendarId], references: [id], onDelete: Cascade)
+  clientId                 String?                 @map("client_id")
+  client                   Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  /// Exactly one of appointmentServiceTypeId/shiftServiceTypeId is ever set,
+  /// picked by which service-type list was actually chosen in the form
+  /// rather than strictly by entryKind - a CUSTOM entry's job-type field can
+  /// pick from either list (see Settings > Calendars > "Custom form"). Not
+  /// enforced at the DB level - app layer picks the right one, same "soft
+  /// invariant" convention as tagId/colorKey below.
+  appointmentServiceTypeId String?                 @map("appointment_service_type_id")
+  appointmentServiceType   AppointmentServiceType? @relation(fields: [appointmentServiceTypeId], references: [id], onDelete: SetNull)
+  shiftServiceTypeId       String?                 @map("shift_service_type_id")
+  shiftServiceType         ShiftServiceType?       @relation(fields: [shiftServiceTypeId], references: [id], onDelete: SetNull)
+  startTime                DateTime                @map("start_time")
+  endTime                  DateTime                @map("end_time")
+  status                   AppointmentStatus       @default(BOOKED)
+  priceCharged             Decimal?                @map("price_charged") @db.Decimal(10, 2)
+  paymentStatus            PaymentStatus           @default(UNPAID) @map("payment_status")
+  estimatedDurationMinutes Int?                    @map("estimated_duration_minutes")
+  estimatedValue           Decimal?                @map("estimated_value") @db.Decimal(10, 2)
+  locationType             MeetingLocationType     @default(IN_PERSON) @map("location_type")
   /// Physical address when locationType is IN_PERSON, or a meeting link/platform note when ONLINE.
-  location                 String?             @map("location")
+  location                 String?                 @map("location")
   /// Null only for a public self-service booking (source: SELF_SERVICE,
   /// created with no authenticated session) - every admin-created row still
   /// always sets this.
-  createdByUserId          String?             @map("created_by_user_id")
-  source                   AppointmentSource   @default(ADMIN)
+  createdByUserId          String?                 @map("created_by_user_id")
+  source                   AppointmentSource       @default(ADMIN)
   /// Optional custom color tag (see EventTag) overriding this entry's
   /// default status-based color on the calendar.
-  tagId                    String?             @map("tag_id")
-  tag                      EventTag?           @relation(fields: [tagId], references: [id], onDelete: SetNull)
+  tagId                    String?                 @map("tag_id")
+  tag                      EventTag?               @relation(fields: [tagId], references: [id], onDelete: SetNull)
   /// Optional built-in color key ("appointment"/"shift"/"completed"/
   /// "noShow"/"cancelled" - see EVENT_COLOR_KEYS in
   /// src/lib/colors/eventColors.ts) picked from the same "Color key"
@@ -657,13 +850,15 @@ model Appointment {
   /// soft invariant in this app. Loses to a terminal status
   /// (CANCELLED/NO_SHOW/COMPLETED) in resolveEventColor, the same priority
   /// slot tagId's color already holds.
-  colorKey                 String?             @map("color_key")
-  createdAt                DateTime            @default(now()) @map("created_at")
-  updatedAt                DateTime            @updatedAt @map("updated_at")
+  colorKey                 String?                 @map("color_key")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  updatedAt                DateTime                @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([staffId, startTime])
   @@index([clientId])
+  @@index([tenantId, entryKind])
+  @@index([customCalendarId])
   @@map("appointments")
 }
 
@@ -744,20 +939,20 @@ model ScheduleTemplate {
 /// src/modules/scheduling/templates.ts) turns each row into a real
 /// Appointment with clientId null.
 model ScheduleTemplateShift {
-  id            String           @id @default(uuid())
-  tenantId      String           @map("tenant_id")
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  templateId    String           @map("template_id")
-  template      ScheduleTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  staffId       String           @map("staff_id")
-  staff         StaffProfile     @relation(fields: [staffId], references: [id], onDelete: Cascade)
-  dayOffset     Int              @map("day_offset")
-  startMinute   Int              @map("start_minute")
-  endMinute     Int              @map("end_minute")
-  serviceTypeId String?          @map("service_type_id")
-  serviceType   ServiceType?     @relation(fields: [serviceTypeId], references: [id], onDelete: SetNull)
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
+  id                 String            @id @default(uuid())
+  tenantId           String            @map("tenant_id")
+  tenant             Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId         String            @map("template_id")
+  template           ScheduleTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  staffId            String            @map("staff_id")
+  staff              StaffProfile      @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  dayOffset          Int               @map("day_offset")
+  startMinute        Int               @map("start_minute")
+  endMinute          Int               @map("end_minute")
+  shiftServiceTypeId String?           @map("shift_service_type_id")
+  shiftServiceType   ShiftServiceType? @relation(fields: [shiftServiceTypeId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
 
   @@index([tenantId])
   @@index([templateId])

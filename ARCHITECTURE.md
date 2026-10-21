@@ -30,13 +30,19 @@ logic. Local dev Postgres runs via `docker-compose.yml`.
   (`app.tenant_id`, `app.is_superadmin`), which Row-Level Security policies
   on every tenant-scoped table enforce as a DB-level backstop independent of
   app code remembering to filter by `tenantId`. `runInSystemContext(fn)` is
-  the superadmin/no-tenant escape hatch. The app connects as a **restricted,
-  non-superuser** Postgres role (`shiftup_app` / `APP_DATABASE_URL`) -
-  migrations run as the privileged `shiftup` role; RLS does nothing against
-  a superuser connection, so this split is load-bearing, not cosmetic.
-  Proven by an automated test: `src/lib/tenant-context.rls.test.ts`.
+  the superadmin/no-tenant escape hatch. `runInPublicContext(tenantId, fn)`
+  is a third kind for the public booking routes only
+  (`src/app/api/public/booking/**`) - RLS-scoped to one tenant exactly like
+  `runInTenantContext`, just with no authenticated `userId`/`role` at all
+  (no session exists); those routes decide for themselves what to
+  read/write rather than gating on `hasPermission`. The app connects as a
+  **restricted, non-superuser** Postgres role (`shiftup_app` /
+  `APP_DATABASE_URL`) - migrations run as the privileged `shiftup` role; RLS
+  does nothing against a superuser connection, so this split is
+  load-bearing, not cosmetic. Proven by an automated test:
+  `src/lib/tenant-context.rls.test.ts`.
 - **Permissions**: `src/lib/permissions/catalog.ts` defines `PERMISSION_KEYS`
-  (34 keys, e.g. `VIEW_APPOINTMENTS`/`CREATE_STAFF`/`APPROVE_TIME_OFF`) and
+  (36 keys, e.g. `VIEW_APPOINTMENTS`/`CREATE_STAFF`/`APPROVE_TIME_OFF`) and
   hardcoded per-role defaults. Shifts and appointments are gated by fully
   independent key pairs (`VIEW/CREATE/EDIT/CANCEL_SHIFTS` vs.
   `..._APPOINTMENTS`, ISSUES.md #6) - no single key covers both. `RolePermission`/
@@ -69,7 +75,9 @@ logic. Local dev Postgres runs via `docker-compose.yml`.
   `src/lib/licensing/limits.ts` enforces the free-plan caps
   (`assertCanAddStaffProfile`/`assertCanAddAppointment`, throwing
   `PlanLimitError`) and whole-feature paid gates for FREE tenants
-  (`assertScheduleTemplatesEnabled`, `assertCalendarHoursEnabled`).
+  (`assertScheduleTemplatesEnabled`, `assertCalendarHoursEnabled`,
+  `assertBookingWidgetEnabled` - the public booking widget's paid-plan gate,
+  layered under `Tenant.publicBookingEnabled`'s separate admin on/off switch).
   `src/lib/licensing/pricing.ts` holds the actual prices.
 
 ## Data model
@@ -79,12 +87,12 @@ Full detail (fields, relations, doc comments) lives in
 
 | Model | What it is |
 |---|---|
-| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `companyNameFont`, `eventColors`, `enabledHolidayNames`, `blockedHolidayNames` (which of the *enabled* holidays also render as a full-day blocked span, not just a tint), `showJobTypeOnShiftForm`/`showJobEstimateOnShiftForm`/`showColorKeyOnShiftForm`, `allowOverlappingShifts`, `calendarStartMinute`/`calendarEndMinute` (Week/Day grid's displayed range, minutes-from-midnight, default = full day), `publicBookingEnabled`/`publicBookingMinNoticeMinutes`/`publicBookingWindowDays` (the public booking widget's admin on/off switch and bounds - paid feature, see Licensing below). |
+| `Tenant` | The business/org. Also holds tenant-wide settings: `requireClientForAppointments`, `enableMapsNavigation`, `logoDataUrl`, `companyNameFont`, `eventColors`, `enabledHolidayNames`, `blockedHolidayNames` (which of the *enabled* holidays also render as a full-day blocked span, not just a tint), `showJobTypeOnShiftForm`/`showJobEstimateOnShiftForm`/`showColorKeyOnShiftForm`, `allowOverlappingShifts`, `calendarStartMinute`/`calendarEndMinute` (Week/Day grid's displayed range, minutes-from-midnight, default = full day), `showPaymentStatus` (whether the appointment detail panel shows the Payment field - a real editable Unpaid/Paid/Waived/Refunded dropdown, saved via `PATCH /api/appointments/[id]` under the same `EDIT_APPOINTMENTS` gate as the rest of that form - at all; ISSUES.md #5, default on, never shown for shifts regardless), `publicBookingEnabled`/`publicBookingMinNoticeMinutes`/`publicBookingWindowDays` (the public booking widget's admin on/off switch and bounds - paid feature, see Licensing below). |
 | `User` | Login-capable account. `tenantId` null only for SUPERADMIN. `isOwner` marks the account that originally signed up the tenant. `calendarTextSize` is a per-user calendar-event font-size preference. |
 | `Role` | A tenant-defined role (e.g. "Officer", "Dispatcher") - fully custom, not a fixed list. `reportsToId` is purely organizational (org-chart display), never read for permission inheritance or enforcement. |
 | `License` | Entitlement (tier + billing plan), one per tenant. |
-| `StaffProfile` | A `User` who can be scheduled; has `WorkingHours` (modeled, **not yet enforced anywhere**). |
-| `ServiceType` | A bookable service (duration, price). |
+| `StaffProfile` | A `User` who can be scheduled; has `WorkingHours` - now read by the public booking widget's availability engine (`src/modules/scheduling/availability.ts`) to decide when that staff member can be booked at all; still not enforced against internal (admin/staff) scheduling. |
+| `AppointmentServiceType` / `ShiftServiceType` | Independent job-type pools (ISSUES.md #1, split 2026-10-10 - previously one shared `ServiceType` table). `AppointmentServiceType` is client-facing - duration, price, `requiresPayment`, `isActive`, and `isPubliclyBookable` (default false - whether it shows up on the public booking widget, which only ever books appointments; separate from `isActive`, which gates internal scheduling). `ShiftServiceType` is internal-only - name + duration + `isActive`, no price/payment/public-booking concept. Both managed from their own Settings card (`ServiceTypeManager`/`ShiftServiceTypeManager`) and API routes (`/api/appointment-service-types`, `/api/shift-service-types`), gated by the same unified `VIEW/CREATE/EDIT/DELETE_SERVICES` permission keys - not split per-type. |
 | `Client` | A customer/guest (name, email, phone, address). Guest-first, no login. |
 | `Appointment` | One scheduled visit/shift. `clientId` null = shift, not appointment (this is the *only* distinction between the two in the data model - no `kind` column). Colored via either `tagId` → `EventTag` (custom) or `colorKey` (one of the 5 built-in `EventColorKey`s - see `resolveEventColor`) - mutually exclusive, both nullable, picked from the same "Color key" control. |
 | `EventTag` | Tenant-defined custom color tag assignable to an `Appointment`. `appliesTo` (`SHIFT`/`APPOINTMENT`/`BOTH`, default `BOTH`) scopes which calendar picker it shows up on. |
@@ -108,7 +116,7 @@ stay thin.
 | `tenancy` | Creating a `Tenant`. |
 | `identity` | Creating/finding `User`s. |
 | `licensing` | Creating a free `License` on signup. |
-| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError` - DB-enforced for appointments with a client; for clientless shifts the constraint no longer applies and overlap is instead checked in app code, gated on `Tenant.allowOverlappingShifts`), coverage-finder (`findCoverageCandidates`); `templates.ts` - schedule-template CRUD, apply-preview/apply (`planTemplateApply`/`applyTemplate`). |
+| `scheduling` | Appointment CRUD, the double-booking `EXCLUDE`-constraint handling (`SchedulingConflictError` - DB-enforced for appointments with a client; for clientless shifts the constraint no longer applies and overlap is instead checked in app code, gated on `Tenant.allowOverlappingShifts`), coverage-finder (`findCoverageCandidates`); `templates.ts` - schedule-template CRUD, apply-preview/apply (`planTemplateApply`/`applyTemplate`); `availability.ts` - the public booking widget's availability engine (`listAvailableSlotsByStaff`/`collapseForDisplay`), reading `WorkingHours`/`TimeOff`/`BlockedTime`/blocked holidays to compute open slots. |
 | `timeoff` | Time-off request/approval, `staffOnApprovedLeave()` (feeds the coverage finder). |
 
 ## API routes (`src/app/api/**/route.ts`)
@@ -128,10 +136,12 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/tenant-settings` | GET, PUT | session (GET) / varies by field (PUT) | One settings bucket (see the `Tenant` row above for the full field list), partial-update PUT. Appointment/shift-form fields stay ADMIN-only; holidays/event-colors/calendar-hours fields are gated on `EDIT_CALENDAR_SETTINGS` instead (ADMIN always passes); calendar-hours fields additionally require a paid plan (`assertCalendarHoursEnabled`). |
 | `/api/staff` | GET, POST | `VIEW_STAFF` / `CREATE_STAFF`, plus ADMIN for POST (assigning a role) | List/add staff (never serialize `passwordHash` - see PROGRESS.md for the bug this caused once). |
 | `/api/staff/[id]` | PATCH, DELETE | `EDIT_STAFF`/`DELETE_STAFF`, plus ADMIN (see Permissions above) | PATCH reassigns a STAFF member's custom `Role`; both also block acting on yourself. |
+| `/api/staff/[id]/working-hours` | GET, PUT | `EDIT_BOOKING_WIDGET_SETTINGS` | A staff member's weekly `WorkingHours` - PUT replaces the full set in one call. Feeds the public booking widget's availability engine. |
 | `/api/staff/[id]/promote` | POST | ADMIN | STAFF → ADMIN. |
 | `/api/staff/[id]/demote` | POST | ADMIN | ADMIN → STAFF, landing in a given `roleId`. Blocks self-demote. |
 | `/api/roles`, `/api/roles/[id]` | GET/POST, PATCH/DELETE | session (GET) / ADMIN (write) | Tenant's custom `Role` CRUD - name/description/`reportsToId`. DELETE blocked at the DB level while anyone still holds the role. |
-| `/api/service-types` | GET, POST | `VIEW_SERVICES` / `CREATE_SERVICES` | |
+| `/api/appointment-service-types`, `/[id]` | GET/POST, PATCH | `VIEW_SERVICES`/`CREATE_SERVICES` / `EDIT_SERVICES` | `AppointmentServiceType` CRUD. PATCH includes `isPubliclyBookable` (Settings > Booking Widget). |
+| `/api/shift-service-types`, `/[id]` | GET/POST, PATCH | `VIEW_SERVICES`/`CREATE_SERVICES` / `EDIT_SERVICES` | `ShiftServiceType` CRUD - no price/payment/public-booking fields (see the model split above). |
 | `/api/clients` | GET, POST | `VIEW_CLIENTS` / `CREATE_CLIENTS` | |
 | `/api/appointments` | GET, POST | `VIEW_SHIFTS`+`VIEW_APPOINTMENTS` / `CREATE_SHIFTS` or `CREATE_APPOINTMENTS` (by row type) | List in a date range (each row type gated independently, not just all/own-scoped); create (enforces free-plan cap). |
 | `/api/appointments/[id]` | GET, PATCH | `VIEW_SHIFTS`/`VIEW_APPOINTMENTS` (by row type) / varies by field and row type (`EDIT_SHIFTS`/`EDIT_APPOINTMENTS`, `CANCEL_SHIFTS`/`CANCEL_APPOINTMENTS`, `EDIT_JOB_ESTIMATES`) | One PATCH handles reschedule, cancel, reassign, estimates, location, tag. |
@@ -142,8 +152,12 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/schedule-templates`, `/[id]`, `/[id]/clone` | GET/POST, GET/PATCH/DELETE, POST | `VIEW`/`CREATE`/`EDIT`/`DELETE_SCHEDULE_TEMPLATES` | Template CRUD + clone. Paid feature - every route also calls `assertScheduleTemplatesEnabled` (403s on `FREE`). |
 | `/api/schedule-templates/[id]/shifts`, `/[shiftId]` | POST, PATCH/DELETE | `EDIT_SCHEDULE_TEMPLATES` | A template's shift rows. |
 | `/api/schedule-templates/[id]/apply` | POST | `APPLY_SCHEDULE_TEMPLATES` | `{periodStart, dryRun}` - preview or real apply (see `planTemplateApply`/`applyTemplate`). |
+| `/api/reports/shifts` | GET | `VIEW_SHIFT_REPORTS` | `{start, end, status?, staffId?, serviceTypeId?}` → the filtered event list behind the Reports dashboard (ISSUES.md #4) - tenant-wide, deliberately **not** layered under `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`/own-staff scoping the way `/api/appointments` is. |
 | `/api/billing/checkout` | POST | ADMIN | Stripe Checkout session (one-time or subscription). |
 | `/api/billing/webhook` | POST | Stripe signature | Confirms payment, updates `License`. |
+| `/api/public/booking/[tenantSlug]/info` | GET | — (public) | Tenant name/logo + publicly-bookable service types + bookable staff, for the public booking page/embed. Uniform 404 for a missing/disabled/FREE-plan/booking-disabled tenant - never distinguishes which. |
+| `/api/public/booking/[tenantSlug]/availability` | GET | — (public) | `{serviceTypeId, staffId?, from, to}` → open slots, via `listAvailableSlotsByStaff`. |
+| `/api/public/booking/[tenantSlug]` | POST | — (public) | Creates a real `Appointment` (`source: SELF_SERVICE`, `createdByUserId: null`) via the same `createAppointment` the admin route uses - re-verifies the exact slot is still free, then relies on the DB `EXCLUDE` constraint for the actual race guarantee. 409 on conflict. |
 
 ## Frontend route map
 
@@ -159,6 +173,12 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
   `VIEW_ROSTER`. See ISSUES.md's "Known gaps" for an interaction a role
   holding `VIEW_ROSTER` without `VIEW_ALL_SHIFTS`/`VIEW_ALL_APPOINTMENTS`
   runs into.
+- `calendar/reports` — manager-facing no-show/completion/hours reporting
+  dashboard (ISSUES.md #4), gated on its own `VIEW_SHIFT_REPORTS` key
+  (defaults Manager/Supervisor, not tied to `VIEW_ROSTER`/`VIEW_ALL_*`).
+  Status/staff/service-type filters over a date range (default this week);
+  clicking a tile or a drill-down row opens the real `AppointmentDetailPanel`
+  (exported from `SchedulingCalendar.tsx` for reuse here).
 - `time-off` — request/approve UI.
 - `schedule-templates` — reusable shift-pattern builder + apply-to-a-week UI
   (`ScheduleTemplatesView.tsx`), gated on `VIEW_SCHEDULE_TEMPLATES` and a
@@ -172,15 +192,24 @@ own data via `runInTenantContext`, rendering the shared `AppHeader`
   (`"ALWAYS"`, `"ADMIN"`, or an existing `PermissionKey`) and enforced
   server-side by `access.ts`'s `getSettingsContext`/`requireSettingsSection`,
   not just hidden from the nav: `appointments` (`AppointmentFormSettings` -
-  ADMIN-only card, `ServiceTypeManager` - gated on `VIEW_SERVICES`), `shifts`
-  (`ShiftFormSettings` - ADMIN-only), `calendar` - gated on
+  ADMIN-only card, `ServiceTypeManager` - `AppointmentServiceType` CRUD,
+  gated on `VIEW_SERVICES`), `shifts` (`ShiftFormSettings` - ADMIN-only,
+  `ShiftServiceTypeManager` - `ShiftServiceType` CRUD, gated on
+  `VIEW_SERVICES` - independent list from Appointments', see the model split
+  above), `calendar` - gated on
   `EDIT_CALENDAR_SETTINGS` (not ADMIN-only), holding `HolidaySettings`/
   `BlockedTimeSettings`/`EventColorSettings`/`EventTagManager` (free) and `CalendarHoursSettings`
   (paid - see Licensing above; renders an upgrade card instead for a
   FREE-plan tenant); `EventTagManager`'s own delete action stays
   hardcoded ADMIN-only regardless (unrelated reasoning - shared taxonomy
   other staff's entries may reference), `company-profile` (`LogoSettings` -
-  ADMIN-only), `staff` (`StaffManager` - gated on `VIEW_STAFF` for read-only
+  ADMIN-only), `booking-widget` - gated on `EDIT_BOOKING_WIDGET_SETTINGS`,
+  holding `BookingWidgetSettings` (the on/off switch + notice/window bounds),
+  `BookableServicesSettings` (which `AppointmentServiceType`s are publicly
+  bookable), `WorkingHoursEditor` (per-staff `WorkingHours`), and
+  `EmbedSnippet` (the copy-paste `<script>` tag + hosted-page link) - whole
+  page renders an upgrade card instead on a FREE-plan tenant (paid feature,
+  see Licensing above), `staff` (`StaffManager` - gated on `VIEW_STAFF` for read-only
   viewing; adding staff, reassigning roles, removing staff, and
   promote-to-admin/demote-back-to-staff are all hardcoded ADMIN-only, see
   Permissions above), `permissions`

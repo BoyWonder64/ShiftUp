@@ -33,7 +33,7 @@ describe("scheduling/templates", () => {
       staffAId = staffA.staffProfile.id;
       staffBId = staffB.staffProfile.id;
       userId = staffA.user.id;
-      const serviceType = await tx.serviceType.create({
+      const serviceType = await tx.shiftServiceType.create({
         data: { tenantId, name: "Test Service", durationMinutes: 60 },
       });
       serviceTypeId = serviceType.id;
@@ -45,7 +45,7 @@ describe("scheduling/templates", () => {
       await tx.appointment.deleteMany({ where: { tenantId } });
       await tx.scheduleTemplateShift.deleteMany({ where: { tenantId } });
       await tx.scheduleTemplate.deleteMany({ where: { tenantId } });
-      await tx.serviceType.deleteMany({ where: { tenantId } });
+      await tx.shiftServiceType.deleteMany({ where: { tenantId } });
       await tx.staffProfile.deleteMany({ where: { tenantId } });
       await tx.user.deleteMany({ where: { tenantId } });
       await tx.license.deleteMany({ where: { tenantId } });
@@ -263,6 +263,7 @@ describe("scheduling/templates", () => {
         // Pre-existing appointment for staffA on day 0 that overlaps shift 1.
         await createAppointment(tx, tenantId, {
           staffId: staffAId,
+          entryKind: "SHIFT",
           startTime: new Date(2026, 8, 7, 10, 0, 0),
           endTime: new Date(2026, 8, 7, 11, 0, 0),
           createdByUserId: userId,

@@ -15,6 +15,70 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **Manager shift/no-show reports dashboard (ISSUES.md #4).** Built
+  2026-10-09/10. New "Reports" page (linked from `AppHeader`'s nav for
+  anyone with the new `VIEW_SHIFT_REPORTS` permission - defaults to
+  Manager/Supervisor, ADMIN always). Shows aggregate tiles (no-show count,
+  completed count, cancelled count, booked count, completion rate, total
+  hours worked) over a date range defaulting to "this week," with
+  status/staff/service-type filters (AND, narrowing) and a per-staff
+  breakdown. Clicking a tile or a row opens the real appointment detail
+  panel for drill-down. End-to-end check: as a role holding
+  `VIEW_SHIFT_REPORTS`, open Reports, confirm the tiles match what's
+  actually on the calendar for "this week," narrow by staff/status/service
+  type and confirm the tiles recompute, click a tile and confirm it opens a
+  filtered list of the underlying events, click a row and confirm the real
+  detail panel opens. Confirm a role *without* `VIEW_SHIFT_REPORTS` doesn't
+  see "Reports" in the nav and gets redirected if it hits the URL directly.
+  **Added 2026-10-10, same session:** a "Kind" filter (Both/Appointments/
+  Shifts) - raised directly after the first build landed, since Reports (and
+  Roster, see below) still mixed both kinds with no way to split them apart
+  the way the main calendar's own Appointments/Shifts/Both switcher already
+  can. Check: switching Kind to "Appointments" or "Shifts" narrows every
+  tile, the per-staff breakdown, and the drill-down list to just that kind;
+  "Both" shows everything again.
+- **Team Roster can now split Appointments/Shifts too.** Raised same session
+  as the Reports "Kind" filter above, same reasoning - `RosterView.tsx`
+  gained the identical Both/Appointments/Shifts pill switcher next to the
+  Day/Week toggle, client-side only (no new fetch), filtering each staff
+  member's chip row. Check: `/calendar/roster`, switch the new switcher and
+  confirm each person's row only shows the selected kind (and their
+  appointment/shift counts update to match).
+- **Service types split into separate Appointments/Shifts lists (ISSUES.md
+  #1).** Built 2026-10-09/10. The old single "Service types" pool is now two
+  independent tables - `AppointmentServiceType` (client-facing, has
+  price/payment/public-booking toggles, managed from Settings > Appointments'
+  `ServiceTypeManager`) and `ShiftServiceType` (internal, name + duration
+  only, managed from Settings > Shifts' new `ShiftServiceTypeManager`, linked
+  from `ShiftFormSettings`' "Manage job types"). End-to-end check: confirm
+  Settings > Appointments only lists/creates appointment-style service types
+  (with price/payment fields) and Settings > Shifts only lists/creates
+  shift-style job types (name + duration only, no price) - each list should
+  be independent, not shared. Create an appointment and confirm its job-type
+  picker only offers appointment service types; create/drag a shift and
+  confirm its job-type picker only offers shift service types. Build or apply
+  a schedule template shift and confirm it still picks a shift service type
+  correctly. Existing data should have carried over correctly during the
+  migration - any service type that was ever used on a real (client-having)
+  appointment should now appear under Appointments; any used on a shift or a
+  schedule-template shift should appear under Shifts (a service type used as
+  both historically will appear in both lists, which is expected, not a
+  bug - see the migration's own comment in
+  `prisma/migrations/20261010040000_split_service_types_and_payment_toggle/migration.sql`
+  for the exact split rule). Also confirm the public booking widget below
+  still lists/books correctly against `AppointmentServiceType` only.
+- **Payment status is now editable, and toggleable (ISSUES.md #5).** Built
+  2026-10-09/10. Two pieces: (1) Settings > Appointments gained a "Show
+  payment status" checkbox (`Tenant.showPaymentStatus`, default on) -
+  turning it off hides the Payment field from the appointment detail panel
+  entirely (never shown for shifts regardless). (2) The detail panel's
+  Payment field is now a real editable dropdown (Unpaid/Paid/Waived/
+  Refunded), saved via `PATCH /api/appointments/[id]` (same `EDIT_APPOINTMENTS`
+  gate as the rest of that edit form) - no longer permanently stuck at
+  `UNPAID`. Check: open an appointment (not a shift), change Payment to
+  "Paid," save, reopen it and confirm it stuck. Toggle "Show payment status"
+  off and confirm the field disappears from both the create and detail
+  panels; toggle back on and confirm it reappears with the value you set.
 - **Public booking widget.** Built 2026-10-09. End-to-end check: as ADMIN on
   a non-FREE tenant, go to Settings > Booking Widget, check "Enable public
   booking", mark at least one active service type "Bookable online" (same
@@ -145,6 +209,20 @@ deliberately leaves that out so it stays skimmable.
   rendering the Cancel button, just toggling `invisible`) applied but never
   checked in a browser since. Check: open "+ Add appointment"/"+ Schedule
   shift" and watch whether anything else on the page shifts position.
+- **The per-role "X/Y granted" permission-count badge is gone.** Reported
+  2026-10-09 as not useful summary information (the math never lined up with
+  what the matrix UI actually shows/toggles - see ISSUES.md's original
+  write-up). Removed entirely rather than fixed, per the user. Check:
+  Settings → Permissions → each role in the left list shows just its name,
+  no "X/Y granted" badge next to it.
+- **Dashboard's "Upcoming appointments" stat no longer counts shifts (or
+  custom-calendar entries).** `upcomingCount` (`dashboard/page.tsx`) now
+  filters on `entryKind: "APPOINTMENT"` instead of counting every row in the
+  shared `Appointment` table. Check: with shifts and/or custom entries
+  scheduled for the near future, confirm the dashboard's "Upcoming
+  appointments" tile only counts real client appointments, not those. (A
+  separate "upcoming shifts" stat was floated in the original issue but not
+  built - not decided as wanted yet.)
 
 ## Resolved issues (from ISSUES.md)
 

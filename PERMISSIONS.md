@@ -36,7 +36,7 @@ fixed enum).
 
 ## The permission-key catalog
 
-`src/lib/permissions/catalog.ts` defines `PERMISSION_KEYS` - currently 34
+`src/lib/permissions/catalog.ts` defines `PERMISSION_KEYS` - currently 36
 keys, one **action** per key (`VIEW_STAFF`, `CREATE_STAFF`, `EDIT_STAFF`,
 `DELETE_STAFF`, `VIEW_APPOINTMENTS`, `CANCEL_SHIFTS`, `APPROVE_TIME_OFF`,
 etc.), never a combined "manage X" key. This is deliberate: a tenant can
