@@ -17,9 +17,56 @@ actually verified, not a quick current-state reference.
 - Dev server runs via `npm run dev` on http://localhost:3000.
 - **Windows-specific gotcha**: stopping the `npm run dev` background task doesn't always kill its child Next.js/Turbopack processes. If `prisma generate` or `prisma migrate` fails with `EPERM ... query_engine-windows.dll.node`, check `Get-Process node` and kill stray ones (excluding unrelated ones like Adobe's bundled node.exe) before retrying - don't just ask the user to do it, stop the process yourself and regenerate.
 - **Docker Desktop needs relaunching after a machine restart/sleep** — `docker ps` fails with a named-pipe connection error until the app is reopened; give it ~20-30s to come up before retrying.
-- **Don't assume anything about commit state from this note** — check `git status`/`git log` yourself at the start of every session; it's swung both ways before. As of this handoff (2026-10-03) the working tree is clean and `git log` shows 8 commits, the latest (`ffe166d`) covering everything documented in this file through the role-rank/promote/demote entry above.
+- **Don't assume anything about commit state from this note** — check `git status`/`git log` yourself at the start of every session; it's swung both ways before. As of this handoff (2026-10-20) the working tree is clean, `git log` shows 9 commits, and the latest (`05b6df5`, "Added overhaul changes. Need to continue.") bundles a large uncommitted overhaul from prior sessions - the calendar split, custom calendars, and dashboard metrics work described directly below. That commit's own message undersold it: everything in it was already code-complete, just never committed or doc'd - see the entry below for what verifying it this session actually found.
 
 ## Completed and verified this session
+
+### Verified the 2026-10-20 "overhaul" commit end-to-end in the browser - all real, one environment gotcha
+
+Picked up where the prior session left off (`05b6df5`'s message was "Need to
+continue" with no `PROGRESS.md`/`VERIFY.md` entries for any of it) - rather
+than assume something was left broken, checked `tsc --noEmit` (clean),
+`eslint .` (clean), and `vitest run` (112/112 passing once Docker/Postgres
+were brought back up) first, then browser-verified the actual new surfaces
+since none of that proves a UI actually renders.
+
+- **What the commit turned out to contain**: the calendar-split work
+  (`/calendar/appointments`, `/calendar/shifts`, `/calendar/custom/[id]`,
+  `/calendar/all`, replacing the old single filtered `/calendar`), a new
+  `CustomCalendar` model letting a tenant create any number of independently-
+  configured named calendars (Settings > Calendars), and a new
+  `DashboardMetric` model letting a tenant fully customize their Dashboard's
+  stat tiles (Settings > Dashboard) instead of the old hardcoded "Staff"/
+  "Upcoming appointments" pair. This resolves two previously-open `TODO.md`
+  items ("Custom calendar entry types" and "Fully separate the Shifts and
+  Appointments calendars") - both moved to `VERIFY.md`.
+- **One real bug hunt that turned out to be an environment trap, not a code
+  bug**: right after starting a fresh `npm run dev`, every single Settings
+  page 404'd - including `/admin/settings/account`, which has no permission
+  requirement at all (`"ALWAYS"`), which was the tell that this wasn't a
+  real permission/tenant-lookup bug (that would've 404'd selectively, not
+  uniformly). Root cause: a stale Turbopack `.next` build cache left over
+  from before this commit. Deleting `.next` and restarting `npm run dev`
+  fixed it completely - every Settings section and all four split calendar
+  routes loaded clean afterward. Filed in `VERIFY.md` as a gotcha to
+  recognize rather than re-debug if it recurs.
+- **Verified live in the browser** (fresh signup through `/signup`, license
+  upgraded to paid via direct DB update rather than touching any real
+  tenant, using Playwright + Chromium installed on-demand per the estab-
+  lished pattern): Settings > Calendars' Appointments/Shifts toggles and
+  custom-calendar create/configure flow; a created custom calendar
+  ("Site Visits") correctly appearing as its own item in `AppHeader`'s
+  Calendar dropdown alongside Appointments/Shifts/All calendars/View only;
+  `/calendar/appointments` and the custom calendar's own page both rendering
+  a full real `SchedulingCalendar` grid independently; Settings > Dashboard's
+  metric builder, including adding a third tile that then appeared on the
+  real Dashboard page with a correctly computed count. No console errors in
+  any of it (aside from one pre-existing, unrelated `/signup` page console
+  warning about the username field's regex pattern under Chromium's `v`-flag
+  validation - cosmetic, didn't block the form, not investigated further).
+- **Docs were the only thing actually out of date** - the code itself had
+  nothing left to build. `TODO.md`'s two relevant backlog items and this
+  `PROGRESS.md`/`VERIFY.md` pair are now caught up to match reality.
 
 ### Four interrupted-session features reconciled: service type split, shift reports, payment status, and public booking widget finished - plus a stale local build-cache trap worth remembering
 

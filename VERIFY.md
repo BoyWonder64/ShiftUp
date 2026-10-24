@@ -15,6 +15,40 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **Calendars fully split into separate pages, plus any number of named
+  custom calendars (TODO.md's "Custom calendar entry types" and "Fully
+  separate the Shifts and Appointments calendars").** Built in the big
+  2026-10-20 overhaul commit, browser-verified this session (fresh signup,
+  upgraded to a paid plan, clicked through everything - screenshots taken,
+  no console errors, Settings > Calendars/Dashboard pages loaded clean).
+  Check on your own account: Settings > Calendars - toggle "Appointments
+  calendar"/"Shifts calendar" off and confirm the Calendar nav dropdown
+  loses that item; add a custom calendar (e.g. "Site Visits"), confirm it
+  shows up as its own item in the Calendar dropdown with its own page
+  (`/calendar/custom/<id>`) and its own grid/toolbar, independent of
+  Appointments/Shifts. Toggle its field checkboxes (client, job type, job
+  estimate, color key, payment status) and confirm the create/detail panel
+  on that calendar's own entries actually reflects them. Confirm
+  `/calendar/all` shows every kind combined, and that a bookmarked old
+  `/calendar` link redirects sensibly. Confirm a FREE-plan tenant can't
+  create a custom calendar (should hit the upgrade message). **One real
+  environment gotcha hit while verifying, not an app bug**: right after this
+  commit, every Settings page 404'd (even `/admin/settings/account`, which
+  requires nothing) until the stale Turbopack `.next` build cache was
+  cleared and the dev server restarted - if you see Settings 404ing for no
+  reason, that's almost certainly this, not a regression; delete `.next` and
+  restart `npm run dev`.
+- **Fully customizable Dashboard stat tiles, replacing the old two hardcoded
+  ones.** Built same overhaul commit, browser-verified this session
+  (created a third tile, confirmed it appeared on the real Dashboard with a
+  real computed value). Settings > Dashboard now lets you rename, delete, or
+  add as many counting tiles as you want (Appointment/Shift/Staff count,
+  filterable by kind/date-range/status), replacing the old fixed "Staff"/
+  "Upcoming appointments" pair - those two still exist but are now just the
+  seeded starting tiles, editable/deletable like any other. Check: Settings
+  > Dashboard, add a new tile with a filter combination you care about,
+  confirm it shows up on the real Dashboard page with a sensible count;
+  rename/delete an existing tile and confirm the Dashboard updates to match.
 - **Manager shift/no-show reports dashboard (ISSUES.md #4).** Built
   2026-10-09/10. New "Reports" page (linked from `AppHeader`'s nav for
   anyone with the new `VIEW_SHIFT_REPORTS` permission - defaults to

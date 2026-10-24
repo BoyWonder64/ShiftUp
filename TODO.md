@@ -17,37 +17,15 @@ confirm. See `ISSUES.md` if you want the full history.
 
 ## New feature requests (not started)
 
-- **Custom calendar entry types - let the user pick Shift, Appointment, or
-  Custom (all features) when creating an entry.** Raised 2026-10-09, while
-  the service-type split (ISSUES.md #1) was mid-flight. Today "shift" vs.
-  "appointment" isn't a real stored type at all - it's implicit from
-  whether `Appointment.clientId` is set (`null` = shift, set = appointment);
-  there's no `entryKind`/enum column anywhere, and `SchedulingCalendar.tsx`'s
-  "Appointment or Shift?" chooser just decides which set of form fields to
-  show, not a stored kind. A third "Custom" option that can use *all*
-  features of both (client + price + payment + job estimate + whatever else
-  is appointment-only or shift-only today) doesn't fit cleanly into that
-  implicit model - needs real scoping before building:
-  - Does this need an explicit `entryKind` enum (`SHIFT | APPOINTMENT | CUSTOM`)
-    replacing the clientId-based inference, or does "Custom" just mean
-    "an appointment-shaped row that happens to also show shift-only fields"
-    (i.e. still inferred, just with every field unconditionally visible)?
-    The former is a real schema/migration change touching every place that
-    currently branches on clientId-presence to mean "is this a shift";
-    the latter is much smaller but may not be what "custom" actually implies
-    long-term.
-  - Which per-tenant form-visibility settings (`showJobType`,
-    `showJobEstimate`, `showColorKey`, etc. - currently split into
-    `AppointmentFormSettings`/`ShiftFormSettings`) apply to a Custom entry -
-    its own third settings card, or the union of both?
-  - Interacts with the in-flight service-type split (ISSUES.md #1): once
-    `ServiceType` is split into `AppointmentServiceType`/`ShiftServiceType`,
-    which one(s) does a Custom entry pick from?
-  - Interacts with the permission model - does Custom need its own
-    create/edit/cancel permission keys, or reuse whichever of
-    `CREATE_SHIFTS`/`CREATE_APPOINTMENTS` (etc.) already applies?
-  Needs a scoping conversation (like the manager-dashboard design pass in
-  ISSUES.md #4 got) before any code changes.
+- ~~**Custom calendar entry types - let the user pick Shift, Appointment, or
+  Custom (all features) when creating an entry.**~~ **Done, bundled with the
+  calendar-split overhaul below - moved to `VERIFY.md`.** Built bigger than
+  originally scoped: a real `EntryKind` enum (`SHIFT | APPOINTMENT | CUSTOM`,
+  `prisma/schema.prisma`) now replaces the old clientId-based inference
+  entirely, and instead of one fixed "Custom" option a tenant can create any
+  number of independently-named `CustomCalendar`s (Settings > Calendars),
+  each with its own show/hide field settings (client, job type, job
+  estimate, color key, payment status) - not a single shared Custom form.
 - **A language setting to swap languages - infrastructure done, most pages
   still untranslated.** Raised 2026-10-01, infra built 2026-10-02 - see
   PROGRESS.md's "Language setting" entry. Decisions resolved: English +
@@ -386,37 +364,19 @@ confirm. See `ISSUES.md` if you want the full history.
   with fixing the miscounting bug tracked in `ISSUES.md` (today's count
   silently includes shifts) so the list this shows matches whatever the
   fixed count actually represents.
-- **Fully separate the Shifts and Appointments calendars - today it's still
-  one shared calendar.** Raised 2026-10-09. Per the user, even after the
-  existing "Appointments/Shifts/Both" switcher (`calendarType` state in
-  `SchedulingCalendar.tsx`, the toolbar control around lines 1328-1345,
-  backed by the `VIEW_CALENDAR_TOGGLE` permission - see the now-done TODO
-  item below, "A per-role permission for the calendar's
-  Appointments/Shifts/Both switcher"), this still isn't real separation -
-  it's one `SchedulingCalendar` component instance with one grid/toolbar/view
-  (month/week/day, combined/by-staff layout, etc.) whose events just get
-  *filtered* by `calendarType` client-side before rendering, not two
-  genuinely independent calendars. Needs scoping before building:
-  - What does "fully separate" mean concretely - two distinct routes/pages
-    (e.g. `/calendar/appointments` and `/calendar/shifts`) each with their
-    own `SchedulingCalendar` mount and independent view state (current
-    date, month/week/day, layout), instead of one page with a type filter?
-    Or the same page/URL but two independently-scrollable/configurable
-    calendar panes shown at once?
-  - Does each separated calendar need its own saved view preferences (e.g.
-    the by-staff/combined layout toggle, or the calendar-size resize item
-    already in this file) independently of the other, or do settings still
-    apply globally across both?
-  - Interacts with the existing `features.appointmentManager`/
-    `features.shiftManagement` tier gating (a tenant can be licensed for
-    only one of the two) - a tenant with just one license tier presumably
-    only gets that one calendar, not a switcher with a disabled/empty
-    second option.
-  - Interacts with the roster (`/calendar/roster`, grouped by staff across
-    both kinds today) and the manager dashboard/shift-reports work
-    (`ISSUES.md` #4) - worth deciding whether those stay combined views even
-    if the main calendar splits, since "how many no-shows this week" and
-    roster's per-staff grouping both currently assume one shared event pool.
+- ~~**Fully separate the Shifts and Appointments calendars - today it's still
+  one shared calendar.**~~ **Done - moved to `VERIFY.md`.** Built as real
+  separate routes - `/calendar/appointments`, `/calendar/shifts`,
+  `/calendar/custom/[calendarId]` (one per named `CustomCalendar`), and
+  `/calendar/all` (everything combined) - each its own page/mount with
+  independent view state, not a client-side filter over one shared
+  component. The old `/calendar` route now just redirects to whichever of
+  these a given viewer can reach (preferring "all"). Gated per-kind by a new
+  `src/lib/permissions/calendarAccess.ts` (license tier + the new Settings >
+  Calendars on/off toggles + the relevant `VIEW_*` permission), which also
+  drives which items `AppHeader`'s Calendar dropdown shows. Roster and
+  Reports were deliberately left as combined views, not split, per the
+  original scoping question above.
 - **A setting to base public-booking availability on actual scheduled
   shifts, not just the generic `WorkingHours` template.** Raised 2026-10-09.
   Today `listAvailableSlotsByStaff` (`src/modules/scheduling/availability.ts`,
