@@ -34,14 +34,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     slug: "calendar",
-    label: "Calendar",
+    label: "Calendar Display",
     description: "Which holidays show on the calendar, the color key for appointments/shifts, and the calendar's visible hours.",
     requirement: "EDIT_CALENDAR_SETTINGS",
   },
   {
     slug: "calendars",
-    label: "Calendars",
-    description: "Turn the Appointments, Shifts, and Custom calendars on or off, and configure the Custom calendar's form fields.",
+    label: "Manage Calendars",
+    description: "Turn the Appointments, Shifts, and Custom calendars on or off, configure the Custom calendar's form fields, and build quick-create presets.",
     requirement: "ADMIN",
   },
   {

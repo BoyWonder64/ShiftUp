@@ -21,6 +21,213 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### "Custom event" quick-create, settings section renames, and a create-button consistency fix
+
+Follow-up to the calendar-create-flow session below, raised directly after
+trying it: "the form for creating an event still doesnt have the custom
+events to the appointment/shift form. This needs to be its own form." Took
+three rounds of clarifying questions to pin down exactly what this meant,
+since the obvious first reading (surface the existing named-CustomCalendar
+system more prominently) turned out to be wrong - worth recording the
+actual back-and-forth since the final shape is a real pivot from what
+"custom event" meant in the prior session:
+
+1. First question: was the gap that Custom never shows up (no calendar
+   created yet) vs. Custom needing to be a structurally separate form?
+   Answer: "a custom event, this can applies to either calender."
+2. Follow-up to pin down what that meant concretely (asked where a "Lunch
+   outing" custom event should actually show up): on whichever calendar you
+   pick at creation time, NOT its own separate calendar at all.
+3. Follow-up on the title (since a custom event now saves as a normal
+   Appointment/Shift row, not a CUSTOM one, it needs some way to get a label
+   like "Lunch outing" instead of the usual staff+job-type composition): a
+   free-text title field, not reusing the existing job-type list.
+
+**End result**: "Custom event" is a third thing, distinct from both the
+regular Appointment/Shift forms *and* the existing named-CustomCalendar
+feature (which is untouched, still exists, still free-on-every-plan from
+the prior session). New `Appointment.customTitle` (nullable string) - set
+only by this quick-create path, never alongside `entryKind: CUSTOM`.
+`appointmentTitle()` (`SchedulingCalendar.tsx`) prefers it over the usual
+staff/service-type/client composition when present. New `CustomEventPanel`
+component - genuinely separate from `CreateEntryPanel`, not one more
+conditional branch inside it - with just Title, a "File under:
+Appointments calendar / Shifts calendar" toggle, Start/End, and Staff;
+skips client, job type, payment, location, and job-estimate entirely.
+Reachable via a new "Custom event" pill in the shared `EntryTypeSwitcher`
+(extracted out of `CreateEntryPanel` so both forms render the identical
+switcher and stay in sync) - and since a custom event can go to either
+calendar regardless of which page you're on, the switcher (and therefore
+the "Custom event" option) now shows on **every** calendar page, not just
+`/calendar/all` - a fixed-kind page used to show no switcher at all, since
+there was nothing to choose there before this.
+
+- **A real bug caught by browser-testing the submit flow, not by
+  inspection**: after wiring all this up, testing on `/calendar/shifts`
+  timed out waiting for a "+ Add" button that never matched - turned out
+  the fixed-kind pages' buttons still said "+ Add appointment"/"+ Schedule
+  shift" from before, never renamed to match `/calendar/all`'s "+ Add
+  event" from the prior session. Fixed: every page's create button now
+  consistently says "+ Add event," since every one of them can now also
+  produce a Custom event regardless of the page's own fixed kind.
+- **Settings renamed for clarity**: "Calendar" → "Calendar Display"
+  (holidays/event colors/calendar hours - how the grid looks) and
+  "Calendars" → "Manage Calendars" (Appointments/Shifts toggles, Custom
+  calendars, Preset events - which calendars exist), raised directly since
+  the two near-identical tab names sitting next to each other in the nav
+  were genuinely confusing. Slugs/URLs unchanged, only the label/heading.
+- **Verified**: `tsc --noEmit` and `eslint .` clean across the whole repo,
+  full `vitest run` **116/116 passing** (unaffected - no test coverage was
+  written for the new UI components themselves, consistent with this file's
+  existing pattern of browser-verifying `SchedulingCalendar.tsx` changes
+  rather than unit-testing them). Full browser pass via Playwright/Chromium:
+  signed up fresh, created a real staff member via the API, opened the
+  Custom Event form from the fixed Shifts page, filed a "Doctor's
+  appointment" under the Shifts calendar, submitted, and confirmed it
+  rendered on the calendar with that exact title. Settings nav confirmed
+  showing "Calendar Display"/"Manage Calendars". **Not yet confirmed by the
+  user in the browser** - added to `VERIFY.md`.
+
+### Calendar create flow rebuilt around one button, plus free custom calendars and a new preset-events feature
+
+Raised directly as a sequence of quick asks, not a single scoped request -
+handled by restating the plan back after each new piece landed so direction
+could be corrected quickly rather than building the wrong thing at length.
+Two scoping questions asked up front (both informed by what already
+existed): custom "events unrelated to appointments/shifts" (lunch outings,
+personal doctor's appointments) should reuse the existing Custom Calendars
+system rather than a new lighter one, and stay visible to the whole team
+(not creator-private); admin-created "preset events" should be a genuinely
+separate, richer concept rather than just auto-filling duration from the
+existing job-type list.
+
+- **One "+ Add" button, type decided inside the form itself.** The combined
+  `/calendar/all` page previously rendered one create button per kind plus
+  one per named custom calendar (stacking up fast once a tenant has several
+  calendars), and a separate "Add as...?" popup for ambiguous slot-drags.
+  Both are now one "+ Add" button / one slot-drag path that opens the real
+  create form directly with a best-guess default type, and a "This is a..."
+  switcher *inside that form* (`CreateEntryPanel` in `SchedulingCalendar.tsx`)
+  lets the viewer correct it - raised directly ("in the form they determine
+  if this is a custom event") after the first popup-based pass. Switching
+  types remounts the form (a `key` on `CreateEntryPanel` derived from
+  `mode:customCalendarId`) so whatever was typed into the old type's fields
+  doesn't leak into the new one. This fully retired the `pendingSlot`
+  state/popup that used to exist alongside `creating` - one state, one flow.
+  A fixed-kind page (`/calendar/appointments` etc.) is unaffected - it only
+  ever had one relevant button/kind to begin with, so `modeOptions` there
+  always resolves to exactly one entry and the switcher never renders.
+- **Custom calendars are no longer a paid feature** - raised directly
+  mid-session. Two separate gates had to go, not one: `assertCustomCalendarEnabled`
+  (checked on both `POST /api/custom-calendars` and `POST /api/appointments`
+  for a CUSTOM entry) and - found only by browser-testing on a FREE-plan
+  tenant after the first fix, since the create API alone wasn't the whole
+  picture - a second FREE-plan check inside `getCalendarNavAccess`
+  (`src/lib/permissions/calendarAccess.ts`) that was still hiding every
+  custom calendar from the nav dropdown, the type switcher, and therefore
+  the presets row too, even after creation itself worked. `limits.test.ts`
+  (which existed solely to test the now-removed gate) deleted;
+  `calendarAccess.test.ts`'s FREE/paid-split test collapsed into one
+  plan-independent test. The now-unused `billingPlan` parameter was removed
+  from `getCalendarNavAccess` itself and all 14 call sites, rather than left
+  as dead-but-harmless - a stale "billing plan still matters here" parameter
+  would have actively misled the next person reading it.
+- **New "Preset events"** (`EventPreset` model, Settings > Calendars >
+  "Preset events", ADMIN-only to manage) - an admin names a quick-fill
+  template ("Lunch outing"), picks which kind/custom calendar it creates and
+  a default duration; it shows up as a pill button in the create form's own
+  "Presets" row (filtered to whatever `modeOptions` this page/viewer
+  actually has - a preset for a calendar you can't reach doesn't appear),
+  and picking one sets the type switcher and computes the end time from the
+  duration in one `setCreating` call. Deliberately **not** built on top of
+  the existing `ShiftServiceType` (name + duration, already reused by custom
+  entries' own job-type field) - asked directly whether to extend that or
+  build separately, and the answer was a separate, richer concept, since a
+  preset also needs to carry *which* kind/calendar it creates on, which a
+  job type has no notion of.
+- **Verified**: `tsc --noEmit` and `eslint .` clean across the whole repo,
+  full `vitest run` **116/116 passing** (119 minus the 3 deleted
+  `assertCustomCalendarEnabled` tests). Full browser pass via
+  Playwright/Chromium on a fresh FREE-plan signup: created a custom calendar
+  (201, not 403), created a "Lunch outing" preset tied to it, confirmed
+  `/calendar/all` shows exactly one "+ Add" button, confirmed the old "Add
+  as...?" popup is gone, confirmed the in-form type switcher lists
+  Appointment/Shift/the custom calendar, and confirmed clicking the "Lunch
+  outing" preset switches the form to "New Personal entry" with Start/End
+  exactly 30 minutes apart. **Not yet confirmed by the user in the browser** -
+  added to `VERIFY.md`.
+
+### Password reset for locked-out users, plus a reusable session-revocation mechanism
+
+Picked off the top of `TODO.md`'s backlog at the user's direction. The
+email-provider decision that had blocked this since 2026-10-02 ("decide
+later") was finally made - asked directly, user picked **Resend**, with an
+explicit note that they'll likely switch to their own SMTP later. Built the
+sending behind one seam (`src/lib/email.ts`'s `sendEmail()`) specifically so
+that swap is a one-file rewrite, not a re-plumb of every caller.
+
+- **Schema**: new `PasswordResetToken` (`userId`, `tokenHash` - sha256 of a
+  32-byte random token, never the raw value - `expiresAt`, `usedAt`), not
+  RLS-scoped since it has no tenant dimension and is only ever touched via
+  `runInSystemContext` (the whole point is working before the caller's
+  tenant is known). New `User.sessionVersion` (`@default(0)`) - the
+  **general-purpose** revocation mechanism the 2026-10-09 TODO.md decision
+  asked for, not single-purpose to this flow: session tokens now embed the
+  version they were issued under, and `getCurrentSession()`
+  (`src/lib/auth/current-user.ts`) compares it against the live DB value on
+  every call, treating a mismatch as signed-out. One extra DB round trip
+  per authenticated page load - consistent with how many queries each page
+  already does, not a new category of cost.
+- **`src/modules/identity/passwordReset.ts`**: `requestPasswordReset`
+  (issues a token, invalidating any earlier unused one for that user first)
+  and `confirmPasswordReset` (validates not-expired/not-used, sets the
+  password, bumps `sessionVersion`, marks the token used).
+- **New routes**: `POST /api/auth/password-reset/request` (always returns
+  the same generic message regardless of whether the email has an account -
+  same no-enumeration reasoning as login's identical wrong-password/
+  no-such-user error; on a real send failure, logs the link server-side
+  rather than losing it silently, so it can be relayed manually or used for
+  local testing without a configured provider) and `.../confirm`.
+- **New pages**: `/forgot-password` (email → generic confirmation) and
+  `/reset-password?token=...` (new password form - a server component
+  reading the query param, handing it to a client child, rather than
+  `useSearchParams()` directly, avoiding the Suspense-boundary dance for
+  what's otherwise a fully client-rendered page). "Forgot password?" link
+  added to `/login`.
+- **The existing SUPERADMIN-forced reset**
+  (`/api/superadmin/tenants/[id]/reset-password`) now also bumps
+  `sessionVersion` - a support-forced reset kills whatever session got that
+  admin locked out in the first place, same reasoning, not left as a gap.
+- **A real bug hunt that turned out to be a test artifact, not a code bug**:
+  first-pass browser verification showed the old (pre-reset) session still
+  returning 200 from the dashboard after a reset - looked exactly like the
+  revocation check silently failing. Traced with direct DB queries and
+  temporary debug logging down to `getCurrentSession()` correctly returning
+  `null` and `redirect("/login")` correctly firing - the HTTP response was
+  genuinely 200 with a `<meta http-equiv="refresh" content="1;url=/login">`
+  tag, which is Next's documented behavior for `redirect()` in a streaming
+  context (see `redirect()`'s docs, "insert a meta tag to emit the redirect
+  on the client side"). A raw `fetch()` doesn't execute that, and the first
+  Playwright pass didn't wait long enough for the 1-second refresh before
+  checking the URL. Confirmed with a `page.waitForURL("**/login")` instead -
+  works correctly. Worth remembering: a 200 with dashboard-shaped content
+  isn't proof an auth check passed in this app if it was reached right
+  after a page load, since a streamed `redirect()` always looks like that
+  for roughly a second.
+- **Verified**: `tsc --noEmit` and `eslint` clean, full `vitest run`
+  **119/119 passing** (112 pre-existing + 7 new in
+  `src/modules/identity/passwordReset.test.ts`, covering unknown-email,
+  token-hash-not-raw-value storage, request-invalidates-earlier-token,
+  successful confirm bumping `sessionVersion`/changing the password,
+  replay-rejection, and expiry). Full end-to-end browser pass (signup →
+  request → token captured from the server's fallback log, since Resend
+  isn't configured yet → confirm → old session killed within ~1s → old
+  password fails, new one works) via Playwright/Chromium installed
+  on-demand, same pattern as prior sessions. **Not yet configured for real
+  email** - `RESEND_API_KEY`/`EMAIL_FROM` are still empty in `.env`; see
+  `.env.example`'s comments for where to get a key. **Not yet confirmed by
+  the user in the browser** - added to `VERIFY.md`.
+
 ### Verified the 2026-10-20 "overhaul" commit end-to-end in the browser - all real, one environment gotcha
 
 Picked up where the prior session left off (`05b6df5`'s message was "Need to

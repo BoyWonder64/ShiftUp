@@ -20,6 +20,15 @@ export interface SessionPayload {
    * it from the signed cookie alone, no DB round trip per request. Re-issued
    * on change by PATCH /api/me/locale. */
   locale: AppLocale;
+  /** The User.sessionVersion this token was issued under - see that field's
+   * doc comment in schema.prisma. getCurrentSession compares this against
+   * the live DB value on every request; a mismatch means a password reset
+   * happened since this token was issued, and the session is treated as
+   * signed out. Tokens issued before this field existed have no
+   * sessionVersion - defaults to 0, which matches every pre-existing user's
+   * starting value, so old sessions keep working rather than all being
+   * invalidated by this change itself. */
+  sessionVersion: number;
 }
 
 function getSecret(): string {
@@ -67,6 +76,7 @@ export function verifySessionToken(token: string): SessionPayload | null {
       // Tokens issued before this field existed have no `locale` - default
       // to EN rather than invalidating every pre-existing session.
       locale: SUPPORTED_LOCALES.includes(body.locale) ? body.locale : "EN",
+      sessionVersion: typeof body.sessionVersion === "number" ? body.sessionVersion : 0,
     };
   } catch {
     return null;

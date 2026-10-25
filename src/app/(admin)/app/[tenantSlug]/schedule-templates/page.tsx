@@ -45,8 +45,7 @@ export default async function ScheduleTemplatesPage({
             session.role,
             session.roleId,
             tenant,
-            license?.tier ?? "BOTH",
-            license?.billingPlan ?? "FREE"
+            license?.tier ?? "BOTH"
           )
         : null;
       return { tenant, license, canView, canViewRoster, canViewShiftReports, calendarAccess };

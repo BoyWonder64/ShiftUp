@@ -70,6 +70,7 @@ export async function POST(request: NextRequest) {
       role: "SUPERADMIN",
       roleId: null,
       locale: result.locale,
+      sessionVersion: result.sessionVersion,
     });
 
     const response = NextResponse.json({ ok: true }, { status: 201 });

@@ -46,8 +46,7 @@ export default async function AllCalendarsPage({
             session.role,
             session.roleId,
             tenant,
-            license?.tier ?? "BOTH",
-            license?.billingPlan ?? "FREE"
+            license?.tier ?? "BOTH"
           )
         : null;
       return { tenant, canViewRoster, canViewShiftReports, canViewScheduleTemplates, calendarAccess };

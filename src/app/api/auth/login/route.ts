@@ -44,6 +44,7 @@ export async function POST(request: NextRequest) {
     role: user.role,
     roleId: user.roleId,
     locale: user.locale,
+    sessionVersion: user.sessionVersion,
   });
 
   const response = NextResponse.json(

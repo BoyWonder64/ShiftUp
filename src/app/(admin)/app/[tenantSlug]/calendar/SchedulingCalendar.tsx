@@ -139,6 +139,14 @@ export interface CustomCalendarOption {
   showColorKey: boolean;
   showPaymentStatus: boolean;
 }
+/** An admin-defined quick-fill template (Settings > Calendars > "Preset events"). */
+export interface EventPresetOption {
+  id: string;
+  label: string;
+  entryKind: "SHIFT" | "APPOINTMENT" | "CUSTOM";
+  customCalendarId: string | null;
+  durationMinutes: number;
+}
 export interface TagOption {
   id: string;
   name: string;
@@ -166,6 +174,9 @@ export interface ApiAppointment {
   // entry belongs to (a tenant can have several).
   customCalendarId: string | null;
   customCalendar: { id: string; name: string } | null;
+  // Only ever set for a "Custom event" quick-create (entryKind SHIFT or
+  // APPOINTMENT) - see Appointment.customTitle's schema doc comment.
+  customTitle: string | null;
   clientId: string | null;
   serviceTypeId: string | null;
   startTime: string;
@@ -208,6 +219,7 @@ const DRAFT_RESOURCE: ApiAppointment = {
   entryKind: "SHIFT",
   customCalendarId: null,
   customCalendar: null,
+  customTitle: null,
   clientId: null,
   serviceTypeId: null,
   startTime: "",
@@ -339,6 +351,10 @@ function parseColorValue(value: string): { tagId: string | null; colorKey: strin
 
 /** Shared with RosterView.tsx, which renders the same chip label without the "(staff name)" suffix - each chip already sits under that staff member's row. */
 export function appointmentTitle(appt: ApiAppointment): string {
+  // A "Custom event" quick-create (see Appointment.customTitle) always wins -
+  // it's a free-text title chosen specifically to replace this composition,
+  // regardless of which calendar (entryKind SHIFT/APPOINTMENT) it's filed under.
+  if (appt.customTitle) return appt.customTitle;
   if (isShift(appt)) return `Shift${appt.serviceType ? ` – ${appt.serviceType.name}` : ""}`;
   if (isCustomEntry(appt)) {
     const base = appt.client?.name ?? appt.customCalendar?.name ?? "Custom entry";
@@ -579,6 +595,9 @@ export function SchedulingCalendar({
   // one active calendar's settings from this list by id, and "all" uses it
   // for the create-mode chooser's per-calendar options.
   const [customCalendars, setCustomCalendars] = useState<CustomCalendarOption[]>([]);
+  // Settings > Calendars > "Preset events" - quick-fill templates for the
+  // create form's presets row (see CreateEntryPanel below).
+  const [eventPresets, setEventPresets] = useState<EventPresetOption[]>([]);
   // Settings > "Calendar" > "Calendar hours" - minutes-from-midnight bounds
   // on the Week/Day grid's displayed range. Defaults to the full day until
   // the real value loads, same as every other tenant setting here.
@@ -643,13 +662,14 @@ export function SchedulingCalendar({
         // Only meaningful when mode === "custom" - which of the tenant's
         // named custom calendars this draft belongs to.
         customCalendarId?: string;
+        // True while the generic "Custom event" quick-create is open
+        // (CustomEventPanel, not CreateEntryPanel) - mode is still
+        // "appointment" or "shift" here (which calendar it files under),
+        // never "custom"/CustomCalendar-backed. See Appointment.customTitle.
+        quickCustom?: boolean;
       }
     | null
   >(null);
-  // Only populated when calendarKind === "all" and a slot is selected - on
-  // that page there's no single kind to infer the right mode from, so a
-  // tiny chooser asks once instead of guessing (see onSelectSlot below).
-  const [pendingSlot, setPendingSlot] = useState<{ start: Date; end: Date; defaultStaffId?: string } | null>(null);
   // "Group by staff" - splits the Day view into one column per staff member
   // (react-big-calendar's resource view) instead of cramming every shift
   // into a single column as narrow slivers once there are more than a
@@ -776,6 +796,16 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadEventPresets = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ eventPresets: EventPresetOption[] }>("/api/event-presets");
+      setEventPresets(data.eventPresets);
+    } catch {
+      // Not fatal - same reasoning as loadTags; the create form's presets
+      // row just stays empty until this retries.
+    }
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
@@ -827,6 +857,7 @@ export function SchedulingCalendar({
         loadRoles(),
         loadCalendarTextSize(),
         loadCustomCalendars(),
+        loadEventPresets(),
       ]);
     })();
   }, [
@@ -838,6 +869,7 @@ export function SchedulingCalendar({
     loadRoles,
     loadCalendarTextSize,
     loadCustomCalendars,
+    loadEventPresets,
   ]);
 
   useEffect(() => {
@@ -912,13 +944,7 @@ export function SchedulingCalendar({
     ({ event, start, end, resourceId }: EventInteractionArgs<CalendarEvent>) => {
       const newStaffId = typeof resourceId === "string" ? resourceId : undefined;
       if (event.id === DRAFT_EVENT_ID) {
-        // Mode not chosen yet (pendingSlot, no `creating`) - move the pending
-        // slot itself rather than a no-op, so its on-calendar highlight
-        // tracks the drag the same way an already-mode-picked draft does.
         setCreating((prev) =>
-          prev ? { ...prev, start: start as Date, end: end as Date, defaultStaffId: newStaffId ?? prev.defaultStaffId } : prev
-        );
-        setPendingSlot((prev) =>
           prev ? { ...prev, start: start as Date, end: end as Date, defaultStaffId: newStaffId ?? prev.defaultStaffId } : prev
         );
         return;
@@ -938,7 +964,6 @@ export function SchedulingCalendar({
     ({ event, start, end }: EventInteractionArgs<CalendarEvent>) => {
       if (event.id === DRAFT_EVENT_ID) {
         setCreating((prev) => (prev ? { ...prev, start: start as Date, end: end as Date } : prev));
-        setPendingSlot((prev) => (prev ? { ...prev, start: start as Date, end: end as Date } : prev));
         return;
       }
       void applyReschedule(event.id, start as Date, end as Date);
@@ -1003,8 +1028,9 @@ export function SchedulingCalendar({
 
   // Whether dragging a new selection on the grid as currently shown is
   // allowed at all - same ternary-on-calendarKind shape as canToggleViewScope
-  // above. "all" can't know which kind a drag means (hence the pendingSlot
-  // picker below), so it's allowed as long as any shown kind is creatable.
+  // above. "all" can't know which kind a drag means (a default is guessed
+  // from modeOptions below; the create form's own switcher lets the viewer
+  // correct it), so it's allowed as long as any shown kind is creatable.
   const canCreateForCurrentType =
     calendarKind === "shift"
       ? canCreateShift
@@ -1021,6 +1047,52 @@ export function SchedulingCalendar({
   const activeCustomCalendar = useMemo(
     () => customCalendars.find((c) => c.id === customCalendarId),
     [customCalendars, customCalendarId]
+  );
+
+  // Every kind/calendar this viewer could create an entry as *right now*, in
+  // a fixed preference order (Appointment, Shift, then each custom calendar)
+  // - modeOptions[0] is the default guess a fresh "+ Add" click or slot-drag
+  // opens the create form with; the form's own type switcher (only rendered
+  // when this has more than one entry) is how the viewer corrects it from
+  // there, rather than a separate "which kind is this?" popup beforehand. On
+  // a fixed-kind page (calendarKind !== "all") this always resolves to
+  // exactly one entry - that page's own kind - so the switcher never shows.
+  const modeOptions = useMemo(() => {
+    const opts: Array<{ mode: EntryMode; customCalendarId?: string; label: string }> = [];
+    if (showAppointmentUI && canCreateAppointment) opts.push({ mode: "appointment", label: "Appointment" });
+    if (showShiftUI && canCreateShift) opts.push({ mode: "shift", label: "Shift" });
+    if (showCustomUI && canCreateCustom) {
+      if (calendarKind === "custom") {
+        if (activeCustomCalendar) opts.push({ mode: "custom", customCalendarId: activeCustomCalendar.id, label: activeCustomCalendar.name });
+      } else if (calendarKind === "all") {
+        for (const cc of customCalendars) opts.push({ mode: "custom", customCalendarId: cc.id, label: cc.name });
+      }
+    }
+    return opts;
+  }, [
+    showAppointmentUI,
+    canCreateAppointment,
+    showShiftUI,
+    canCreateShift,
+    showCustomUI,
+    canCreateCustom,
+    calendarKind,
+    activeCustomCalendar,
+    customCalendars,
+  ]);
+
+  // Only the presets this viewer could actually use *on this page* - a
+  // preset whose kind/calendar isn't in modeOptions (e.g. a Custom-calendar
+  // preset shown on the fixed-kind Shifts page) is filtered out rather than
+  // shown and failing when picked.
+  const presetOptions = useMemo(
+    () =>
+      eventPresets.filter((p) =>
+        modeOptions.some(
+          (o) => o.mode === p.entryKind.toLowerCase() && (o.customCalendarId ?? null) === p.customCalendarId
+        )
+      ),
+    [eventPresets, modeOptions]
   );
 
   // Resolves a given custom calendar id's field-visibility settings for the
@@ -1062,16 +1134,8 @@ export function SchedulingCalendar({
   // dashed "ghost" block) so its selection stays visible and can be dragged/
   // resized directly on the grid, instead of disappearing the moment the
   // mouse is released (react-big-calendar's own slot-selection highlight is
-  // only ever momentary). `pendingSlot` (calendarKind === "all", mode not
-  // chosen yet - see onSelectSlot) gets the same treatment as `creating` so
-  // the selection still holds its position while the Appointment/Shift
-  // popup is up, not just once a mode's been picked - previously this block
-  // only checked `creating`, so a "both" selection lost its on-calendar
-  // highlight entirely until a mode was chosen.
-  const draftSlot = useMemo(
-    () => creating ?? (pendingSlot ? { ...pendingSlot, mode: undefined } : null),
-    [creating, pendingSlot]
-  );
+  // only ever momentary).
+  const draftSlot = creating;
   const calendarEvents = useMemo(() => {
     if (!draftSlot) return visibleEvents;
     const draft: CalendarEvent = {
@@ -1079,14 +1143,7 @@ export function SchedulingCalendar({
       // The "(drag to adjust)" hint itself is appended by EventContent, not
       // baked in here, so it can render smaller than the rest of the label
       // and be dropped once creationCount passes the onboarding threshold.
-      title:
-        draftSlot.mode === "shift"
-          ? "New shift"
-          : draftSlot.mode === "appointment"
-            ? "New appointment"
-            : draftSlot.mode === "custom"
-              ? "New custom entry"
-              : "New event",
+      title: draftSlot.mode === "shift" ? "New shift" : draftSlot.mode === "custom" ? "New custom entry" : "New appointment",
       start: draftSlot.start,
       end: draftSlot.end,
       // In "Group by staff" Day view, resourceAccessor reads staffId off
@@ -1125,9 +1182,10 @@ export function SchedulingCalendar({
         };
       }
       if (event.id === DRAFT_EVENT_ID) {
-        // Neutral gray while `pendingSlot` is up and the mode is still
-        // undecided (draftSlot.mode is undefined then) - blue/purple would
-        // falsely imply a choice has already been made.
+        // Shift/appointment get their usual colors; a custom entry (and the
+        // brief instant before the create form's own default mode guess
+        // resolves) falls through to the same neutral gray the custom-
+        // calendar quick-create buttons use elsewhere.
         const draftMode = draftSlot?.mode;
         return {
           style: {
@@ -1529,62 +1587,70 @@ export function SchedulingCalendar({
                 buttons, not toggles, so they don't need the white rounded-full
                 container the toggle-pill groups elsewhere in this bar use. */}
             <div className="inline-flex items-center gap-1.5 text-xs">
-              {showAppointmentUI && canCreateAppointment && (
-                <button
-                  onClick={() =>
-                    setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
-                  }
-                  className="rounded-full bg-primary-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-primary-600"
-                >
-                  + Add appointment
-                </button>
-              )}
-              {showShiftUI && canCreateShift && (
-                <button
-                  onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
-                  className="rounded-full bg-shift-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-shift-600"
-                >
-                  + Schedule shift
-                </button>
-              )}
-              {/* Fixed-kind "custom" page - always exactly one relevant
-                  calendar (this page's own). The combined "all" page can
-                  have several, so it gets one quick-create button per
-                  custom calendar instead of a single ambiguous one. */}
-              {showCustomUI && canCreateCustom && calendarKind === "custom" && activeCustomCalendar && (
-                <button
-                  onClick={() =>
-                    setCreating({
-                      ...nextHourSlot(),
-                      mode: "custom",
-                      defaultStaffId: resourceStaff[0]?.id,
-                      customCalendarId: activeCustomCalendar.id,
-                    })
-                  }
-                  className="rounded-full bg-gray-600 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-gray-700"
-                >
-                  + Add {activeCustomCalendar.name} entry
-                </button>
-              )}
-              {showCustomUI &&
-                canCreateCustom &&
-                calendarKind === "all" &&
-                customCalendars.map((cc) => (
+              {calendarKind === "all" ? (
+                // The combined "All" page can create any of several kinds -
+                // one button per kind/custom-calendar used to stack up here;
+                // now it's a single "+ Add event" that opens the create form
+                // straight away with a default-guessed type (modeOptions[0]),
+                // which the form's own type switcher lets the viewer correct
+                // - instead of either hunting for the right one of N buttons,
+                // or answering a separate "which kind is this?" popup first.
+                modeOptions[0] && (
                   <button
-                    key={cc.id}
-                    onClick={() =>
+                    type="button"
+                    onClick={() => {
+                      const first = modeOptions[0];
                       setCreating({
                         ...nextHourSlot(),
-                        mode: "custom",
+                        mode: first.mode,
+                        customCalendarId: first.customCalendarId,
                         defaultStaffId: resourceStaff[0]?.id,
-                        customCalendarId: cc.id,
-                      })
-                    }
-                    className="rounded-full bg-gray-600 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-gray-700"
+                      });
+                    }}
+                    className="rounded-full bg-primary-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-primary-600"
                   >
-                    + Add {cc.name}
+                    + Add event
                   </button>
-                ))}
+                )
+              ) : (
+                <>
+                  {showAppointmentUI && canCreateAppointment && (
+                    <button
+                      onClick={() =>
+                        setCreating({ ...nextHourSlot(), mode: "appointment", defaultStaffId: resourceStaff[0]?.id })
+                      }
+                      className="rounded-full bg-primary-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-primary-600"
+                    >
+                      + Add event
+                    </button>
+                  )}
+                  {showShiftUI && canCreateShift && (
+                    <button
+                      onClick={() => setCreating({ ...nextHourSlot(), mode: "shift", defaultStaffId: resourceStaff[0]?.id })}
+                      className="rounded-full bg-shift-500 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-shift-600"
+                    >
+                      + Add event
+                    </button>
+                  )}
+                  {/* Only ever reached on the fixed-kind "custom" page - "all"
+                      is handled by the single "+ Add event" button above instead. */}
+                  {showCustomUI && canCreateCustom && calendarKind === "custom" && activeCustomCalendar && (
+                    <button
+                      onClick={() =>
+                        setCreating({
+                          ...nextHourSlot(),
+                          mode: "custom",
+                          defaultStaffId: resourceStaff[0]?.id,
+                          customCalendarId: activeCustomCalendar.id,
+                        })
+                      }
+                      className="rounded-full bg-gray-600 px-2.5 py-1 font-medium text-white shadow-sm transition-all duration-150 hover:bg-gray-700"
+                    >
+                      + Add event
+                    </button>
+                  )}
+                </>
+              )}
               {/* Always rendered (space reserved via `invisible`, not conditionally
                   mounted) so this button appearing doesn't grow the row's content
                   width and reflow the rest of the toolbar - that reflow was the
@@ -1687,22 +1753,10 @@ export function SchedulingCalendar({
                   selectable={canCreateForCurrentType ? "ignoreEvents" : false}
                   resizable={canEdit || canCreate}
                   draggableAccessor={(event: CalendarEvent) =>
-                    event.id === DRAFT_EVENT_ID
-                      ? creating
-                        ? canCreateForMode(creating.mode)
-                        : pendingSlot
-                          ? canCreate
-                          : false
-                      : canEditEvent(event.resource)
+                    event.id === DRAFT_EVENT_ID ? (creating ? canCreateForMode(creating.mode) : false) : canEditEvent(event.resource)
                   }
                   resizableAccessor={(event: CalendarEvent) =>
-                    event.id === DRAFT_EVENT_ID
-                      ? creating
-                        ? canCreateForMode(creating.mode)
-                        : pendingSlot
-                          ? canCreate
-                          : false
-                      : canEditEvent(event.resource)
+                    event.id === DRAFT_EVENT_ID ? (creating ? canCreateForMode(creating.mode) : false) : canEditEvent(event.resource)
                   }
                   onRangeChange={handleRangeChange}
                   onSelectSlot={(slot: SlotInfo) => {
@@ -1711,13 +1765,6 @@ export function SchedulingCalendar({
                     // was clicked/dragged into becomes the new entry's
                     // default staff member.
                     const defaultStaffId = typeof slot.resourceId === "string" ? slot.resourceId : undefined;
-                    // A fresh click-drag while the chooser popup is still up just
-                    // repositions the pending slot rather than stacking a second
-                    // popup on top of it.
-                    if (pendingSlot) {
-                      setPendingSlot({ start: slot.start, end: slot.end, defaultStaffId });
-                      return;
-                    }
                     // If a creation is already in progress, a fresh click-drag just
                     // repositions it (same mode) rather than discarding it - the
                     // draft event itself can also be dragged/resized directly, this
@@ -1726,11 +1773,14 @@ export function SchedulingCalendar({
                       if (prev) return { ...prev, start: slot.start, end: slot.end, defaultStaffId: defaultStaffId ?? prev.defaultStaffId };
                       // A fixed-kind page always knows which kind a click/drag
                       // means. "all" shows every kind together, so there's no
-                      // single answer to infer - hence the chooser popup instead
-                      // of defaulting silently.
+                      // single answer to infer - default-guess the first
+                      // available option (modeOptions[0]) and let the create
+                      // form's own type switcher correct it, same as the
+                      // toolbar's "+ Add" button.
                       if (calendarKind === "all") {
-                        setPendingSlot({ start: slot.start, end: slot.end, defaultStaffId });
-                        return prev;
+                        const first = modeOptions[0];
+                        if (!first) return prev;
+                        return { start: slot.start, end: slot.end, mode: first.mode, customCalendarId: first.customCalendarId, defaultStaffId };
                       }
                       return {
                         start: slot.start,
@@ -1773,73 +1823,6 @@ export function SchedulingCalendar({
         </div>
       </div>
 
-      {pendingSlot && (
-        // A popup, not an inline bar at the bottom of the page (ISSUES.md) -
-        // the selection it's asking about is highlighted right there on the
-        // calendar (see draftSlot above), and this appears right over it
-        // immediately, instead of appearing out of sight below everything
-        // else and leaving the viewer to go looking for it.
-        <Modal onClose={() => setPendingSlot(null)}>
-          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-medium">Add as...</h2>
-            <p className="mt-1 text-sm text-gray-500">
-              This calendar shows every kind together - which one is this?
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {showAppointmentUI && canCreateAppointment && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreating({ ...pendingSlot, mode: "appointment" });
-                    setPendingSlot(null);
-                  }}
-                  className="flex-1 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-primary-600"
-                >
-                  Appointment
-                </button>
-              )}
-              {showShiftUI && canCreateShift && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreating({ ...pendingSlot, mode: "shift" });
-                    setPendingSlot(null);
-                  }}
-                  className="flex-1 rounded-lg bg-shift-500 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-shift-600"
-                >
-                  Shift
-                </button>
-              )}
-              {/* One button per named custom calendar, rather than a single
-                  generic "Custom" - now that a tenant can have several, this
-                  popup is also where the viewer picks which one. */}
-              {showCustomUI &&
-                canCreateCustom &&
-                customCalendars.map((cc) => (
-                  <button
-                    key={cc.id}
-                    type="button"
-                    onClick={() => {
-                      setCreating({ ...pendingSlot, mode: "custom", customCalendarId: cc.id });
-                      setPendingSlot(null);
-                    }}
-                    className="flex-1 rounded-lg bg-gray-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700"
-                  >
-                    {cc.name}
-                  </button>
-                ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setPendingSlot(null)}
-              className="mt-3 text-sm font-medium text-[#BD3039] hover:underline"
-            >
-              Cancel
-            </button>
-          </div>
-        </Modal>
-      )}
-
       {creating && (
         // Selecting a slot shouldn't snap the form into view instantly - the
         // draft "ghost" event on the calendar shows the selection right
@@ -1847,42 +1830,116 @@ export function SchedulingCalendar({
         // above) before fading/scaling in over it, so the selection itself
         // gets a beat to register before the form appears.
         <Modal onClose={() => setCreating(null)} visible={panelVisible} panelRef={panelRef}>
-          <CreateEntryPanel
-            start={creating.start}
-            end={creating.end}
-            mode={creating.mode}
-            customCalendarId={creating.customCalendarId}
-            defaultStaffId={creating.defaultStaffId}
-            onRangeChange={(start, end) =>
-              setCreating((prev) => (prev ? { ...prev, start, end } : prev))
-            }
-            staff={staff}
-            // Custom entries pick from the shift service-type list (no price/
-            // payment concept, same as a shift) rather than needing a third
-            // ServiceType table - see the schema's entryKind doc comment.
-            serviceTypes={creating.mode === "appointment" ? appointmentServiceTypes : shiftServiceTypes}
-            clients={clients}
-            tags={tags}
-            roles={roles}
-            requireClient={requireClientForAppointments}
-            showJobType={showJobTypeOnShiftForm}
-            showJobEstimate={showJobEstimateOnShiftForm}
-            showColorKey={showColorKeyOnShiftForm}
-            customSettings={customSettingsFor(creating.customCalendarId)}
-            canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
-            canCreateStaff={permissions?.CREATE_STAFF ?? false}
-            canCreateClient={permissions?.CREATE_CLIENTS ?? false}
-            canCreateTag={canCreateForMode(creating.mode)}
-            onStaffCreated={loadStaff}
-            onClientCreated={loadClients}
-            onTagCreated={loadTags}
-            onClose={() => setCreating(null)}
-            onCreated={() => {
-              setCreating(null);
-              setCreationCount(bumpCreationCount());
-              void loadAppointments(range);
-            }}
-          />
+          {creating.quickCustom ? (
+            <CustomEventPanel
+              // Remounts on a mode switch, same reasoning as CreateEntryPanel's key below.
+              key={`quick:${creating.mode}`}
+              start={creating.start}
+              end={creating.end}
+              mode={creating.mode === "shift" ? "shift" : "appointment"}
+              defaultStaffId={creating.defaultStaffId}
+              modeOptions={modeOptions}
+              onModeSelect={(opt) =>
+                setCreating((prev) =>
+                  prev ? { ...prev, mode: opt.mode, customCalendarId: opt.customCalendarId, quickCustom: false } : prev
+                )
+              }
+              onFileUnderChange={(mode) => setCreating((prev) => (prev ? { ...prev, mode } : prev))}
+              canCreateAppointment={canCreateAppointment}
+              canCreateShift={canCreateShift}
+              onRangeChange={(start, end) => setCreating((prev) => (prev ? { ...prev, start, end } : prev))}
+              staff={staff}
+              onClose={() => setCreating(null)}
+              onCreated={() => {
+                setCreating(null);
+                setCreationCount(bumpCreationCount());
+                void loadAppointments(range);
+              }}
+            />
+          ) : (
+            <CreateEntryPanel
+              // Remounts (clearing whatever's been typed into mode-specific
+              // fields) whenever the type switcher below picks a different
+              // kind/custom calendar - simpler and safer than hand-resetting
+              // every piece of local state the panel owns.
+              key={`${creating.mode}:${creating.customCalendarId ?? ""}`}
+              start={creating.start}
+              end={creating.end}
+              mode={creating.mode}
+              customCalendarId={creating.customCalendarId}
+              defaultStaffId={creating.defaultStaffId}
+              modeOptions={modeOptions}
+              onModeSelect={(opt) =>
+                setCreating((prev) =>
+                  prev ? { ...prev, mode: opt.mode, customCalendarId: opt.customCalendarId, quickCustom: false } : prev
+                )
+              }
+              quickCustomAvailable={canCreateAppointment || canCreateShift}
+              onQuickCustomSelect={() =>
+                setCreating((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        // Keep the current appointment/shift choice if it's
+                        // already one of those; otherwise (coming from a
+                        // named custom calendar) default to whichever of the
+                        // two the viewer can actually create.
+                        mode:
+                          prev.mode === "shift" || prev.mode === "appointment"
+                            ? prev.mode
+                            : canCreateAppointment
+                              ? "appointment"
+                              : "shift",
+                        customCalendarId: undefined,
+                        quickCustom: true,
+                      }
+                    : prev
+                )
+              }
+              presetOptions={presetOptions}
+              onPresetSelect={(preset) =>
+                setCreating((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        mode: preset.entryKind.toLowerCase() as EntryMode,
+                        customCalendarId: preset.customCalendarId ?? undefined,
+                        end: new Date(prev.start.getTime() + preset.durationMinutes * 60000),
+                      }
+                    : prev
+                )
+              }
+              onRangeChange={(start, end) =>
+                setCreating((prev) => (prev ? { ...prev, start, end } : prev))
+              }
+              staff={staff}
+              // Custom entries pick from the shift service-type list (no price/
+              // payment concept, same as a shift) rather than needing a third
+              // ServiceType table - see the schema's entryKind doc comment.
+              serviceTypes={creating.mode === "appointment" ? appointmentServiceTypes : shiftServiceTypes}
+              clients={clients}
+              tags={tags}
+              roles={roles}
+              requireClient={requireClientForAppointments}
+              showJobType={showJobTypeOnShiftForm}
+              showJobEstimate={showJobEstimateOnShiftForm}
+              showColorKey={showColorKeyOnShiftForm}
+              customSettings={customSettingsFor(creating.customCalendarId)}
+              canEditEstimates={permissions?.EDIT_JOB_ESTIMATES ?? false}
+              canCreateStaff={permissions?.CREATE_STAFF ?? false}
+              canCreateClient={permissions?.CREATE_CLIENTS ?? false}
+              canCreateTag={canCreateForMode(creating.mode)}
+              onStaffCreated={loadStaff}
+              onClientCreated={loadClients}
+              onTagCreated={loadTags}
+              onClose={() => setCreating(null)}
+              onCreated={() => {
+                setCreating(null);
+                setCreationCount(bumpCreationCount());
+                void loadAppointments(range);
+              }}
+            />
+          )}
         </Modal>
       )}
 
@@ -2685,12 +2742,97 @@ export function AppointmentDetailPanel({
 const NEW_STAFF_VALUE = "__new_staff__";
 const NEW_TAG_VALUE = "__new_tag__";
 
+/** Thin red "(optional)" suffix for a create-form field label. */
+function OptionalTag() {
+  return <span className="font-light text-red-400"> (optional)</span>;
+}
+
+/**
+ * The "This is a..." pill row at the top of the create form - shared between
+ * CreateEntryPanel and CustomEventPanel so switching types (Appointment/
+ * Shift/a named custom calendar/the generic "Custom event" quick-create)
+ * works identically no matter which form is currently open. Self-gates to
+ * nothing when there's only one modeOption and no quick-custom option -
+ * nothing to choose, matches a fixed-kind page's old single-button behavior.
+ */
+function EntryTypeSwitcher({
+  mode,
+  customCalendarId,
+  quickCustom,
+  modeOptions,
+  quickCustomAvailable,
+  onModeSelect,
+  onQuickCustomSelect,
+}: {
+  mode: EntryMode;
+  customCalendarId?: string;
+  quickCustom: boolean;
+  modeOptions: Array<{ mode: EntryMode; customCalendarId?: string; label: string }>;
+  quickCustomAvailable: boolean;
+  onModeSelect: (option: { mode: EntryMode; customCalendarId?: string }) => void;
+  onQuickCustomSelect: () => void;
+}) {
+  if (modeOptions.length <= 1 && !quickCustomAvailable) return null;
+  return (
+    <div className="flex flex-col gap-1 text-sm">
+      <span className="text-xs font-medium text-gray-500">This is a...</span>
+      <div className="flex flex-wrap gap-1.5">
+        {modeOptions.map((opt) => {
+          const active = !quickCustom && opt.mode === mode && opt.customCalendarId === customCalendarId;
+          return (
+            <button
+              key={`${opt.mode}:${opt.customCalendarId ?? ""}`}
+              type="button"
+              onClick={() => onModeSelect(opt)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                active
+                  ? opt.mode === "shift"
+                    ? "bg-shift-500 text-white"
+                    : opt.mode === "custom"
+                      ? "bg-gray-600 text-white"
+                      : "bg-primary-500 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+        {/* The generic quick-create path - not tied to any named custom
+            calendar, files as a normal SHIFT/APPOINTMENT row with a
+            free-text title instead (see Appointment.customTitle). Always
+            offered (regardless of calendarKind/page) as long as the viewer
+            can create either kind - a custom event "applies to either
+            calendar," so it isn't scoped to whichever page happened to open
+            this form. */}
+        {quickCustomAvailable && (
+          <button
+            type="button"
+            onClick={onQuickCustomSelect}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              quickCustom ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            Custom event
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function CreateEntryPanel({
   start: startTime,
   end: endTime,
   mode,
   customCalendarId,
   defaultStaffId,
+  modeOptions,
+  onModeSelect,
+  quickCustomAvailable,
+  onQuickCustomSelect,
+  presetOptions,
+  onPresetSelect,
   onRangeChange,
   staff,
   serviceTypes,
@@ -2722,6 +2864,26 @@ function CreateEntryPanel({
   // staff member's column ("Group by staff" Day view) - preselects that
   // staff member instead of defaulting to the first one in the list.
   defaultStaffId?: string;
+  // Every kind/calendar the viewer could create as - rendered as a type
+  // switcher at the top of the form when there's more than one (i.e. on the
+  // combined "All" calendar; a fixed-kind page always has exactly one, so
+  // nothing renders there). Picking a different one calls onModeSelect,
+  // which the parent handles by updating `creating` and remounting this
+  // panel (see the `key` at the call site) with the new mode/customCalendarId.
+  modeOptions: Array<{ mode: EntryMode; customCalendarId?: string; label: string }>;
+  onModeSelect: (option: { mode: EntryMode; customCalendarId?: string }) => void;
+  // Whether the "Custom event" pill (generic quick-create, not tied to a
+  // named custom calendar - see CustomEventPanel) should show in the type
+  // switcher. Always true if the viewer can create either an appointment or
+  // a shift, regardless of modeOptions/calendarKind.
+  quickCustomAvailable: boolean;
+  onQuickCustomSelect: () => void;
+  // Admin-defined quick-fill templates (Settings > Calendars > "Preset
+  // events"), already narrowed to ones this viewer could use on this page -
+  // see presetOptions in the parent. Empty when the tenant hasn't created
+  // any, in which case nothing renders here.
+  presetOptions: EventPresetOption[];
+  onPresetSelect: (preset: EventPresetOption) => void;
   // Lifted to the parent (rather than local state seeded from a one-time
   // `slot` prop) so dragging/resizing the draft event on the calendar and
   // editing these datetime inputs both read/write the same value and stay
@@ -2993,12 +3155,48 @@ function CreateEntryPanel({
     >
       <div className="flex items-start justify-between">
         <h2 className="text-lg font-medium">
-          {mode === "shift" ? "New shift" : mode === "custom" ? "New custom entry" : "New appointment"}
+          {mode === "shift"
+            ? "New shift"
+            : mode === "custom"
+              ? `New ${modeOptions.find((o) => o.mode === "custom" && o.customCalendarId === customCalendarId)?.label ?? "custom"} entry`
+              : "New appointment"}
         </h2>
         <button type="button" onClick={onClose} className="text-sm font-medium text-[#BD3039] hover:underline">
           Cancel
         </button>
       </div>
+
+      <EntryTypeSwitcher
+        mode={mode}
+        customCalendarId={customCalendarId}
+        quickCustom={false}
+        modeOptions={modeOptions}
+        quickCustomAvailable={quickCustomAvailable}
+        onModeSelect={onModeSelect}
+        onQuickCustomSelect={onQuickCustomSelect}
+      />
+
+      {/* Admin-defined quick-fill templates (Settings > Calendars > "Preset
+          events") - picking one sets the type above and the end time below
+          in one step. Nothing renders here for a tenant that hasn't created
+          any. */}
+      {presetOptions.length > 0 && (
+        <div className="flex flex-col gap-1 text-sm">
+          <span className="text-xs font-medium text-gray-500">Presets</span>
+          <div className="flex flex-wrap gap-1.5">
+            {presetOptions.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => onPresetSelect(preset)}
+                className="rounded-full border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
+              >
+                {preset.label} <span className="text-gray-400">· {preset.durationMinutes}m</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {conflict && (
         <div
@@ -3119,7 +3317,10 @@ function CreateEntryPanel({
 
       {effectiveShowJobType && (
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
-        {mode === "appointment" ? "Service (optional)" : "Job type (optional)"}
+        <span>
+          {mode === "appointment" ? "Service" : "Job type"}
+          <OptionalTag />
+        </span>
         <select
           value={serviceTypeId}
           onChange={(e) => setServiceTypeId(e.target.value)}
@@ -3137,7 +3338,10 @@ function CreateEntryPanel({
 
       {effectiveShowColorKey && (
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
-        Color key (optional)
+        <span>
+          Color key
+          <OptionalTag />
+        </span>
         <select
           value={colorValue}
           onChange={(e) => {
@@ -3193,7 +3397,10 @@ function CreateEntryPanel({
 
       {effectiveShowClient && (
         <div ref={clientBoxRef} className="relative flex w-full max-w-xs flex-col gap-1 text-sm">
-          Client{effectiveRequireClient ? "" : " (optional)"}
+          <span>
+            Client
+            {!effectiveRequireClient && <OptionalTag />}
+          </span>
           <input
             value={clientQuery}
             onChange={(e) => {
@@ -3261,7 +3468,10 @@ function CreateEntryPanel({
               </label>
               <div className="flex flex-wrap gap-3">
                 <label className="flex flex-col gap-1 text-sm">
-                  Email (optional)
+                  <span>
+                    Email
+                    <OptionalTag />
+                  </span>
                   <input
                     type="email"
                     value={newClientEmail}
@@ -3270,7 +3480,10 @@ function CreateEntryPanel({
                   />
                 </label>
                 <label className="flex flex-col gap-1 text-sm">
-                  Phone (optional)
+                  <span>
+                    Phone
+                    <OptionalTag />
+                  </span>
                   <input
                     value={newClientPhone}
                     onChange={(e) => setNewClientPhone(e.target.value)}
@@ -3279,7 +3492,10 @@ function CreateEntryPanel({
                 </label>
               </div>
               <label className="flex flex-col gap-1 text-sm">
-                Address (optional)
+                <span>
+                  Address
+                  <OptionalTag />
+                </span>
                 <input
                   value={newClientAddress}
                   onChange={(e) => setNewClientAddress(e.target.value)}
@@ -3336,7 +3552,10 @@ function CreateEntryPanel({
       </div>
 
       <label className="flex w-full max-w-sm flex-col gap-1 text-sm">
-        {locationType === "ONLINE" ? "Meeting link" : "Address (optional)"}
+        <span>
+          {locationType === "ONLINE" ? "Meeting link" : "Address"}
+          {locationType !== "ONLINE" && <OptionalTag />}
+        </span>
         <input
           value={location}
           onChange={(e) => setLocation(e.target.value)}
@@ -3415,6 +3634,211 @@ function CreateEntryPanel({
             : mode === "custom"
               ? "Create custom entry"
               : "Create appointment"}
+      </button>
+    </form>
+  );
+}
+
+/**
+ * The generic "Custom event" quick-create (see Appointment.customTitle) -
+ * deliberately a separate, much smaller form from CreateEntryPanel rather
+ * than one more conditional branch inside it: a quick personal/misc entry
+ * ("Lunch outing," "Doctor's appointment") doesn't want a client picker,
+ * job-type dropdown, payment fields, or any of the rest of the full
+ * appointment/shift form - just a title, who it's for, when, and which
+ * calendar (Appointments or Shifts) it should show up on. Still saves as a
+ * perfectly normal Appointment row (entryKind SHIFT or APPOINTMENT) - there
+ * is no third "custom" entryKind or calendar involved here at all (that's
+ * the separate, heavier named-CustomCalendar feature).
+ */
+function CustomEventPanel({
+  start: startTime,
+  end: endTime,
+  mode,
+  defaultStaffId,
+  modeOptions,
+  onModeSelect,
+  onFileUnderChange,
+  canCreateAppointment,
+  canCreateShift,
+  onRangeChange,
+  staff,
+  onClose,
+  onCreated,
+}: {
+  start: Date;
+  end: Date;
+  // Which calendar this quick event currently files under - "custom" is
+  // never a valid value here (see the component doc comment above).
+  mode: "appointment" | "shift";
+  defaultStaffId?: string;
+  // Passed through to the shared EntryTypeSwitcher so the viewer can jump
+  // straight to the full Appointment/Shift/named-calendar form instead -
+  // onModeSelect there always means "leave quick-custom mode entirely"
+  // (handled by the parent), distinct from onFileUnderChange below.
+  modeOptions: Array<{ mode: EntryMode; customCalendarId?: string; label: string }>;
+  onModeSelect: (option: { mode: EntryMode; customCalendarId?: string }) => void;
+  // Changes which calendar this entry files under *without* leaving
+  // quick-custom mode - a small toggle local to this form, distinct from
+  // the main type switcher's onModeSelect.
+  onFileUnderChange: (mode: "appointment" | "shift") => void;
+  canCreateAppointment: boolean;
+  canCreateShift: boolean;
+  onRangeChange: (start: Date, end: Date) => void;
+  staff: StaffOption[];
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [staffId, setStaffId] = useState(defaultStaffId ?? staff[0]?.id ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) {
+      setError("Give this event a title.");
+      return;
+    }
+    if (!staffId) {
+      setError("Pick who this is for.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    setConflict(false);
+    try {
+      await fetchJson("/api/appointments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entryKind: mode === "shift" ? "SHIFT" : "APPOINTMENT",
+          customTitle: title.trim(),
+          staffId,
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+        }),
+      });
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't create event.");
+      setConflict(err instanceof ApiError && err.status === 409);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3 rounded-xl border border-gray-300 bg-linear-to-br from-gray-50 to-white p-5 shadow-sm">
+      <div className="flex items-start justify-between">
+        <h2 className="text-lg font-medium">New custom event</h2>
+        <button type="button" onClick={onClose} className="text-sm font-medium text-[#BD3039] hover:underline">
+          Cancel
+        </button>
+      </div>
+
+      <EntryTypeSwitcher
+        mode={mode}
+        quickCustom
+        modeOptions={modeOptions}
+        quickCustomAvailable
+        onModeSelect={onModeSelect}
+        onQuickCustomSelect={() => {}}
+      />
+
+      <label className="flex w-full max-w-sm flex-col gap-1 text-sm">
+        Title
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Lunch outing"
+          maxLength={200}
+          className="rounded-md border border-gray-300 px-2 py-1"
+        />
+      </label>
+
+      {canCreateAppointment && canCreateShift && (
+        <div className="flex flex-col gap-1 text-sm">
+          <span className="text-xs font-medium text-gray-500">File under</span>
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => onFileUnderChange("appointment")}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "appointment" ? "bg-primary-500 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              Appointments calendar
+            </button>
+            <button
+              type="button"
+              onClick={() => onFileUnderChange("shift")}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                mode === "shift" ? "bg-shift-500 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              Shifts calendar
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-3">
+        <label className="flex flex-col gap-1 text-sm">
+          Start
+          <input
+            type="datetime-local"
+            value={toInputValue(startTime)}
+            onChange={(e) => e.target.value && onRangeChange(new Date(e.target.value), endTime)}
+            className="rounded-md border border-gray-300 px-2 py-1"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-sm">
+          End
+          <input
+            type="datetime-local"
+            value={toInputValue(endTime)}
+            onChange={(e) => e.target.value && onRangeChange(startTime, new Date(e.target.value))}
+            className="rounded-md border border-gray-300 px-2 py-1"
+          />
+        </label>
+      </div>
+
+      <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
+        Staff
+        <select
+          value={staffId}
+          onChange={(e) => setStaffId(e.target.value)}
+          className="w-full rounded-md border border-gray-300 px-2 py-1"
+        >
+          {staff.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.displayName}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {conflict && (
+        <div role="alert" className="flex items-start gap-3 rounded-lg border-2 border-red-300 bg-red-50 px-4 py-3 shadow-sm">
+          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-xs font-bold text-white">
+            !
+          </span>
+          <div>
+            <p className="text-sm font-semibold text-red-800">Scheduling conflict</p>
+            <p className="mt-0.5 text-sm text-red-700">{error}</p>
+          </div>
+        </div>
+      )}
+      {error && !conflict && <p className="text-sm text-red-600">{error}</p>}
+
+      <button
+        type="submit"
+        disabled={submitting}
+        className="self-start rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-gray-800 disabled:opacity-50"
+      >
+        {submitting ? "Creating..." : "Create event"}
       </button>
     </form>
   );

@@ -7,8 +7,8 @@ import { getCalendarNavAccess } from "./calendarAccess";
 
 /** Integration tests against a real Postgres database, run inside
  * runInSystemContext to bypass RLS - this suite exercises the calendar-nav
- * access logic itself (license tier + Settings toggle + paid-plan + VIEW_*
- * permission combinations), not tenant isolation. */
+ * access logic itself (license tier + Settings toggle + VIEW_* permission
+ * combinations), not tenant isolation. */
 describe("permissions/calendarAccess", () => {
   let tenantId: string;
 
@@ -31,10 +31,10 @@ describe("permissions/calendarAccess", () => {
     await prisma.$disconnect();
   });
 
-  it("ADMIN sees Appointments/Shifts on a BOTH-tier, both-enabled, FREE-plan tenant, and 'all' is reachable", async () => {
+  it("ADMIN sees Appointments/Shifts on a BOTH-tier, both-enabled tenant, and 'all' is reachable", async () => {
     await runInSystemContext(async (tx) => {
       const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH", "FREE");
+      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH");
       expect(access.appointments).toBe(true);
       expect(access.shifts).toBe(true);
       expect(access.customCalendars).toEqual([]);
@@ -46,7 +46,7 @@ describe("permissions/calendarAccess", () => {
   it("a license tier missing a module hides that calendar regardless of the tenant toggle", async () => {
     await runInSystemContext(async (tx) => {
       const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "SHIFT_MANAGEMENT", "FREE");
+      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "SHIFT_MANAGEMENT");
       expect(access.appointments).toBe(false);
       expect(access.shifts).toBe(true);
       // Only 1 kind enabled now - "all" would be redundant.
@@ -58,31 +58,28 @@ describe("permissions/calendarAccess", () => {
     await runInSystemContext(async (tx) => {
       await tx.tenant.update({ where: { id: tenantId }, data: { shiftsCalendarEnabled: false } });
       const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
-      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH", "FREE");
+      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH");
       expect(access.shifts).toBe(false);
       expect(access.appointments).toBe(true);
       await tx.tenant.update({ where: { id: tenantId }, data: { shiftsCalendarEnabled: true } }); // revert
     });
   });
 
-  it("custom calendars are empty on a FREE plan even if some already exist, but listed once upgraded", async () => {
+  it("custom calendars are listed for anyone holding VIEW_CUSTOM_CALENDAR, free on every plan", async () => {
     await runInSystemContext(async (tx) => {
       const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
       await tx.customCalendar.create({ data: { tenantId, name: "Z Calendar", sortOrder: 1 } });
       await tx.customCalendar.create({ data: { tenantId, name: "A Calendar", sortOrder: 0 } });
 
-      const freeAccess = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH", "FREE");
-      expect(freeAccess.customCalendars).toEqual([]);
-
-      const paidAccess = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH", "SUBSCRIPTION");
+      const access = await getCalendarNavAccess(tx, tenantId, "ADMIN", null, tenant, "BOTH");
       // Ordered by sortOrder, not creation order.
-      expect(paidAccess.customCalendars.map((c) => c.name)).toEqual(["A Calendar", "Z Calendar"]);
+      expect(access.customCalendars.map((c) => c.name)).toEqual(["A Calendar", "Z Calendar"]);
       // 3 kinds enabled now (appointments + shifts + custom) - still just "reachable", not additive.
-      expect(paidAccess.all).toBe(true);
+      expect(access.all).toBe(true);
     });
   });
 
-  it("a STAFF role without VIEW_CUSTOM_CALENDAR sees no custom calendars even on a paid plan with some existing", async () => {
+  it("a STAFF role without VIEW_CUSTOM_CALENDAR sees no custom calendars even though some exist", async () => {
     await runInSystemContext(async (tx) => {
       const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: tenantId } });
       const role = await createTestRole(tx, tenantId, "NoCustomView");
@@ -90,7 +87,7 @@ describe("permissions/calendarAccess", () => {
       await setRolePermission(tx, tenantId, role.id, "VIEW_SHIFTS", true);
       // Deliberately not granting VIEW_CUSTOM_CALENDAR.
 
-      const access = await getCalendarNavAccess(tx, tenantId, "STAFF", role.id, tenant, "BOTH", "SUBSCRIPTION");
+      const access = await getCalendarNavAccess(tx, tenantId, "STAFF", role.id, tenant, "BOTH");
       expect(access.customCalendars).toEqual([]);
       expect(access.appointments).toBe(true);
       expect(access.shifts).toBe(true);
@@ -104,7 +101,7 @@ describe("permissions/calendarAccess", () => {
       await setRolePermission(tx, tenantId, role.id, "VIEW_APPOINTMENTS", true);
       // VIEW_SHIFTS, VIEW_CUSTOM_CALENDAR, and VIEW_CALENDAR_TOGGLE all left ungranted.
 
-      const access = await getCalendarNavAccess(tx, tenantId, "STAFF", role.id, tenant, "BOTH", "SUBSCRIPTION");
+      const access = await getCalendarNavAccess(tx, tenantId, "STAFF", role.id, tenant, "BOTH");
       expect(access.appointments).toBe(true);
       expect(access.shifts).toBe(false);
       expect(access.customCalendars).toEqual([]);

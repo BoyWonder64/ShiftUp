@@ -50,7 +50,7 @@ export const getSettingsContext = cache(async (tenantSlug: string) => {
       const canViewRoster = await hasPermission(tx, tenantId, role, roleId, "VIEW_ROSTER");
       const canViewScheduleTemplates = await hasPermission(tx, tenantId, role, roleId, "VIEW_SCHEDULE_TEMPLATES");
       const calendarAccess = tenant
-        ? await getCalendarNavAccess(tx, tenantId, role, roleId, tenant, license?.tier ?? "BOTH", license?.billingPlan ?? "FREE")
+        ? await getCalendarNavAccess(tx, tenantId, role, roleId, tenant, license?.tier ?? "BOTH")
         : null;
       return { tenant, visibleSections, canViewRoster, canViewScheduleTemplates, calendarAccess };
     });

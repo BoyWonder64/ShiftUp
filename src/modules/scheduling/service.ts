@@ -76,6 +76,8 @@ export interface CreateAppointmentInput {
   entryKind: "SHIFT" | "APPOINTMENT" | "CUSTOM";
   /** Required (by the API route, not here) when entryKind is CUSTOM - which named CustomCalendar this entry belongs to. Ignored otherwise. */
   customCalendarId?: string | null;
+  /** Only meaningful for a "Custom event" quick-create (entryKind SHIFT or APPOINTMENT) - see Appointment.customTitle's doc comment. */
+  customTitle?: string | null;
   clientId?: string | null;
   serviceTypeId?: string | null;
   startTime: Date;
@@ -117,6 +119,7 @@ export async function createAppointment(tx: Tx, tenantId: string, input: CreateA
         staffId: input.staffId,
         entryKind: input.entryKind,
         customCalendarId: input.entryKind === "CUSTOM" ? (input.customCalendarId ?? null) : null,
+        customTitle: input.customTitle ?? null,
         clientId: input.clientId ?? null,
         // A single incoming serviceTypeId is routed to whichever table
         // actually matches this row's kind (ISSUES.md #1) - APPOINTMENT

@@ -4,7 +4,7 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { createAppointment, listAppointmentsInRange, SchedulingConflictError } from "@/modules/scheduling/service";
-import { assertCanAddAppointment, assertCustomCalendarEnabled, PlanLimitError } from "@/lib/licensing/limits";
+import { assertCanAddAppointment, PlanLimitError } from "@/lib/licensing/limits";
 import { EVENT_COLOR_KEYS } from "@/lib/colors/eventColors";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
 
@@ -91,6 +91,9 @@ const createSchema = z.object({
   // "required only when entryKind === CUSTOM") when entryKind is CUSTOM -
   // which of the tenant's named custom calendars this entry belongs to.
   customCalendarId: z.string().uuid().optional().nullable(),
+  // Only meaningful for a "Custom event" quick-create (entryKind SHIFT or
+  // APPOINTMENT) - see Appointment.customTitle's doc comment.
+  customTitle: z.string().max(200).optional().nullable(),
   clientId: z.string().uuid().optional().nullable(),
   serviceTypeId: z.string().uuid().optional().nullable(),
   startTime: z.string().datetime(),
@@ -135,7 +138,6 @@ export async function POST(request: NextRequest) {
         ]);
         if (!canCreate) throw new Error("FORBIDDEN");
         if (data.entryKind === "CUSTOM") {
-          await assertCustomCalendarEnabled(tx, session.tenantId);
           if (!data.customCalendarId) throw new Error("CUSTOM_CALENDAR_REQUIRED");
           const customCalendar = await tx.customCalendar.findUnique({ where: { id: data.customCalendarId } });
           if (!customCalendar || customCalendar.tenantId !== session.tenantId) throw new Error("NOT_FOUND");
@@ -146,6 +148,7 @@ export async function POST(request: NextRequest) {
           staffId: data.staffId,
           entryKind: data.entryKind,
           customCalendarId: data.entryKind === "CUSTOM" ? data.customCalendarId : null,
+          customTitle: data.entryKind === "CUSTOM" ? null : data.customTitle,
           clientId: data.clientId,
           serviceTypeId: data.serviceTypeId,
           startTime: new Date(data.startTime),

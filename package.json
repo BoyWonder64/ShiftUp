@@ -18,6 +18,7 @@
     "react": "19.2.8",
     "react-big-calendar": "^1.20.0",
     "react-dom": "19.2.8",
+    "resend": "^6.34.1",
     "server-only": "^0.0.1",
     "stripe": "^23.0.0",
     "zod": "^4.6.5"

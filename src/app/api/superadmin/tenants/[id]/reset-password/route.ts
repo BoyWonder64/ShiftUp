@@ -4,14 +4,15 @@ import { requireRole } from "@/lib/auth/current-user";
 import { runInSystemContext } from "@/lib/tenant-context";
 import { hashPassword } from "@/lib/auth/password";
 
-// There's no "forgot password" email flow yet (no email infrastructure at
-// all - see TODO.md), so a locked-out tenant admin has no self-service path.
-// This is the manual stand-in: generates a one-time temporary password for
-// the tenant's ADMIN account, sets it directly, and returns the plaintext
-// value once in the response - it's never logged or stored anywhere, so this
-// is the only chance to relay it to the customer. Resets the tenant's ADMIN
-// user specifically, not any STAFF account - the dev console deals with the
-// one account per tenant a locked-out customer could possibly be contacting
+// Manual SUPERADMIN stand-in for a locked-out tenant admin who can't even
+// reach the self-service "Forgot password?" flow (src/app/api/auth/
+// password-reset/**) - e.g. they lost access to the email address on file
+// too. Generates a one-time temporary password for the tenant's ADMIN
+// account, sets it directly, and returns the plaintext value once in the
+// response - it's never logged or stored anywhere, so this is the only
+// chance to relay it to the customer. Resets the tenant's ADMIN user
+// specifically, not any STAFF account - the dev console deals with the one
+// account per tenant a locked-out customer could possibly be contacting
 // support as.
 function generateTemporaryPassword(): string {
   return randomBytes(9).toString("base64url"); // 12 chars, well past the 8-char minimum
@@ -30,7 +31,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       if (!adminUser) return null;
       return tx.user.update({
         where: { id: adminUser.id },
-        data: { passwordHash },
+        // Bumping sessionVersion signs out any session issued before this
+        // reset, same "sign out everywhere" reasoning as the self-service
+        // forgot-password flow (src/modules/identity/passwordReset.ts) -
+        // an admin-forced reset should kill whatever session got them
+        // locked out in the first place, not leave it valid for 7 more days.
+        data: { passwordHash, sessionVersion: { increment: 1 } },
         select: { id: true, email: true, username: true },
       });
     });

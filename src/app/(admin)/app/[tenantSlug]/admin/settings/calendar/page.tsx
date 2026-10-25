@@ -25,7 +25,7 @@ export default async function CalendarSettingsPage({ params }: { params: Promise
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-semibold tracking-tight">Calendar</h2>
+      <h2 className="text-xl font-semibold tracking-tight">Calendar Display</h2>
       <EventEditingSettings />
       {isPaid ? (
         <CalendarHoursSettings />

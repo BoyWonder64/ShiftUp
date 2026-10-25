@@ -1,5 +1,6 @@
 import { CalendarsToggleSettings } from "./CalendarsToggleSettings";
 import { CustomCalendarsManager } from "./CustomCalendarsManager";
+import { EventPresetsManager } from "./EventPresetsManager";
 import { requireSettingsSection } from "../access";
 
 export default async function CalendarsSettingsPage({ params }: { params: Promise<{ tenantSlug: string }> }) {
@@ -8,9 +9,10 @@ export default async function CalendarsSettingsPage({ params }: { params: Promis
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-xl font-semibold tracking-tight">Calendars</h2>
+      <h2 className="text-xl font-semibold tracking-tight">Manage Calendars</h2>
       <CalendarsToggleSettings />
       <CustomCalendarsManager />
+      <EventPresetsManager />
     </div>
   );
 }

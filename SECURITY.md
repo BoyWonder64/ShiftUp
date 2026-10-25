@@ -29,17 +29,34 @@ this into actual landing-page copy is a separate, later step (see TODO.md).
 - Cookie is `httpOnly` (not readable from JS → not stealable via XSS),
   `sameSite: lax`, and `secure` in production (HTTPS-only transmission),
   with a 7-day expiry baked into and checked from the signed payload itself.
+- Otherwise-stateless tokens can now be revoked early: each one embeds the
+  `User.sessionVersion` it was issued under, and `getCurrentSession()`
+  checks the live DB value on every request - a password reset bumps it,
+  which immediately signs that account out everywhere else, not just on the
+  device that completed the reset.
+
+**Password reset** (`src/modules/identity/passwordReset.ts`,
+`/api/auth/password-reset/{request,confirm}`)
+- The emailed token is a 32-byte random value; only its **sha256 hash** is
+  ever stored (`PasswordResetToken.tokenHash`) - a stolen DB row can't be
+  replayed, same care as `passwordHash` itself.
+- Single-use (`usedAt`) and time-limited (30 minutes) - checked together, so
+  a token can't be replayed even inside its own expiry window.
+- Requesting a reset for an email with no account returns the identical
+  generic response as a real one (no token issued, no email sent) - doesn't
+  leak which emails have accounts, same reasoning as login's identical
+  error for "no such user" vs. "wrong password."
+- A new request invalidates any earlier unused token for that user, so only
+  the most recently requested link ever works.
+- **Shares the "no rate limiting" gap below** - like login/signup, this
+  route accepts unlimited requests per email today.
 
 **Privilege escalation within a tenant**
-- Granting a staff member a permission like "edit staff" doesn't by itself let
-  them hand out *any* role - role reassignment/promotion is additionally
-  gated by a seniority rank (`Role.level`), requiring the acting user's own
-  role to strictly outrank both the target's current and prospective role
-  (`canManageRoleAssignment`/`canActOnStaffMember`,
-  `src/lib/permissions/service.ts`). Promoting to or demoting from the
-  platform ADMIN role is further restricted to existing ADMINs outright,
-  not rank-based at all, since ADMIN sits outside the per-tenant role
-  system and unconditionally holds every permission.
+- Staff create/edit/delete, and reassigning/promoting/demoting a role, are
+  hardcoded ADMIN-only (`src/app/api/staff/**`) - a non-ADMIN role granted
+  `EDIT_STAFF`/`CREATE_STAFF`/etc. still can't act on them, since the
+  ADMIN check after the permission check can never pass for STAFF. See
+  `PERMISSIONS.md` for the full model and its own "worth improving" list.
 
 **Tenant isolation**
 - Every tenant-scoped table has **Postgres Row-Level Security**, enforced via
@@ -72,10 +89,12 @@ this into actual landing-page copy is a separate, later step (see TODO.md).
 ## What's not true yet — real gaps
 
 - **No rate limiting or lockout on auth routes.** `/api/auth/login`,
-  `/api/auth/signup`, and `/api/superadmin/bootstrap` accept unlimited
-  attempts from any source today. The password hashing above is sound, but
-  without throttling, an attacker can still brute-force a weak password via
-  sheer volume. This is the single highest-value gap to close next.
+  `/api/auth/signup`, `/api/superadmin/bootstrap`, and now
+  `/api/auth/password-reset/request` accept unlimited attempts from any
+  source today. The password hashing above is sound, but without
+  throttling, an attacker can still brute-force a weak password via sheer
+  volume, or spam someone's inbox with reset emails. This is the single
+  highest-value gap to close next.
 - **No CI pipeline** (`.github/workflows/ci.yml` doesn't exist yet) — nothing
   automatically re-runs tests/lint/typecheck on push today; checks are run
   manually per session.

@@ -35,8 +35,7 @@ export default async function LegacyCalendarRedirectPage({
       session.role,
       session.roleId,
       tenant,
-      license?.tier ?? "BOTH",
-      license?.billingPlan ?? "FREE"
+      license?.tier ?? "BOTH"
     );
   });
 

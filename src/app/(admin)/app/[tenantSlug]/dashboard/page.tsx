@@ -177,8 +177,7 @@ export default async function DashboardPage({
             session.role,
             session.roleId,
             tenant,
-            license?.tier ?? "BOTH",
-            license?.billingPlan ?? "FREE"
+            license?.tier ?? "BOTH"
           )
         : null;
       return {

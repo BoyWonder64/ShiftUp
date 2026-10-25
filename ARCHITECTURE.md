@@ -24,6 +24,14 @@ logic. Local dev Postgres runs via `docker-compose.yml`.
   (no external provider). `src/lib/auth/current-user.ts` -
   `getCurrentSession()`, `requireRole([...])`, `requireTenantSession()`
   (throws if not a real tenant user - excludes SUPERADMIN/logged-out).
+  Tokens are otherwise stateless (would normally live until their 7-day
+  expiry with no way to revoke one early), but `getCurrentSession()` does
+  one extra DB check per call against `User.sessionVersion`: a token embeds
+  the version it was issued under, and a mismatch against the live value
+  means the token is treated as signed out. This is what makes a password
+  reset's "sign out everywhere" (`src/modules/identity/passwordReset.ts`)
+  actually work - general-purpose infrastructure, not single-purpose to
+  that one flow, per the design note on `User.sessionVersion` itself.
 - **Tenant isolation**: every tenant-scoped DB access goes through
   `src/lib/tenant-context.ts` - `runInTenantContext(tenantId, userId, role,
   fn)` wraps `fn` in a transaction that sets Postgres session vars
@@ -94,13 +102,16 @@ Full detail (fields, relations, doc comments) lives in
 | `StaffProfile` | A `User` who can be scheduled; has `WorkingHours` - now read by the public booking widget's availability engine (`src/modules/scheduling/availability.ts`) to decide when that staff member can be booked at all; still not enforced against internal (admin/staff) scheduling. |
 | `AppointmentServiceType` / `ShiftServiceType` | Independent job-type pools (ISSUES.md #1, split 2026-10-10 - previously one shared `ServiceType` table). `AppointmentServiceType` is client-facing - duration, price, `requiresPayment`, `isActive`, and `isPubliclyBookable` (default false - whether it shows up on the public booking widget, which only ever books appointments; separate from `isActive`, which gates internal scheduling). `ShiftServiceType` is internal-only - name + duration + `isActive`, no price/payment/public-booking concept. Both managed from their own Settings card (`ServiceTypeManager`/`ShiftServiceTypeManager`) and API routes (`/api/appointment-service-types`, `/api/shift-service-types`), gated by the same unified `VIEW/CREATE/EDIT/DELETE_SERVICES` permission keys - not split per-type. |
 | `Client` | A customer/guest (name, email, phone, address). Guest-first, no login. |
-| `Appointment` | One scheduled visit/shift. `clientId` null = shift, not appointment (this is the *only* distinction between the two in the data model - no `kind` column). Colored via either `tagId` → `EventTag` (custom) or `colorKey` (one of the 5 built-in `EventColorKey`s - see `resolveEventColor`) - mutually exclusive, both nullable, picked from the same "Color key" control. |
+| `Appointment` | One scheduled visit/shift/custom entry - `entryKind` (`SHIFT`/`APPOINTMENT`/`CUSTOM`) is the real source of truth for which, not `clientId` presence. Colored via either `tagId` → `EventTag` (custom) or `colorKey` (one of the 5 built-in `EventColorKey`s - see `resolveEventColor`) - mutually exclusive, both nullable, picked from the same "Color key" control. `customTitle` is a free-text title set only by the "Custom event" quick-create (`CustomEventPanel`, SchedulingCalendar.tsx) - a lightweight way to log something like "Lunch outing" under *either* the Shifts or Appointments calendar (entryKind SHIFT/APPOINTMENT, picked at creation), distinct from entryKind CUSTOM/`CustomCalendar`, which is the separate, heavier named-calendar feature. |
 | `EventTag` | Tenant-defined custom color tag assignable to an `Appointment`. `appliesTo` (`SHIFT`/`APPOINTMENT`/`BOTH`, default `BOTH`) scopes which calendar picker it shows up on. |
 | `Holiday` | Tenant-added custom holiday (name, date, recurring, `blocked`). US federal + major European holidays are **computed, never stored** - `src/lib/holidays/catalog.ts` merges `federal.ts`/`european.ts`; `Tenant.enabledHolidayNames` picks which computed ones actually show. |
-| `BlockedTime` | Business-wide, arbitrary start/end span marked unavailable on the calendar (Settings > Calendar > "Blocked time") - purely visual (greyed/striped `backgroundEvents` in `SchedulingCalendar.tsx`), **not a hard constraint**; no overlap check against `Appointment`. Distinct from a blocked `Holiday` (always a full day) and from `TimeOff` (per-staff, not business-wide). |
+| `BlockedTime` | Business-wide, arbitrary start/end span marked unavailable on the calendar (Settings > Calendar Display > "Blocked time") - purely visual (greyed/striped `backgroundEvents` in `SchedulingCalendar.tsx`), **not a hard constraint**; no overlap check against `Appointment`. Distinct from a blocked `Holiday` (always a full day) and from `TimeOff` (per-staff, not business-wide). |
 | `TimeOff` | Staff leave request + approval workflow. |
 | `RolePermission` / `RoleVisibility` | Per-tenant overrides of the hardcoded permission/visibility defaults. |
 | `ScheduleTemplate` / `ScheduleTemplateShift` | Reusable shift pattern (paid feature - see `assertScheduleTemplatesEnabled`), applied to any week to generate real `Appointment` rows. Shift is relative to the period (`dayOffset`), not a calendar date. |
+| `CustomCalendar` | A tenant-named calendar (Settings > Manage Calendars) for entries that aren't an appointment or a shift - free on every plan, a tenant can create as many as it wants, each with its own independent field-visibility settings. `Appointment.entryKind === "CUSTOM"` rows belong to exactly one via `customCalendarId`. |
+| `EventPreset` | Admin-defined quick-fill template (Settings > Manage Calendars > "Preset events") - a label + which kind/custom calendar it creates + a default duration. Picking one in the create form (`SchedulingCalendar.tsx`) sets the entry's type and computes its end time in one step. |
+| `DashboardMetric` | A tenant-built Dashboard stat tile (Settings > Dashboard) - replaces the old hardcoded "Staff"/"Upcoming appointments" pair with any number of admin-configured counting tiles (kind/date-range/status filters). |
 
 Every tenant-scoped table has an RLS policy (see migrations named
 `*_enable_rls`/`*_add_restricted_app_role`, and the RLS block appended by
@@ -128,6 +139,7 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 |---|---|---|---|
 | `/api/auth/signup` | POST | — | Create tenant + admin user + free license. |
 | `/api/auth/login`, `/api/auth/logout` | POST | — / session | Session cookie issue/clear. |
+| `/api/auth/password-reset/request`, `/confirm` | POST | — | Locked-out-user forgot-password flow (`src/modules/identity/passwordReset.ts`) - request issues a single-use, 30-min token and emails it (`src/lib/email.ts`, Resend); confirm verifies it, sets the new password, and bumps `User.sessionVersion` (signs the account out of every other session - see that field's doc comment and `getCurrentSession` below). Same generic response whether or not the email has an account. |
 | `/api/me/permissions` | GET | session | Caller's own effective permission map - what the client UI gates/filters on. |
 | `/api/me/calendar-text-size` | GET, PATCH | session | Per-user calendar event font-size preference (`User.calendarTextSize`). |
 | `/api/me/locale` | PATCH | session | Per-user language preference (`User.locale`); re-issues the session cookie immediately so it takes effect without a logout. |
@@ -142,8 +154,11 @@ gated by `hasPermission` on that key; **ADMIN** = `requireRole(["ADMIN"])`.
 | `/api/roles`, `/api/roles/[id]` | GET/POST, PATCH/DELETE | session (GET) / ADMIN (write) | Tenant's custom `Role` CRUD - name/description/`reportsToId`. DELETE blocked at the DB level while anyone still holds the role. |
 | `/api/appointment-service-types`, `/[id]` | GET/POST, PATCH | `VIEW_SERVICES`/`CREATE_SERVICES` / `EDIT_SERVICES` | `AppointmentServiceType` CRUD. PATCH includes `isPubliclyBookable` (Settings > Booking Widget). |
 | `/api/shift-service-types`, `/[id]` | GET/POST, PATCH | `VIEW_SERVICES`/`CREATE_SERVICES` / `EDIT_SERVICES` | `ShiftServiceType` CRUD - no price/payment/public-booking fields (see the model split above). |
+| `/api/custom-calendars`, `/[id]` | GET, POST/PATCH/DELETE | `VIEW_CUSTOM_CALENDAR` / ADMIN | `CustomCalendar` CRUD - free on every plan, ADMIN-only to create/edit/delete. |
+| `/api/event-presets`, `/[id]` | GET, POST/PATCH/DELETE | session / ADMIN | `EventPreset` CRUD - GET is open to any session (used by the create form's presets row for any entry kind, so no single permission key fits); writes are ADMIN-only. |
+| `/api/dashboard-metrics`, `/[id]` | GET, POST/PATCH/DELETE | session / ADMIN | `DashboardMetric` CRUD backing Settings > Dashboard's tile builder. |
 | `/api/clients` | GET, POST | `VIEW_CLIENTS` / `CREATE_CLIENTS` | |
-| `/api/appointments` | GET, POST | `VIEW_SHIFTS`+`VIEW_APPOINTMENTS` / `CREATE_SHIFTS` or `CREATE_APPOINTMENTS` (by row type) | List in a date range (each row type gated independently, not just all/own-scoped); create (enforces free-plan cap). |
+| `/api/appointments` | GET, POST | `VIEW_SHIFTS`+`VIEW_APPOINTMENTS` / `CREATE_SHIFTS` or `CREATE_APPOINTMENTS` (by row type) | List in a date range (each row type gated independently, not just all/own-scoped); create (enforces free-plan cap). POST accepts an optional `customTitle` on a SHIFT/APPOINTMENT row - the "Custom event" quick-create's free-text title (`Appointment.customTitle`), never set alongside entryKind CUSTOM. |
 | `/api/appointments/[id]` | GET, PATCH | `VIEW_SHIFTS`/`VIEW_APPOINTMENTS` (by row type) / varies by field and row type (`EDIT_SHIFTS`/`EDIT_APPOINTMENTS`, `CANCEL_SHIFTS`/`CANCEL_APPOINTMENTS`, `EDIT_JOB_ESTIMATES`) | One PATCH handles reschedule, cancel, reassign, estimates, location, tag. |
 | `/api/appointments/[id]/coverage` | GET | `EDIT_SHIFTS` or `EDIT_APPOINTMENTS` (by row type) | Who can cover this shift (see `findCoverageCandidates`). |
 | `/api/time-off`, `/api/time-off/[id]` | GET/POST, PATCH | session / `APPROVE_TIME_OFF` | Request + approve/deny. |

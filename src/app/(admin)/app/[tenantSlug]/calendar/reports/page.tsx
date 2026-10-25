@@ -44,8 +44,7 @@ export default async function ReportsPage({
             session.role,
             session.roleId,
             tenant,
-            license?.tier ?? "BOTH",
-            license?.billingPlan ?? "FREE"
+            license?.tier ?? "BOTH"
           )
         : null;
       return { tenant, canView, canViewRoster, canViewScheduleTemplates, calendarAccess };

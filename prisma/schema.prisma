@@ -290,6 +290,7 @@ model Tenant {
   scheduleTemplateShifts  ScheduleTemplateShift[]
   customCalendars         CustomCalendar[]
   dashboardMetrics        DashboardMetric[]
+  eventPresets            EventPreset[]
 
   @@map("tenants")
 }
@@ -323,16 +324,15 @@ model DashboardMetric {
 }
 
 /// A tenant-named, admin-configurable "custom" calendar (Settings >
-/// Calendars > "Custom calendars") - a paid-tier tenant can create as many
-/// of these as it wants, each with its own name and its own independent
-/// field-visibility settings for the create/edit form, mirroring the
-/// show/hide shape already used for the Shift form (showJobTypeOnShiftForm
+/// Calendars > "Custom calendars") - free on every plan, a tenant can create
+/// as many of these as it wants, each with its own name and its own
+/// independent field-visibility settings for the create/edit form, mirroring
+/// the show/hide shape already used for the Shift form (showJobTypeOnShiftForm
 /// etc. on Tenant) but per-calendar instead of tenant-wide. Entries
 /// (Appointment rows with entryKind CUSTOM) belong to exactly one of these
 /// via customCalendarId - there is no tenant-wide "custom calendar enabled"
 /// flag the way Appointments/Shifts have; a calendar simply existing is what
-/// makes it live (deleting it is the only way to turn one off), though
-/// `assertCustomCalendarEnabled` still gates *creating* one to paid plans.
+/// makes it live (deleting it is the only way to turn one off).
 model CustomCalendar {
   id                      String   @id @default(uuid())
   tenantId                String   @map("tenant_id")
@@ -355,9 +355,43 @@ model CustomCalendar {
   updatedAt               DateTime @updatedAt @map("updated_at")
 
   appointments Appointment[]
+  eventPresets EventPreset[]
 
   @@index([tenantId])
   @@map("custom_calendars")
+}
+
+/// An admin-defined quick-fill template (Settings > Calendars > "Preset
+/// events") for a one-off entry that doesn't deserve its own ShiftServiceType/
+/// AppointmentServiceType job type - "Lunch outing," "Doctor's appointment,"
+/// whatever a tenant's staff repeatedly logs. Picking one in the create form
+/// (SchedulingCalendar.tsx's CreateEntryPanel) sets the entry's kind/custom
+/// calendar and computes its end time from durationMinutes in one step,
+/// rather than the viewer filling in the type switcher and the time fields
+/// separately every time. Deliberately not built on ShiftServiceType (which
+/// already has name+durationMinutes) - a preset also needs to carry *which*
+/// kind/calendar it creates on, which a job type has no concept of.
+model EventPreset {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label           String
+  entryKind       EntryKind @map("entry_kind")
+  /// Only meaningful (and required, enforced in application code) when
+  /// entryKind is CUSTOM - which of the tenant's named CustomCalendars this
+  /// preset creates its entry on.
+  customCalendarId String?         @map("custom_calendar_id")
+  customCalendar   CustomCalendar? @relation(fields: [customCalendarId], references: [id], onDelete: Cascade)
+  durationMinutes  Int             @map("duration_minutes")
+  /// Display order in the create form's preset row - admin-created presets
+  /// append in creation order by default (no reorder UI yet, same as
+  /// CustomCalendar.sortOrder).
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("event_presets")
 }
 
 /// A tenant-defined role (e.g. "Officer", "Plumber", "Dispatcher") - fully
@@ -584,13 +618,51 @@ model User {
   /// just records who that account is (e.g. for an "Owner" badge), it isn't
   /// load-bearing for that protection.
   isOwner          Boolean          @default(false) @map("is_owner")
+  /// Bumped (never reset) whenever this user's password changes via the
+  /// forgot-password reset flow (NOT the logged-in "change my password"
+  /// flow, which deliberately leaves the requester's own current session
+  /// alone). Session tokens embed the sessionVersion they were issued
+  /// under (see SessionPayload.sessionVersion); getCurrentSession checks
+  /// the live value here on every request and treats a mismatch as a
+  /// signed-out session - the "sign out everywhere" piece of a reset,
+  /// since these tokens are otherwise stateless and un-revocable before
+  /// their natural 7-day expiry. General-purpose despite the narrow name -
+  /// any future "log out all my other sessions" action can reuse it the
+  /// same way.
+  sessionVersion   Int              @default(0) @map("session_version")
   createdAt        DateTime         @default(now()) @map("created_at")
   updatedAt        DateTime         @updatedAt @map("updated_at")
   staffProfile     StaffProfile?
+  passwordResetTokens PasswordResetToken[]
 
   @@index([tenantId])
   @@index([roleId])
   @@map("users")
+}
+
+/// A single-use, time-limited token for the "Forgot password?" flow
+/// (POST /api/auth/password-reset/request issues one, POST
+/// .../confirm consumes it) - the locked-out-user half of password reset;
+/// the already-logged-in "change my password" flow (PATCH /api/me/password)
+/// doesn't use this table at all. Only `tokenHash` (sha256 of the raw token
+/// mailed to the user) is ever stored, never the raw token itself, same
+/// care as User.passwordHash - a stolen DB row can't be replayed. Not
+/// tenant-scoped (no tenantId column, no RLS policy) because the whole point
+/// of this flow is working before the caller is known to belong to any
+/// tenant; every access to this table goes through runInSystemContext.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  /// Null until consumed by a successful confirm - checked alongside
+  /// expiresAt so a token can't be replayed even within its expiry window.
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 enum AppointmentStatus {
@@ -809,6 +881,17 @@ model Appointment {
   /// removing the tenant itself does for every row.
   customCalendarId         String?                 @map("custom_calendar_id")
   customCalendar           CustomCalendar?         @relation(fields: [customCalendarId], references: [id], onDelete: Cascade)
+  /// Free-text title for a "Custom event" quick-create (the calendar's
+  /// "This is a... Custom event" option, `CustomEventPanel` in
+  /// SchedulingCalendar.tsx) - a lightweight way to log something like
+  /// "Lunch outing" or "Doctor's appointment" under *either* the Shifts or
+  /// Appointments calendar (entryKind SHIFT/APPOINTMENT, picked at creation -
+  /// never CUSTOM/CustomCalendar, which is a separate, heavier feature:
+  /// admin-defined named calendars with their own pages). Only ever set by
+  /// that quick-create path; every other create flow leaves it null and the
+  /// title is composed from staff/service type/client as before. When set,
+  /// `appointmentTitle()` uses it verbatim instead of that composition.
+  customTitle              String?                 @map("custom_title")
   clientId                 String?                 @map("client_id")
   client                   Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
   /// Exactly one of appointmentServiceTypeId/shiftServiceTypeId is ever set,

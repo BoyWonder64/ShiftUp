@@ -174,31 +174,32 @@ confirm. See `ISSUES.md` if you want the full history.
   true from 2026-10-02: not a paid-gated feature, free plan included** -
   basic account security/login shouldn't be paywalled; see the
   rate-limiting item under Security below for the same reasoning.
-- **Password reset workflow - half done.** Raised 2026-10-02. The
-  change-your-own-password half is done - moved to `VERIFY.md`. **Still
-  open**: there's still no way for a *locked-out*
-  user (one who can't log in at all, so can't reach Settings) to reset their
-  password. That needs: a "Forgot password?" link on the login page, a
-  `POST /api/auth/password-reset/request` endpoint that generates a
-  single-use, time-limited token (store a hash of the token, not the raw
-  value, same care as `passwordHash` itself) tied to the user's email, and a
-  `POST /api/auth/password-reset/confirm` endpoint that verifies the token
-  (checking expiry and single-use), and updates `passwordHash`. **Real
-  blocker, unchanged, explicitly revisited and still deferred 2026-10-09**:
-  actually delivering the reset link needs an email-sending channel, and
-  **there is no email infrastructure anywhere in this app yet** - same gap
-  already flagged under the paid-email-reminders and overlapping-PTO-alert
-  items below. No provider has been picked (asked directly 2026-10-09,
-  answer was "decide later") - this, email reminders, and the PTO-overlap
-  alert all stay blocked until one is. **Decided 2026-10-09**: a successful
-  reset *should* invalidate the user's other active sessions ("sign out
-  everywhere") - session tokens today are stateless, HMAC-signed, and have
-  no server-side revocation list at all (`src/lib/auth/session.ts`), so this
-  needs new revocation-list infrastructure (e.g. a `revokedAt`/session-id
-  table checked on every request) as part of building this, not an
-  afterthought - and that infrastructure is general enough it's worth
-  building as its own reusable piece rather than single-purpose to password
-  reset.
+- ~~**Password reset workflow - half done.**~~ **Fully done 2026-10-23 -
+  moved to `VERIFY.md`.** The locked-out-user half (the part that was open)
+  is now built: "Forgot password?" link on `/login`, `/forgot-password` +
+  `/reset-password` pages, `POST /api/auth/password-reset/request` and
+  `.../confirm` (new `src/modules/identity/passwordReset.ts`, new
+  `PasswordResetToken` table - only a sha256 hash of the token is ever
+  stored, never the raw value). **The email-provider blocker is resolved**:
+  went with Resend (`src/lib/email.ts`) - a thin `sendEmail()` seam, so
+  swapping to a different provider (the user mentioned self-hosted SMTP
+  later) only means rewriting that one file. **Not yet configured** -
+  `RESEND_API_KEY`/`EMAIL_FROM` are unset in `.env` (see `.env.example`'s
+  comments); until they're set, a request still works end-to-end except the
+  actual send, which fails loudly into the server console (logged with the
+  real reset link, so it can still be manually relayed or used for dev
+  testing) rather than silently. **The "sign out everywhere" piece is also
+  built**, as its own reusable piece per the 2026-10-09 decision: new
+  `User.sessionVersion` (bumped on a successful reset), session tokens now
+  embed the version they were issued under, and `getCurrentSession`
+  (`src/lib/auth/current-user.ts`) checks the live DB value on every call -
+  a stale token is treated as signed out before its normal 7-day expiry.
+  One extra DB round trip per authenticated page load is the cost of this -
+  consistent with how many other queries each page already does, not a new
+  category of cost. The existing SUPERADMIN-initiated reset
+  (`/api/superadmin/tenants/[id]/reset-password`) now bumps the same counter
+  too, so a support-forced reset also kills whatever session got the admin
+  locked out in the first place.
 - **Dark mode.** Raised 2026-10-01. Note: an earlier auto (prefers-color-scheme)
   dark mode existed early on and was deliberately removed in favor of the
   current fixed light palette (dodger blue/Rockies purple on white) - see

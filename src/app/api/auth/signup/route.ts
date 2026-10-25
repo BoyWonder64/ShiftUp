@@ -81,6 +81,7 @@ export async function POST(request: NextRequest) {
       role: "ADMIN",
       roleId: null,
       locale: result.user.locale,
+      sessionVersion: result.user.sessionVersion,
     });
 
     const response = NextResponse.json({ tenantSlug: result.tenant.slug }, { status: 201 });

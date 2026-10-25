@@ -28,8 +28,8 @@ const FIELD_TOGGLES: Array<{ key: ToggleKey; label: string; description: string 
 ];
 
 /**
- * Settings > Calendars > "Custom calendars" - a paid tenant can create as
- * many named custom calendars as it wants (replaces the old single
+ * Settings > Calendars > "Custom calendars" - a tenant can create as
+ * many named custom calendars as it wants, free on every plan (replaces the old single
  * customCalendarEnabled checkbox + one flat set of form toggles), each with
  * its own independent field-visibility settings. See CustomCalendar in
  * prisma/schema.prisma and the /api/custom-calendars routes.
@@ -42,7 +42,6 @@ export function CustomCalendarsManager() {
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const [upgradeNeeded, setUpgradeNeeded] = useState(false);
 
   const [nameDrafts, setNameDrafts] = useState<Record<string, string>>({});
   const [savingField, setSavingField] = useState<string | null>(null); // `${calendarId}:${field}`
@@ -75,7 +74,6 @@ export function CustomCalendarsManager() {
     if (!newName.trim()) return;
     setCreating(true);
     setCreateError(null);
-    setUpgradeNeeded(false);
     try {
       const res = await fetch("/api/custom-calendars", {
         method: "POST",
@@ -84,11 +82,7 @@ export function CustomCalendarsManager() {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 403) {
-          setUpgradeNeeded(true);
-        } else {
-          setCreateError(data.error ?? "Couldn't create calendar.");
-        }
+        setCreateError(data.error ?? "Couldn't create calendar.");
         return;
       }
       setNewName("");
@@ -158,9 +152,10 @@ export function CustomCalendarsManager() {
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <h2 className="text-lg font-medium">Custom calendars</h2>
       <p className="mt-1 text-sm text-gray-500">
-        A paid-tier feature - create as many named calendars as you want, each with its own entries and its
-        own form field settings. Appointments and Shifts keep their fixed field sets; these are fully yours
-        to configure.
+        Create as many named calendars as you want, each with its own entries and its own form field
+        settings - for anything that isn&apos;t a client appointment or a work shift (a lunch outing, a
+        personal doctor&apos;s appointment, whatever your team needs to track). Appointments and Shifts
+        keep their fixed field sets; these are fully yours to configure.
       </p>
 
       <form onSubmit={createCalendar} className="mt-4 flex flex-wrap items-end gap-2">
@@ -181,9 +176,6 @@ export function CustomCalendarsManager() {
           {creating ? "Creating..." : "+ Add calendar"}
         </button>
       </form>
-      {upgradeNeeded && (
-        <p className="mt-2 text-sm text-amber-600">Upgrade to a paid plan to create a custom calendar.</p>
-      )}
       {createError && <p className="mt-2 text-sm text-red-600">{createError}</p>}
 
       {loading ? (

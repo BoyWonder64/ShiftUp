@@ -15,6 +15,91 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **"Custom event" quick-create - a genuinely separate, lightweight form for
+  a one-off entry like "Lunch outing" or "Doctor's appointment," filed under
+  *either* the Appointments or Shifts calendar (your choice), not a third
+  calendar of its own.** Built 2026-10-25 at your direction, after a few
+  rounds of narrowing down exactly what was wanted (the earlier
+  "Custom calendars" feature - named tenant calendars like "Site Visits" -
+  stays as a separate, still-paid-free feature; this is a different, much
+  smaller thing layered on top). Browser-verified end to end: picking
+  "Custom event" from the "This is a..." switcher (now available on *every*
+  calendar page, not just `/calendar/all` - a custom event can go to either
+  calendar regardless of which page you opened the form from) swaps to a
+  minimal form - just Title, a "File under: Appointments calendar / Shifts
+  calendar" toggle, Start/End, and Staff - skipping the full form's client
+  picker, job type, payment, and location fields entirely. Submitting
+  creates a perfectly normal Appointment or Shift row (new
+  `Appointment.customTitle` field) that shows up on the calendar titled
+  exactly what you typed, confirmed with a real submission ("Doctor's
+  appointment" appeared on the Shifts calendar after creating it filed
+  there). Check on your own account: from any calendar page, "+ Add event" →
+  "Custom event" → fill in a title, pick which calendar, save - confirm it
+  shows up on the calendar you picked with your title, not the usual
+  staff/job-type composition. Try switching back to "Appointment"/"Shift"
+  mid-form and confirm it swaps to the full form cleanly (fields reset, not
+  stale).
+- **Settings sections renamed for clarity: "Calendar" → "Calendar Display",
+  "Calendars" → "Manage Calendars."** Raised directly - the two nearly-
+  identical tab names (one for holidays/colors/hours, the other for turning
+  calendars on/off and managing custom ones/presets) were genuinely
+  confusing sitting next to each other in the nav. URLs/slugs unchanged
+  (`/admin/settings/calendar` and `/admin/settings/calendars` still work),
+  only the displayed label and page heading changed. Check: Settings nav
+  shows "Calendar Display" and "Manage Calendars" as two clearly distinct
+  tabs.
+- **Calendar create flow: one "+ Add event" button everywhere with an
+  in-form type switcher (replacing separate per-kind buttons and the old
+  "Add as..." popup), plus admin-defined preset events, plus custom
+  calendars are now free on every plan.** Built 2026-10-24/25 at your
+  direction. Browser-verified end to end this session (screenshots, no
+  console errors): every calendar page's create button now says "+ Add
+  event" (was "+ Add appointment"/"+ Schedule shift"/one button per custom
+  calendar, varying per page); clicking it (or dragging a slot) opens the
+  create form directly with a best-guess type already selected, and a "This
+  is a..." row of pill buttons inside the form itself lets you switch
+  between Appointment/Shift/any of the tenant's named custom calendars/the
+  generic "Custom event" (see the next entry) - switching clears whatever
+  was typed into the old type's fields rather than leaving stale values
+  behind. **Originally this switcher only showed on `/calendar/all`** (a
+  fixed-kind page had nothing to pick, so showed no switcher at all) - since
+  revised, see the Custom Event entry below for why every page now shows it.
+  **Custom calendars are no longer a paid feature** - removed two separate gates
+  (`assertCustomCalendarEnabled` on the create routes, and a second one
+  inside `getCalendarNavAccess` that was hiding them from the nav/switcher
+  even after the first was removed) - confirmed by creating one on a
+  freshly-signed-up FREE-plan tenant. **New "Preset events"** (Settings >
+  Calendars > "Preset events", ADMIN-only): name a quick-fill template (e.g.
+  "Lunch outing"), pick which kind/calendar it creates and a default
+  duration: it then shows as a pill button in the create form's own
+  "Presets" row, and clicking it sets the type switcher and computes the end
+  time from the duration in one step (confirmed: picking a 30-minute
+  "Lunch outing" preset tied to a "Personal" custom calendar correctly
+  switched the form to that calendar and set start→start+30min).
+  Check on your own account: Settings > Calendars > add a preset for each
+  kind (Shift, Appointment, and a custom calendar if you have one), then use
+  the "+ Add" button on `/calendar/all` (or a fixed-kind page) and confirm
+  each preset fills in correctly and the entry saves as expected. Edit and
+  delete a preset from Settings and confirm the create form's row updates to
+  match.
+- **Password reset for locked-out users, plus "sign out everywhere" on a
+  successful reset.** Built 2026-10-23. Browser-verified this session (not
+  through the real email path - no Resend key configured yet, see below -
+  but every other piece end-to-end: request → token issued → confirm →
+  password changed → every other active session for that user killed within
+  ~1s → fresh login with the old password fails, the new one works). Check
+  on your own account once `RESEND_API_KEY`/`EMAIL_FROM` are set in `.env`
+  (see `.env.example`'s comments - Resend for now, your own SMTP later is a
+  one-file swap in `src/lib/email.ts`): click "Forgot password?" on
+  `/login`, submit your email, confirm you get a real email with a working
+  link, confirm an unknown email shows the identical generic confirmation
+  (no enumeration), set a new password, confirm you're logged out of any
+  other browser/device within about a second, confirm the old password no
+  longer works and the new one does. Also check: the link expires after 30
+  minutes, and a used link can't be clicked twice. Separately, confirm the
+  SUPERADMIN dev console's existing "reset a locked-out tenant admin's
+  password" action still works and now also signs that admin out everywhere
+  (same underlying mechanism).
 - **Calendars fully split into separate pages, plus any number of named
   custom calendars (TODO.md's "Custom calendar entry types" and "Fully
   separate the Shifts and Appointments calendars").** Built in the big
@@ -30,8 +115,10 @@ deliberately leaves that out so it stays skimmable.
   estimate, color key, payment status) and confirm the create/detail panel
   on that calendar's own entries actually reflects them. Confirm
   `/calendar/all` shows every kind combined, and that a bookmarked old
-  `/calendar` link redirects sensibly. Confirm a FREE-plan tenant can't
-  create a custom calendar (should hit the upgrade message). **One real
+  `/calendar` link redirects sensibly. **Decided 2026-10-24: custom
+  calendars are free on every plan, not paid-gated** - the original paid
+  gate this entry used to ask you to confirm is gone (see the "Calendar
+  create flow" entry below for the session that removed it). **One real
   environment gotcha hit while verifying, not an app bug**: right after this
   commit, every Settings page 404'd (even `/admin/settings/account`, which
   requires nothing) until the stale Turbopack `.next` build cache was

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
-import { assertCustomCalendarEnabled, PlanLimitError } from "@/lib/licensing/limits";
+import { PlanLimitError } from "@/lib/licensing/limits";
 
 export async function GET() {
   try {
@@ -42,7 +42,7 @@ const createSchema = z.object({
   showPaymentStatus: z.boolean().default(false),
 });
 
-/** Creating a custom calendar is ADMIN-only (same gate Settings > Calendars itself uses) and requires a paid plan - a FREE tenant can't have any, regardless of role. */
+/** Creating a custom calendar is ADMIN-only (same gate Settings > Calendars itself uses) - free on every plan, not paid-gated. */
 export async function POST(request: NextRequest) {
   try {
     const session = await requireTenantSession();
@@ -61,7 +61,6 @@ export async function POST(request: NextRequest) {
       session.userId,
       session.role,
       async (tx) => {
-        await assertCustomCalendarEnabled(tx, session.tenantId);
         const sortOrder = await tx.customCalendar.count({ where: { tenantId: session.tenantId } });
         return tx.customCalendar.create({ data: { tenantId: session.tenantId, sortOrder, ...data } });
       }
