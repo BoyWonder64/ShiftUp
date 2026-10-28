@@ -8,6 +8,16 @@ see `ARCHITECTURE.md`. **Anything marked "Done"/"Resolved" below has been
 pulled out into `VERIFY.md`** — a checklist for you to confirm in the running
 app — rather than left here as done-but-unconfirmed clutter.
 
+For the templates, you need to be able to repeate the template. 
+
+For appointment we need to add the option to repeat the appointment. daily, weekly, bi weekly, monthly
+
+For appointments, we need a notes section about the appointent. We will automate the time met, and for howlong. It will update if we change the note to a noshow. From there we 
+
+A new responability for the admin is the ability to decide who can see what for notes. Make sure those setting appointments are not able to see notes. The admin and anyone they allow this setting too will have the ability to review notes and update them. 
+
+events on the calender overlap too much. We need to clean this up more
+
 ## Issues
 
 Bugs, data-model problems, and known gaps now live in **`ISSUES.md`**, not
@@ -17,6 +27,27 @@ confirm. See `ISSUES.md` if you want the full history.
 
 ## New feature requests (not started)
 
+- **A phone-friendly (mobile-responsive) version of the app.** Raised
+  2026-10-25. Today's layout (`SchedulingCalendar.tsx` especially - the
+  react-big-calendar grid, the side-by-side create/detail panels, the
+  multi-column toolbar) is built for desktop widths; nothing has been
+  checked against or adapted for a phone-sized viewport yet. The calendar
+  itself is almost certainly the hardest/highest-value surface (a Week/Day
+  grid with a toolbar, mini-calendar sidebar, and legend all competing for
+  width), but Settings' multi-column forms and the nav header likely need
+  their own pass too. Needs scoping before building:
+  - Responsive breakpoints for the existing desktop layout (reflow/hide
+    elements at narrow widths), or a genuinely different mobile-specific
+    view for the calendar grid (e.g. an agenda/list-first layout instead of
+    a time grid, which is what most calendar apps fall back to on phone)?
+  - Is this "make everything usable down to a phone width" across the whole
+    app, or a narrower "the calendar + the most common staff actions (view
+    my shifts, request time off) work well on a phone, admin/Settings stays
+    desktop-oriented"? The scope changes a lot depending on the answer -
+    worth asking directly before starting rather than assuming.
+  - Any native-app-adjacent expectations (installable PWA, push
+    notifications for a new shift/appointment) or is this purely "the
+    existing web pages render usably at a phone width"?
 - ~~**Custom calendar entry types - let the user pick Shift, Appointment, or
   Custom (all features) when creating an entry.**~~ **Done, bundled with the
   calendar-split overhaul below - moved to `VERIFY.md`.** Built bigger than
