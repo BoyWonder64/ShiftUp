@@ -4,7 +4,13 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { assertScheduleTemplatesEnabled, PlanLimitError } from "@/lib/licensing/limits";
-import { planTemplateApply, applyTemplate } from "@/modules/scheduling/templates";
+import {
+  planTemplateApply,
+  applyTemplate,
+  planTemplateApplyRepeating,
+  applyTemplateRepeating,
+  MAX_TEMPLATE_APPLY_OCCURRENCES,
+} from "@/modules/scheduling/templates";
 
 const applySchema = z.object({
   periodStart: z.string().datetime(),
@@ -13,6 +19,9 @@ const applySchema = z.object({
   // first, then apply skips whatever's still flagged rather than blocking
   // the whole run.
   dryRun: z.boolean().default(true),
+  // How many back-to-back periods to generate in one go (TODO.md: "repeat
+  // the template"). 1 = today's single-period behavior.
+  occurrences: z.number().int().min(1).max(MAX_TEMPLATE_APPLY_OCCURRENCES).default(1),
 });
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -30,6 +39,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const allowed = await hasPermission(tx, session.tenantId, session.role, session.roleId, "APPLY_SCHEDULE_TEMPLATES");
       if (!allowed) throw new Error("FORBIDDEN");
       await assertScheduleTemplatesEnabled(tx, session.tenantId);
+
+      const { occurrences } = parsed.data;
+      if (occurrences > 1) {
+        if (parsed.data.dryRun) {
+          const plan = await planTemplateApplyRepeating(tx, session.tenantId, id, periodStart, occurrences);
+          return { plan };
+        }
+        const result = await applyTemplateRepeating(tx, session.tenantId, id, periodStart, occurrences, session.userId);
+        return { result };
+      }
 
       if (parsed.data.dryRun) {
         const plan = await planTemplateApply(tx, session.tenantId, id, periodStart);

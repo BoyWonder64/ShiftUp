@@ -21,6 +21,56 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Overlapping calendar events cleaned up (Week/Day no-overlap layout, Month "+N more" popup)
+
+Raised directly: "having multiple events on the screen doesnt look good, the
+calender doesnt share them well... Look to google calendar as an example" -
+matches the standing TODO.md entry "events on the calender overlap too
+much. We need to clean this up more" (now removed from TODO.md, written up
+here instead).
+
+Before touching anything, reproduced it: spun up a throwaway tenant via the
+real `/signup` flow, bumped its license to SUBSCRIPTION directly in Postgres
+(bypassing the free plan's 1-staff cap, just for this probe tenant), seeded
+3 staff and ~15 same-day overlapping appointments via the real
+`/api/appointments` endpoint, and screenshotted `/calendar/all` with
+Playwright. Week view confirmed the actual problem: react-big-calendar's
+default `dayLayoutAlgorithm` ("overlap") lets concurrent events partially
+cover each other, cascading into a staircase of unreadable slivers once more
+than two or three events coincided - each truncated to 1-2 characters of
+text. This was a real behavior gap, not a misreading of an already-deliberate
+design (the existing `stackingZIndex`/shadow code in
+`SchedulingCalendar.tsx` was a genuine, documented attempt at Google
+Calendar's "shorter event layers in front of a longer one" treatment, but it
+only reads well for 2-3 events, not the staircase case the TODO was about).
+
+Fix: switched to react-big-calendar's `dayLayoutAlgorithm="no-overlap"` -
+concurrent events now get their own non-overlapping side-by-side lane
+instead, confirmed by re-screenshotting the same seeded tenant (clean
+columns, no more staircase). Removed the now-pointless `stackingZIndex`
+function and its z-index assignment in `eventPropGetter` along with it -
+with events never visually overlapping anymore, there's nothing left for a
+"which one wins" z-index to do. Month view got two more changes: added the
+`popup` prop so a day cell's "+N more" opens a proper inline popup listing
+every event that day (screenshotted and confirmed: clean list, correct
+events, positioned over the clicked cell) instead of react-big-calendar's
+default of silently navigating to Day view for that date - CSS added to
+style `.rbc-overlay`/`.rbc-show-more` to match the app and to raise the
+popup's z-index above the in-progress draft event's. And Month's event chips
+now render a compact colored-dot + name line (`EventContent` branches on
+`currentView === "month"`) instead of the avatar-badge treatment kept for
+Week/Day, which eats less row height and lets more events fit before
+overflowing into "+N more".
+
+Browser-verified end to end on the seeded tenant: Week, Month, Month's
+"+N more" popup, and Day view all screenshotted after the change with zero
+browser console errors; `tsc --noEmit` clean. Probe tenants and scratch
+script files deleted afterward - nothing left behind. Still worth your own
+look, since the probe used synthetic data (`VERIFY.md` has the checklist
+entry): on a real day with several overlapping bookings, Week/Day should now
+read as distinct side-by-side boxes, and Month's "+N more" should pop open a
+list in place rather than jumping away to Day view.
+
 ### "Custom event" quick-create, settings section renames, and a create-button consistency fix
 
 Follow-up to the calendar-create-flow session below, raised directly after

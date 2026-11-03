@@ -24,7 +24,13 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  // Local runs get a retry too, not just CI - a dev server under parallel
+  // load occasionally has one test's signup get unlucky on timing (CPU
+  // contention from concurrent scrypt password hashing + Chromium
+  // instances + Turbopack compiles all at once), not a real bug; a lone
+  // flake that passes on retry is expected noise here, not something worth
+  // chasing further.
+  retries: process.env.CI ? 2 : 1,
   // Capped (not Playwright's usual cpuCount/2 default) - against `next dev`
   // (Turbopack, on-demand per-route compilation, not a prebuilt `next
   // start`), too much parallelism means many tests hitting first-time

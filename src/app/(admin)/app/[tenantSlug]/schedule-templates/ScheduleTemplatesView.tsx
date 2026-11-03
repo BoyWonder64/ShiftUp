@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 
+// Mirrors MAX_TEMPLATE_APPLY_OCCURRENCES in src/modules/scheduling/templates.ts (server-only module, not importable here).
+const MAX_REPEAT_OCCURRENCES = 52;
+
 interface StaffOption {
   id: string;
   displayName: string;
@@ -45,6 +48,12 @@ interface PlanItem {
 interface ApplyResult {
   created: Array<{ templateShiftId: string; appointmentId: string }>;
   skipped: Array<{ templateShiftId: string; staffId: string; dayOffset: number; reason: "CONFLICT" }>;
+}
+
+interface OccurrencePlan {
+  occurrenceIndex: number;
+  periodStart: string;
+  items: PlanItem[];
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -232,7 +241,7 @@ function TemplateDetail({
   const [cloning, setCloning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [shiftDayOffset, setShiftDayOffset] = useState("0");
+  const [shiftDayOffset, setShiftDayOffset] = useState("1");
   const [shiftStaffId, setShiftStaffId] = useState(staff[0]?.id ?? "");
   const [shiftStart, setShiftStart] = useState("09:00");
   const [shiftEnd, setShiftEnd] = useState("17:00");
@@ -241,7 +250,9 @@ function TemplateDetail({
   const [removingShiftId, setRemovingShiftId] = useState<string | null>(null);
 
   const [periodStart, setPeriodStart] = useState("");
+  const [repeatCount, setRepeatCount] = useState("1");
   const [plan, setPlan] = useState<PlanItem[] | null>(null);
+  const [occurrencePlans, setOccurrencePlans] = useState<OccurrencePlan[] | null>(null);
   const [planning, setPlanning] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
@@ -297,7 +308,8 @@ function TemplateDetail({
 
   async function handleAddShift(e: React.FormEvent) {
     e.preventDefault();
-    const dayOffset = Number(shiftDayOffset);
+    // Displayed/entered as 1-N so it reads as a day count, not an offset; the API still stores a 0-indexed dayOffset.
+    const dayOffset = Number(shiftDayOffset) - 1;
     const startMinute = timeInputToMinutes(shiftStart);
     const endMinute = timeInputToMinutes(shiftEnd);
     if (!shiftStaffId || !Number.isInteger(dayOffset) || startMinute === null || endMinute === null) return;
@@ -336,21 +348,29 @@ function TemplateDetail({
     }
   }
 
+  const occurrences = Math.max(1, Number(repeatCount) || 1);
+
   async function handlePreview() {
     if (!periodStart) return;
     setPlanning(true);
     setApplyResult(null);
     setError(null);
     try {
-      const { plan } = await fetchJson<{ plan: { items: PlanItem[] } }>(
+      const { plan } = await fetchJson<{ plan: { items?: PlanItem[]; occurrences?: OccurrencePlan[] } }>(
         `/api/schedule-templates/${template.id}/apply`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: true }),
+          body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: true, occurrences }),
         }
       );
-      setPlan(plan.items);
+      if (plan.occurrences) {
+        setOccurrencePlans(plan.occurrences);
+        setPlan(plan.occurrences.flatMap((o) => o.items));
+      } else {
+        setOccurrencePlans(null);
+        setPlan(plan.items ?? []);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't preview this apply.");
     } finally {
@@ -366,10 +386,11 @@ function TemplateDetail({
       const { result } = await fetchJson<{ result: ApplyResult }>(`/api/schedule-templates/${template.id}/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: false }),
+        body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: false, occurrences }),
       });
       setApplyResult(result);
       setPlan(null);
+      setOccurrencePlans(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't apply this template.");
     } finally {
@@ -435,9 +456,43 @@ function TemplateDetail({
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-medium">Shifts</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Each row is relative to the period&apos;s start (Day 0), not a real calendar date - that&apos;s what lets
+          Each row is relative to the period&apos;s start (Day 1), not a real calendar date - that&apos;s what lets
           this template be applied starting from any week.
         </p>
+
+        {template.shifts.length > 0 && (
+          <div className="mt-4">
+            <span className="text-xs font-medium text-gray-500">Preview</span>
+            <div className="mt-1.5 max-h-80 overflow-auto">
+              <div
+                className="grid gap-1.5"
+                style={{ gridTemplateColumns: `repeat(${Math.min(template.periodLengthDays, 7)}, minmax(6.5rem, 1fr))` }}
+              >
+                {Array.from({ length: template.periodLengthDays }, (_, day) => {
+                  const dayShifts = template.shifts
+                    .filter((s) => s.dayOffset === day)
+                    .sort((a, b) => a.startMinute - b.startMinute);
+                  return (
+                    <div key={day} className="flex flex-col gap-1 rounded-md border border-gray-200 bg-gray-50 p-1.5">
+                      <span className="text-xs font-semibold text-gray-500">Day {day + 1}</span>
+                      {dayShifts.map((s) => (
+                        <div
+                          key={s.id}
+                          className="rounded border border-primary-200 bg-white px-1.5 py-1 text-xs leading-tight text-gray-700"
+                          title={`${formatMinutes(s.startMinute)}–${formatMinutes(s.endMinute)} · ${s.staff.displayName}`}
+                        >
+                          <span className="font-medium text-primary-700">{s.staff.displayName}</span>
+                          <br />
+                          {formatMinutes(s.startMinute)}–{formatMinutes(s.endMinute)}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {template.shifts.length > 0 && (
           <ul className="mt-4 flex flex-col gap-1.5">
@@ -447,7 +502,7 @@ function TemplateDetail({
                 className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-sm"
               >
                 <span>
-                  <span className="font-medium text-gray-900">Day {s.dayOffset}</span>{" "}
+                  <span className="font-medium text-gray-900">Day {s.dayOffset + 1}</span>{" "}
                   <span className="text-gray-500">
                     · {formatMinutes(s.startMinute)}–{formatMinutes(s.endMinute)} · {s.staff.displayName}
                     {s.shiftServiceType && ` · ${s.shiftServiceType.name}`}
@@ -468,11 +523,11 @@ function TemplateDetail({
 
         <form onSubmit={handleAddShift} className="mt-4 flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1 text-sm">
-            Day (0-{template.periodLengthDays - 1})
+            Day (1-{template.periodLengthDays})
             <input
               type="number"
-              min={0}
-              max={template.periodLengthDays - 1}
+              min={1}
+              max={template.periodLengthDays}
               value={shiftDayOffset}
               onChange={(e) => setShiftDayOffset(e.target.value)}
               className="w-20 rounded-md border border-gray-300 px-2 py-1"
@@ -551,9 +606,26 @@ function TemplateDetail({
               onChange={(e) => {
                 setPeriodStart(e.target.value);
                 setPlan(null);
+                setOccurrencePlans(null);
                 setApplyResult(null);
               }}
               className="rounded-md border border-gray-300 px-2 py-1.5"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Repeat (back-to-back periods)
+            <input
+              type="number"
+              min={1}
+              max={MAX_REPEAT_OCCURRENCES}
+              value={repeatCount}
+              onChange={(e) => {
+                setRepeatCount(e.target.value);
+                setPlan(null);
+                setOccurrencePlans(null);
+                setApplyResult(null);
+              }}
+              className="w-20 rounded-md border border-gray-300 px-2 py-1.5"
             />
           </label>
           <button
@@ -565,6 +637,12 @@ function TemplateDetail({
             {planning ? "Loading preview..." : "Preview"}
           </button>
         </div>
+        {occurrences > 1 && (
+          <p className="mt-1 text-xs text-gray-400">
+            Each period is {template.periodLengthDays} day{template.periodLengthDays === 1 ? "" : "s"} long, so period
+            2 starts right after period 1 ends, and so on.
+          </p>
+        )}
 
         {template.shifts.length === 0 && (
           <p className="mt-2 text-sm text-gray-400">Add at least one shift above before applying this template.</p>
@@ -574,6 +652,7 @@ function TemplateDetail({
           <div className="mt-4">
             <p className="text-sm text-gray-600">
               {plan.length} shift{plan.length === 1 ? "" : "s"} would be created
+              {occurrencePlans && occurrencePlans.length > 1 && ` across ${occurrencePlans.length} periods`}
               {conflictCount > 0 && (
                 <span className="text-amber-700">
                   {" "}
@@ -583,9 +662,9 @@ function TemplateDetail({
               .
             </p>
             <ul className="mt-2 flex max-h-64 flex-col gap-1 overflow-y-auto">
-              {plan.map((item) => (
+              {plan.map((item, index) => (
                 <li
-                  key={item.templateShiftId}
+                  key={`${item.templateShiftId}-${index}`}
                   className={`flex items-center justify-between rounded-md border px-3 py-1.5 text-sm ${
                     item.conflict ? "border-amber-300 bg-amber-50" : "border-gray-200 bg-gray-50"
                   }`}

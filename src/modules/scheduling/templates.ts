@@ -271,6 +271,77 @@ export interface TemplateApplyResult {
   skipped: Array<{ templateShiftId: string; staffId: string; dayOffset: number; reason: "CONFLICT" }>;
 }
 
+/** Caps how many back-to-back periods a single "repeat" request can generate (e.g. weekly for a year). */
+export const MAX_TEMPLATE_APPLY_OCCURRENCES = 52;
+
+export interface TemplateApplyOccurrencePlan {
+  occurrenceIndex: number;
+  periodStart: Date;
+  items: TemplateApplyPlanItem[];
+}
+
+/**
+ * Repeats planTemplateApply across `occurrences` back-to-back periods, each
+ * starting right where the previous one ends (periodStart + i *
+ * periodLengthDays) - this is what "repeat the template" (TODO.md) means in
+ * practice: apply the same pattern to this week, then next week, then the
+ * week after, etc., instead of one manual apply per period. Occurrences
+ * never overlap in time (each is exactly periodLengthDays long), so
+ * conflict detection within planTemplateApply - which only looks at its own
+ * occurrence's date range - already covers the whole run.
+ */
+export async function planTemplateApplyRepeating(
+  tx: Tx,
+  tenantId: string,
+  templateId: string,
+  periodStart: Date,
+  occurrences: number
+): Promise<{
+  template: { id: string; name: string; periodLengthDays: number };
+  occurrences: TemplateApplyOccurrencePlan[];
+}> {
+  const template = await getTemplate(tx, tenantId, templateId);
+  if (!template) throw new Error("NOT_FOUND");
+
+  const results: TemplateApplyOccurrencePlan[] = [];
+  for (let i = 0; i < occurrences; i++) {
+    const start = addDays(periodStart, i * template.periodLengthDays);
+    const { items } = await planTemplateApply(tx, tenantId, templateId, start);
+    results.push({ occurrenceIndex: i, periodStart: start, items });
+  }
+
+  return { template: { id: template.id, name: template.name, periodLengthDays: template.periodLengthDays }, occurrences: results };
+}
+
+/**
+ * Repeats applyTemplate across `occurrences` back-to-back periods. Runs
+ * sequentially (not in parallel) so each occurrence's conflict check sees
+ * every appointment created by the occurrences before it within the same
+ * transaction.
+ */
+export async function applyTemplateRepeating(
+  tx: Tx,
+  tenantId: string,
+  templateId: string,
+  periodStart: Date,
+  occurrences: number,
+  createdByUserId: string
+): Promise<{ created: TemplateApplyResult["created"]; skipped: TemplateApplyResult["skipped"]; occurrenceCount: number }> {
+  const template = await getTemplate(tx, tenantId, templateId);
+  if (!template) throw new Error("NOT_FOUND");
+
+  const created: TemplateApplyResult["created"] = [];
+  const skipped: TemplateApplyResult["skipped"] = [];
+  for (let i = 0; i < occurrences; i++) {
+    const start = addDays(periodStart, i * template.periodLengthDays);
+    const result = await applyTemplate(tx, tenantId, templateId, start, createdByUserId);
+    created.push(...result.created);
+    skipped.push(...result.skipped);
+  }
+
+  return { created, skipped, occurrenceCount: occurrences };
+}
+
 /**
  * Creates a real Appointment for every non-conflicting planned shift
  * (clientId null - these are shifts, not client appointments), skipping

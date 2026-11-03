@@ -415,6 +415,27 @@ deliberately leaves that out so it stays skimmable.
 - **Roster page now gated by the real `VIEW_ROSTER` permission** instead of a
   hardcoded ADMIN/MANAGER/SUPERVISOR check. Check: Settings → Permissions,
   confirm `VIEW_ROSTER` actually controls who can reach `/calendar/roster`.
+- **Overlapping Week/Day events no longer mash into unreadable slivers.**
+  Raised 2026-10-25 (TODO.md: "events on the calendar overlap too much").
+  `SchedulingCalendar.tsx` now passes react-big-calendar's
+  `dayLayoutAlgorithm="no-overlap"` instead of its default `"overlap"` -
+  concurrent events each get their own clean side-by-side lane, same as
+  Google Calendar, instead of partially covering each other in a cascading
+  staircase once more than two or three coincided. The now-pointless
+  "shorter event stacks in front of a longer one" z-index logic
+  (`stackingZIndex`) was removed along with it. Month view also now passes
+  `popup` so a day cell's "+N more" opens an inline popup listing every event
+  for that day (styled to match the app, z-index raised above the draft
+  event) instead of silently navigating to Day view - and Month's event
+  chips dropped the avatar-badge treatment (kept for Week/Day) in favor of a
+  compact colored-dot + name line, so more fit per row before overflowing.
+  Browser-verified end to end with a seeded test tenant (3 staff, ~15
+  overlapping same-day appointments): Week view shows clean side-by-side
+  columns, Month view shows compact chips plus a working "+N more" popup, Day
+  view unaffected, no console errors. Check: on a day with several
+  overlapping bookings, Week/Day should read as distinct side-by-side boxes
+  rather than a staircase of slivers, and Month's "+N more" should pop open a
+  list right there instead of jumping you to Day view.
 
 ## Built on an unconfirmed assumption — just need your yes/no
 

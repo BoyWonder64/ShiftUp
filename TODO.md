@@ -16,8 +16,6 @@ For appointments, we need a notes section about the appointent. We will automate
 
 A new responability for the admin is the ability to decide who can see what for notes. Make sure those setting appointments are not able to see notes. The admin and anyone they allow this setting too will have the ability to review notes and update them. 
 
-events on the calender overlap too much. We need to clean this up more
-
 ## Issues
 
 Bugs, data-model problems, and known gaps now live in **`ISSUES.md`**, not

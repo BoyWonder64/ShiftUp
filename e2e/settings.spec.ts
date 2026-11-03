@@ -34,13 +34,22 @@ test.describe("settings navigation", () => {
     await page.fill('input[placeholder="e.g. Site Visits"]', name);
     await page.click('button:has-text("+ Add calendar")');
 
-    // The calendar's name renders as an editable <input>'s value, not plain
-    // text (CustomCalendarsManager.tsx) - getByText() can't see it at all,
-    // and would otherwise coincidentally match the same name appearing as
-    // an <option> in Preset events' "Creates a" dropdown further down the
-    // page instead (which Playwright correctly reports as not visible,
-    // since <option> never is until its <select> is opened).
-    await expect(page.getByDisplayValue(name)).toBeVisible();
+    // The calendar's name renders as an editable <input>'s live value
+    // (CustomCalendarsManager.tsx), not plain text - getByText() can't see
+    // it at all, and would otherwise coincidentally match the same name
+    // appearing as an <option> in Preset events' "Creates a" dropdown
+    // further down the page instead (which Playwright correctly reports as
+    // not visible, since <option> never is until its <select> is opened).
+    // React controlled inputs don't keep the `value` HTML *attribute* in
+    // sync (only the live DOM property), so a `[value="..."]` CSS selector
+    // wouldn't find it either - reading .value directly is the reliable way.
+    await expect
+      .poll(() =>
+        page
+          .locator("input")
+          .evaluateAll((inputs, expected) => inputs.some((i) => (i as HTMLInputElement).value === expected), name)
+      )
+      .toBe(true);
     await expect(page.getByText(/upgrade/i)).not.toBeVisible();
   });
 

@@ -493,22 +493,6 @@ function nextHourSlot(): { start: Date; end: Date } {
   return { start, end };
 }
 
-/**
- * Google Calendar's stacking order for overlapping Week/Day events: the
- * longer (background) event sits behind, shorter ones layer in front of it -
- * read naturally as "the big block this short thing happens during", rather
- * than two same-weight boxes competing for attention. react-big-calendar's
- * own layout algorithm already gives shorter overlapping events more width
- * growth room, but never sets a z-index, so without this a longer event that
- * happens to render later in the DOM could still paint over a shorter one it
- * overlaps. One minute shorter always wins by exactly one z-index step, and
- * every real duration (even multi-day) stays positive.
- */
-function stackingZIndex(start: Date, end: Date): number {
-  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-  return Math.max(1, 10080 - minutes); // 10080 = minutes in a week, comfortably above any realistic event
-}
-
 export function SchedulingCalendar({
   readOnly = false,
   calendarKind,
@@ -1216,10 +1200,8 @@ export function SchedulingCalendar({
           borderColor: c.border,
           color: c.text,
           textDecoration: appt.status === "CANCELLED" ? "line-through" : undefined,
-          zIndex: stackingZIndex(event.start, event.end),
-          // A slight elevation shadow so a shorter event layered in front of
-          // a longer one (see stackingZIndex above) reads as sitting above
-          // it, Google Calendar-style, rather than just abutting it.
+          // A slight elevation shadow so each event chip reads as a raised
+          // card, Google Calendar-style.
           boxShadow: "0 1px 3px rgba(0, 0, 0, 0.2)",
         },
       };
@@ -1402,6 +1384,28 @@ export function SchedulingCalendar({
 
       const appt = event.resource;
       const staffName = appt.staff.displayName;
+
+      // Month view's day cells are narrow and only fit a couple of rows
+      // before "+N more" kicks in (see the `popup` prop below) - the
+      // avatar-badge treatment below reads fine in Week/Day's wider slots,
+      // but in Month it's mostly what eats the space that would otherwise
+      // fit another event. Google Calendar's month cells use a plain
+      // colored dot instead, so this drops the badge there in favor of one.
+      if (currentView === "month") {
+        return (
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className="h-1.5 w-1.5 flex-shrink-0 rounded-full"
+              style={{ backgroundColor: staffAvatarColor(appt.staffId) }}
+            />
+            <span className="min-w-0 flex-1 truncate">
+              <span className="font-semibold">{staffName}</span>
+              <span className="opacity-80"> · {appointmentTitle(appt)}</span>
+            </span>
+          </span>
+        );
+      }
+
       return (
         <span className="flex min-w-0 items-center gap-1">
           <span
@@ -1418,7 +1422,7 @@ export function SchedulingCalendar({
         </span>
       );
     },
-    [showDragHint]
+    [showDragHint, currentView]
   );
 
   return (
@@ -1727,6 +1731,20 @@ export function SchedulingCalendar({
                   onNavigate={(date) => setCurrentDate(date)}
                   onView={handleViewChange}
                   views={["month", "week", "day", "agenda"]}
+                  // Week/Day: give every overlapping event its own side-by-side
+                  // lane instead of react-big-calendar's default "overlap"
+                  // algorithm, which lets events partially cover each other
+                  // (a cascading staircase of slivers once more than two or
+                  // three coincide - unreadable, see TODO.md's "events on the
+                  // calendar overlap too much" entry). "no-overlap" is what
+                  // Google Calendar actually does for concurrent events: each
+                  // one gets a clean, non-overlapping column.
+                  dayLayoutAlgorithm="no-overlap"
+                  // Month: "+N more" opens an inline popup listing the rest of
+                  // that day's events (Google Calendar's day-cell overflow
+                  // behavior) instead of the default of silently navigating to
+                  // Day view for that date.
+                  popup
                   components={{ toolbar: CalendarToolbar, event: EventContent, timeGutterHeader: TimeGutterHeader }}
                   step={timeStep}
                   timeslots={1}
@@ -2925,9 +2943,15 @@ function CreateEntryPanel({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [staffId, setStaffId] = useState(
-    defaultStaffId ?? staff[0]?.id ?? (canCreateStaff ? NEW_STAFF_VALUE : "")
-  );
+  // null = no explicit choice made yet, so the effective value below keeps
+  // tracking defaultStaffId/staff as they arrive. `staff` is fetched async
+  // by the parent and can still be empty on this panel's first render
+  // (opening the form right after a page load, before GET /api/staff
+  // resolves) - computing the effective id fresh on every render (instead
+  // of baking a fallback into useState's one-time initializer) means it
+  // keeps up once the real list arrives, with no risk of getting stuck.
+  const [staffId, setStaffId] = useState<string | null>(null);
+  const effectiveStaffId = staffId ?? defaultStaffId ?? staff[0]?.id ?? (canCreateStaff ? NEW_STAFF_VALUE : "");
   const [newStaffName, setNewStaffName] = useState("");
   const [newStaffEmail, setNewStaffEmail] = useState("");
   const [newStaffUsername, setNewStaffUsername] = useState("");
@@ -3020,12 +3044,12 @@ function CreateEntryPanel({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!staffId) {
+    if (!effectiveStaffId) {
       fail("Pick a staff member.");
       return;
     }
     if (
-      staffId === NEW_STAFF_VALUE &&
+      effectiveStaffId === NEW_STAFF_VALUE &&
       (!newStaffName.trim() ||
         !newStaffEmail.trim() ||
         !newStaffUsername.trim() ||
@@ -3058,8 +3082,8 @@ function CreateEntryPanel({
     setError(null);
     setConflict(false);
     try {
-      let resolvedStaffId = staffId;
-      if (staffId === NEW_STAFF_VALUE) {
+      let resolvedStaffId = effectiveStaffId;
+      if (effectiveStaffId === NEW_STAFF_VALUE) {
         const { staff: newStaff } = await fetchJson<{ staff: { id: string } }>("/api/staff", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3241,7 +3265,7 @@ function CreateEntryPanel({
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Staff
         <select
-          value={staffId}
+          value={effectiveStaffId}
           onChange={(e) => setStaffId(e.target.value)}
           className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
@@ -3254,7 +3278,7 @@ function CreateEntryPanel({
         </select>
       </label>
 
-      {staffId === NEW_STAFF_VALUE && (
+      {effectiveStaffId === NEW_STAFF_VALUE && (
         <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white/60 p-3">
           <p className="text-xs font-medium text-gray-500">New staff member</p>
           <div className="flex flex-wrap gap-3">
@@ -3690,7 +3714,11 @@ function CustomEventPanel({
   onCreated: () => void;
 }) {
   const [title, setTitle] = useState("");
-  const [staffId, setStaffId] = useState(defaultStaffId ?? staff[0]?.id ?? "");
+  // Same "staff can still be empty on first render" reasoning as
+  // CreateEntryPanel's effectiveStaffId - computed fresh each render rather
+  // than baked into useState's one-time initializer.
+  const [staffId, setStaffId] = useState<string | null>(null);
+  const effectiveStaffId = staffId ?? defaultStaffId ?? staff[0]?.id ?? "";
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -3701,7 +3729,7 @@ function CustomEventPanel({
       setError("Give this event a title.");
       return;
     }
-    if (!staffId) {
+    if (!effectiveStaffId) {
       setError("Pick who this is for.");
       return;
     }
@@ -3715,7 +3743,7 @@ function CustomEventPanel({
         body: JSON.stringify({
           entryKind: mode === "shift" ? "SHIFT" : "APPOINTMENT",
           customTitle: title.trim(),
-          staffId,
+          staffId: effectiveStaffId,
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
         }),
@@ -3808,7 +3836,7 @@ function CustomEventPanel({
       <label className="flex w-full max-w-xs flex-col gap-1 text-sm">
         Staff
         <select
-          value={staffId}
+          value={effectiveStaffId}
           onChange={(e) => setStaffId(e.target.value)}
           className="w-full rounded-md border border-gray-300 px-2 py-1"
         >
