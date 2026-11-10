@@ -69,6 +69,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
     requirement: "ADMIN",
   },
   {
+    slug: "teams",
+    label: "Teams",
+    description: "Group staff into teams and filter the calendar/roster by team.",
+    requirement: "ADMIN",
+  },
+  {
     slug: "booking-widget",
     label: "Booking Widget",
     description: "Let clients book themselves from your own website - bookable services, staff hours, and the embed snippet.",

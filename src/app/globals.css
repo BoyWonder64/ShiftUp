@@ -117,6 +117,23 @@ body {
   margin: 0 1.5px;
   border-width: 2px;
 }
+/* react-big-calendar's own `.rbc-day-slot .rbc-event-content` sets
+ * `height: 100%` alongside `flex: 1 1 0` inside a column-flex event box that
+ * also contains the time-range label above it (`.rbc-event-label`, which
+ * never shrinks - react-big-calendar's own CSS gives it `flex: none`). On a
+ * short appointment (e.g. 30-45 min at a coarse zoom) the event box itself
+ * is short too, so "100% of the box" for content plus the label's own fixed
+ * height adds up to more than the box actually has room for - the overflow
+ * (EventContent's staff name/title, the only staff-identifying content in
+ * the box) gets clipped almost entirely by the box's own `overflow: hidden`,
+ * leaving just a sliver of the time label visible and nothing else. Letting
+ * content size to its own natural (1-2 lines) height instead fixes that -
+ * it still won't fit everything in a truly tiny box, but it no longer
+ * reserves (and then loses) height it was never going to get to use.
+ */
+.rbc-day-slot .rbc-event-content {
+  height: auto;
+}
 .rbc-slot-selection {
   background-color: color-mix(in srgb, var(--color-primary-500) 25%, transparent);
 }

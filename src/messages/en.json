@@ -31,11 +31,18 @@
     "LARGE": "Large",
     "XLARGE": "Extra large"
   },
+  "TimeFormatPicker": {
+    "label": "Time format",
+    "TWELVE_HOUR": "12-hour (9:00 AM)",
+    "TWENTY_FOUR_HOUR": "24-hour / military (09:00)"
+  },
   "AccountPage": {
     "languageSectionTitle": "Language",
     "languageSectionDescription": "Choose the language used across your account.",
     "calendarTextSizeSectionTitle": "Calendar text size",
     "calendarTextSizeSectionDescription": "Choose how large event text appears on the calendar.",
+    "timeFormatSectionTitle": "Time format",
+    "timeFormatSectionDescription": "Choose how times are displayed on the calendar and in shift/appointment details.",
     "saved": "Saved."
   },
   "Dashboard": {

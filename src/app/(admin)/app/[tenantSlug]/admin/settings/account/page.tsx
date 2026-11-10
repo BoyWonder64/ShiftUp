@@ -1,6 +1,7 @@
 import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { LanguageSettingsForm } from "@/components/LanguageSettingsForm";
 import { CalendarTextSizeForm } from "@/components/CalendarTextSizeForm";
+import { TimeFormatForm } from "@/components/TimeFormatForm";
 import { requireSettingsSection } from "../access";
 import { runInTenantContext } from "@/lib/tenant-context";
 
@@ -72,6 +73,7 @@ export default async function AccountSettingsPage({
 
       <LanguageSettingsForm />
       <CalendarTextSizeForm />
+      <TimeFormatForm />
       <ChangePasswordForm />
     </div>
   );

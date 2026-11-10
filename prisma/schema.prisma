@@ -291,6 +291,8 @@ model Tenant {
   customCalendars         CustomCalendar[]
   dashboardMetrics        DashboardMetric[]
   eventPresets            EventPreset[]
+  teams                   Team[]
+  teamMembers             TeamMember[]
 
   @@map("tenants")
 }
@@ -586,6 +588,20 @@ enum CalendarTextSize {
   @@map("calendar_text_size")
 }
 
+/// A user's own clock-format preference (Settings > Account) - per-user, not
+/// per-tenant, same rationale as Locale/CalendarTextSize above. Drives every
+/// formatted time this user sees in the calendar (event chips, the shift/
+/// appointment detail panel) - TWELVE_HOUR is the default ("9:00 AM"),
+/// TWENTY_FOUR_HOUR ("military time", "09:00"/"17:00") for anyone who
+/// prefers it, which also happens to run shorter since it never needs an
+/// AM/PM suffix.
+enum TimeFormat {
+  TWELVE_HOUR
+  TWENTY_FOUR_HOUR
+
+  @@map("time_format")
+}
+
 /// A login-capable user. Platform superadmins have tenantId = null;
 /// every other user belongs to exactly one tenant.
 model User {
@@ -595,6 +611,7 @@ model User {
   email            String           @unique
   locale           Locale           @default(EN)
   calendarTextSize CalendarTextSize @default(MEDIUM) @map("calendar_text_size")
+  timeFormat       TimeFormat       @default(TWELVE_HOUR) @map("time_format")
   /// Admin-set at account creation (signup, or whoever adds a staff member) -
   /// nullable only because it was added after email-only login already
   /// existed; every new account is required to set one (see isValidUsername
@@ -716,9 +733,49 @@ model StaffProfile {
   appointments           Appointment[]
   timeOffs               TimeOff[]
   scheduleTemplateShifts ScheduleTemplateShift[]
+  teamMemberships        TeamMember[]
 
   @@index([tenantId])
   @@map("staff_profiles")
+}
+
+/// A tenant-defined grouping of staff members (e.g. "Morning crew", "Plumbing
+/// team") - admin-managed only for now, per the original ask. Purely
+/// organizational: nothing else in the app reads team membership yet (no
+/// team-based filtering/permissions/visibility) - this is just the
+/// structure, consumers come later.
+model Team {
+  id          String   @id @default(uuid())
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  members TeamMember[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("teams")
+}
+
+/// Join row for Team<->StaffProfile - a real table (not an implicit Prisma
+/// many-to-many) so it carries tenantId for the same RLS tenant-isolation
+/// policy every other tenant-scoped table has.
+model TeamMember {
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  teamId         String       @map("team_id")
+  team           Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  staffProfileId String       @map("staff_profile_id")
+  staffProfile   StaffProfile @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@unique([teamId, staffProfileId])
+  @@index([tenantId])
+  @@index([staffProfileId])
+  @@map("team_members")
 }
 
 enum TimeOffStatus {

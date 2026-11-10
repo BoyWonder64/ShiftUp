@@ -8,7 +8,8 @@ see `ARCHITECTURE.md`. **Anything marked "Done"/"Resolved" below has been
 pulled out into `VERIFY.md`** — a checklist for you to confirm in the running
 app — rather than left here as done-but-unconfirmed clutter.
 
-For the templates, you need to be able to repeate the template. 
+~~For the templates, you need to be able to repeate the template.~~ **Done
+2026-11-03 — moved to `VERIFY.md`.**
 
 For appointment we need to add the option to repeat the appointment. daily, weekly, bi weekly, monthly
 
@@ -161,33 +162,14 @@ confirm. See `ISSUES.md` if you want the full history.
   not re-litigated.
 - ~~Reusable shift-schedule templates, a new page for the staff manager.~~
   **Done 2026-10-02 — moved to `VERIFY.md`.**
-- **Fix the schedule-templates builder UI - a visual week preview instead of a
-  bare day-number input.** Raised 2026-10-09. Today in
-  `ScheduleTemplatesView.tsx`, building a template's shifts means typing a raw
-  "Day (0-`periodLengthDays - 1`)" number (`shiftDayOffset` state, the add-shift
-  form around lines 470-480) with no indication of which weekday that maps to -
-  doesn't read sensibly at a glance. Two related asks raised together:
-  - **The day you're setting should read as a weekday, not just an integer
-    offset** - e.g. label it "Day 0 (Mon)", "Day 1 (Tue)", ... for a 7-day
-    template, since `dayOffset` is relative to whatever date the template gets
-    applied from later (see the existing "relative to the period's start, not
-    a real calendar date" note at line 438) - this is a display label over the
-    existing offset, not a newly-stored day-of-week.
-  - **A live visual week preview while building the template** - add a row
-    rendered as a small calendar/week grid (one column per day) showing each
-    shift in its day's column as it's added/removed, instead of (or in
-    addition to) today's flat list of "Day N · time · staff" rows (the `<ul>`
-    around lines 442-467). Should update immediately in the builder itself -
-    distinct from the existing "Apply to a week" section's dry-run preview
-    (lines 538-629), which only appears after a real `periodStart` date is
-    picked for applying; this new preview is about visualizing the template's
-    own shape while building it, before any real date is involved.
-  Needs scoping before building: does the week-grid preview only make sense
-  for `periodLengthDays === 7` (a literal calendar week), or does it need to
-  generalize to longer periods (templates allow 1-90 days today via the
-  existing min/max)? A grid stops reading as "a small calendar" much past two
-  weeks, so this may need a different layout (or a scroll/paginated grid) for
-  longer templates.
+- ~~**Fix the schedule-templates builder UI - a visual week preview instead of a
+  bare day-number input.**~~ **Done 2026-11-03 — moved to `VERIFY.md`.** Built
+  as: the day field/list now read **1-N** instead of 0-indexed (no weekday
+  name mapping - `dayOffset` is period-relative, not tied to a real weekday,
+  so a "Mon/Tue" label would mislead), and a live grid preview (one column per
+  day, wraps every 7 columns, scrolls for longer periods) that updates
+  immediately as shifts are added/removed - separate from the existing
+  "Apply to a week" dry-run preview.
 - **Sign in with Google (OAuth)** - raised 2026-10-01 as "two-factor
   authentication, possibly via Google," which was actually two different
   features (OAuth login vs. TOTP 2FA). **Decided 2026-10-09: build OAuth

@@ -31,11 +31,18 @@
     "LARGE": "Groß",
     "XLARGE": "Sehr groß"
   },
+  "TimeFormatPicker": {
+    "label": "Zeitformat",
+    "TWELVE_HOUR": "12-Stunden (9:00 AM)",
+    "TWENTY_FOUR_HOUR": "24-Stunden / Militärzeit (09:00)"
+  },
   "AccountPage": {
     "languageSectionTitle": "Sprache",
     "languageSectionDescription": "Wähle die Sprache, die für dein gesamtes Konto verwendet wird.",
     "calendarTextSizeSectionTitle": "Textgröße im Kalender",
     "calendarTextSizeSectionDescription": "Wähle, wie groß der Text von Terminen im Kalender angezeigt wird.",
+    "timeFormatSectionTitle": "Zeitformat",
+    "timeFormatSectionDescription": "Wähle, wie Uhrzeiten im Kalender und in Schicht-/Termindetails angezeigt werden.",
     "saved": "Gespeichert."
   },
   "Dashboard": {

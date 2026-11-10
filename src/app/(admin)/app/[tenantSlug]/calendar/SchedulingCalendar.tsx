@@ -8,7 +8,7 @@ import {
   type View,
 } from "react-big-calendar";
 import withDragAndDrop, { type EventInteractionArgs } from "react-big-calendar/lib/addons/dragAndDrop";
-import { addDays, format, parse, startOfWeek, getDay } from "date-fns";
+import { addDays, format, parse, startOfWeek, getDay, isSameDay } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
@@ -26,9 +26,11 @@ import {
 import { getCustomHolidaysInRange, type ComputedHoliday } from "@/lib/holidays/federal";
 import { getEnabledHolidaysInRange } from "@/lib/holidays/catalog";
 import { CALENDAR_TEXT_SIZE_REM, type CalendarTextSize } from "@/lib/calendar/textSize";
+import { formatClockRange, formatClockTime, type TimeFormat } from "@/lib/calendar/timeFormat";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { CalendarLegend } from "./CalendarLegend";
 import { MiniMonthCalendar } from "./MiniMonthCalendar";
+import { StaffWeekRosterView } from "./StaffWeekRosterView";
 
 // Pass date-fns's startOfWeek directly - dateFnsLocalizer only ever calls it
 // as startOfWeek(new Date(), { locale }) internally (see
@@ -93,7 +95,7 @@ function TimeGutterHeader() {
 type EntryMode = "appointment" | "shift" | "custom";
 
 /** Thin `ApiAppointment`-shaped wrapper around the shared `resolveEventColor` helper. */
-function resolveAppointmentColor(
+export function resolveAppointmentColor(
   appt: ApiAppointment,
   colors: Record<EventColorKey, ColorTriple>
 ): ColorTriple {
@@ -108,6 +110,13 @@ const BASE_LEGEND_KEYS: EventColorKey[] = ["appointment", "shift", "completed", 
 export interface StaffOption {
   id: string;
   displayName: string;
+}
+/** A tenant-defined team (Settings > Teams) and the staff profile ids on it - used to narrow the calendar/roster staff filter by team. */
+export interface TeamOption {
+  id: string;
+  name: string;
+  description: string | null;
+  members: { staffProfileId: string; displayName: string }[];
 }
 export interface TenantRoleOption {
   id: string;
@@ -212,7 +221,7 @@ export interface CalendarEvent {
  * special-case it before touching `.resource` - it only exists to satisfy
  * CalendarEvent's shape.
  */
-const DRAFT_EVENT_ID = "__draft__";
+export const DRAFT_EVENT_ID = "__draft__";
 const DRAFT_RESOURCE: ApiAppointment = {
   id: DRAFT_EVENT_ID,
   staffId: "",
@@ -445,7 +454,7 @@ export function Modal({
 }
 
 /** "Jane Smith" -> "JS"; single-word names fall back to its first two letters. Used by the event's staff avatar badge. */
-function staffInitials(name: string): string {
+export function staffInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
@@ -457,7 +466,7 @@ function staffInitials(name: string): string {
 // touching eventPropGetter's status/tag-based background color.
 const STAFF_AVATAR_COLORS = ["#6366f1", "#059669", "#d97706", "#db2777", "#0891b2", "#7c3aed", "#dc2626", "#4b5563"];
 
-function staffAvatarColor(staffId: string): string {
+export function staffAvatarColor(staffId: string): string {
   let hash = 0;
   for (let i = 0; i < staffId.length; i++) hash = (hash * 31 + staffId.charCodeAt(i)) >>> 0;
   return STAFF_AVATAR_COLORS[hash % STAFF_AVATAR_COLORS.length];
@@ -488,6 +497,16 @@ function nextHourSlot(): { start: Date; end: Date } {
   const start = new Date();
   start.setMinutes(0, 0, 0);
   start.setHours(start.getHours() + 1);
+  const end = new Date(start);
+  end.setHours(end.getHours() + 1);
+  return { start, end };
+}
+
+/** Same "next full hour" default as nextHourSlot, but pinned to an arbitrary date (StaffWeekRosterView's click-to-create) - today still gets the next real hour, any other day defaults to a plain 9-10am slot. */
+export function hourSlotOn(date: Date): { start: Date; end: Date } {
+  if (isSameDay(date, new Date())) return nextHourSlot();
+  const start = new Date(date);
+  start.setHours(9, 0, 0, 0);
   const end = new Date(start);
   end.setHours(end.getHours() + 1);
   return { start, end };
@@ -540,6 +559,7 @@ export function SchedulingCalendar({
   // tenant-wide settings below since it's the viewer's own preference, not shared config.
   // Defaults to the calendar's own (smaller-than-body) baseline until the real value loads.
   const [calendarTextSize, setCalendarTextSize] = useState<CalendarTextSize>("MEDIUM");
+  const [timeFormat, setTimeFormat] = useState<TimeFormat>("TWELVE_HOUR");
   const [staff, setStaff] = useState<StaffOption[]>([]);
   // Split per ISSUES.md #1 - an appointment's job type and a shift's job type
   // now come from two independent tables/endpoints, never the same pool.
@@ -599,6 +619,10 @@ export function SchedulingCalendar({
   const [holidays, setHolidays] = useState<HolidayOption[]>([]);
   const [blockedTimes, setBlockedTimes] = useState<BlockedTimeOption[]>([]);
   const [staffFilter, setStaffFilter] = useState<string>(initialStaffId ?? "all");
+  // Settings > Teams - narrows staffFilter's "all"/one-staff-member choice
+  // down to one team's members, ANDed with it rather than replacing it.
+  const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [teamFilter, setTeamFilter] = useState<string>("all");
   // Settings > Permissions > VIEW_ALL_SHIFTS/VIEW_ALL_APPOINTMENTS - "all" is
   // only ever an option when the viewer actually holds the relevant
   // permission; without it the server always scopes the response to the
@@ -654,12 +678,17 @@ export function SchedulingCalendar({
       }
     | null
   >(null);
-  // "Group by staff" - splits the Day view into one column per staff member
-  // (react-big-calendar's resource view) instead of cramming every shift
-  // into a single column as narrow slivers once there are more than a
-  // handful at once. Only meaningful for Day view (a resourced Week view
-  // would render staff x 7 columns, far too wide - see TimeGrid's
-  // renderResourcesFirst), so switching away from Day turns it back off.
+  // "Group by staff" - splits a single combined column/day into one lane per
+  // staff member instead of cramming every shift together as narrow slivers
+  // once there are more than a handful at once. Meaningful for Day (one
+  // column per staff, react-big-calendar's native resource view) and Week
+  // (StaffWeekRosterView below - a roster grid, staff as rows x the 7 days
+  // as columns, NOT react-big-calendar's resource view: a resourced Week
+  // would render staff x 7 columns, e.g. 80 staff x 7 = 560, unusable even
+  // scrolling - see TimeGrid's renderResourcesFirst). Not meaningful for
+  // Month (no sensible per-staff shape for a month grid) or Agenda (already
+  // a flat list), so switching to either of those turns it back off - see
+  // handleViewChange below.
   const [groupByStaff, setGroupByStaff] = useState(false);
   // Whether the create modal has finished its entrance transition - kept
   // separate from `creating` itself so the modal doesn't just snap into
@@ -761,12 +790,30 @@ export function SchedulingCalendar({
     }
   }, []);
 
+  const loadTimeFormat = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ timeFormat: TimeFormat }>("/api/me/time-format");
+      setTimeFormat(data.timeFormat);
+    } catch {
+      // Not fatal - same reasoning as loadCalendarTextSize; just keeps the 12-hour default.
+    }
+  }, []);
+
   const loadRoles = useCallback(async () => {
     try {
       const data = await fetchJson<{ roles: TenantRoleOption[] }>("/api/roles");
       setRoles(data.roles);
     } catch {
       // Not fatal - the inline "+ Add new staff member" role dropdown just stays empty until retried.
+    }
+  }, []);
+
+  const loadTeams = useCallback(async () => {
+    try {
+      const data = await fetchJson<{ teams: TeamOption[] }>("/api/teams");
+      setTeams(data.teams);
+    } catch {
+      // Not fatal - the team filter just stays hidden/empty until retried.
     }
   }, []);
 
@@ -839,7 +886,9 @@ export function SchedulingCalendar({
         loadHolidays(),
         loadBlockedTimes(),
         loadRoles(),
+        loadTeams(),
         loadCalendarTextSize(),
+        loadTimeFormat(),
         loadCustomCalendars(),
         loadEventPresets(),
       ]);
@@ -851,7 +900,9 @@ export function SchedulingCalendar({
     loadHolidays,
     loadBlockedTimes,
     loadRoles,
+    loadTeams,
     loadCalendarTextSize,
+    loadTimeFormat,
     loadCustomCalendars,
     loadEventPresets,
   ]);
@@ -879,20 +930,29 @@ export function SchedulingCalendar({
     };
   }, [creatingOpen]);
 
-  // Leaving Day view (via the toolbar's Week/Month/Agenda buttons, or
-  // onView below) turns "Group by staff" back off, since it only renders as
-  // resource columns there (see groupByStaff's declaration) - done in this
-  // handler rather than an effect so it's a direct response to the nav
-  // click, not a synchronized derived-state update.
+  // Switching to Month or Agenda (via the toolbar, or onView below) turns
+  // "Group by staff" back off, since neither has a by-staff rendering (see
+  // groupByStaff's declaration) - staying on or moving between Day/Week
+  // keeps it on, since both do. Done in this handler rather than an effect
+  // so it's a direct response to the nav click, not a synchronized
+  // derived-state update.
   const handleViewChange = useCallback((view: View) => {
     setCurrentView(view);
-    if (view !== "day") setGroupByStaff(false);
+    if (view !== "day" && view !== "week") setGroupByStaff(false);
   }, []);
 
   const handleRangeChange = useCallback((r: Date[] | { start: Date; end: Date }) => {
     if (Array.isArray(r)) {
       if (r.length === 0) return;
-      setRange({ start: r[0], end: r[r.length - 1] });
+      // r's last element is the *start* of the last visible day (midnight),
+      // not its end - using it directly as `end` made every fetch exclude
+      // that whole last day, and collapsed to a zero-width (start === end)
+      // range entirely for any single-day array (Day view, Agenda's default
+      // length), which silently fetched no appointments at all every time
+      // you switched to Day view via the toolbar. +1 day matches the
+      // exclusive-end convention `range`'s own initial value already uses
+      // (see its useState above: `end = start + 7 days` for a Sun-Sat week).
+      setRange({ start: r[0], end: addDays(r[r.length - 1], 1) });
     } else {
       setRange(r);
     }
@@ -1098,8 +1158,18 @@ export function SchedulingCalendar({
     [customCalendars]
   );
 
+  // staffProfileIds of the selected team's members, or null when "All teams"
+  // is selected - ANDed into visibleEvents/resourceStaff below rather than
+  // replacing the staff filter.
+  const teamStaffIds = useMemo(() => {
+    if (teamFilter === "all") return null;
+    const team = teams.find((t) => t.id === teamFilter);
+    return new Set(team?.members.map((m) => m.staffProfileId) ?? []);
+  }, [teams, teamFilter]);
+
   const visibleEvents = useMemo(() => {
     let list = staffFilter === "all" ? events : events.filter((e) => e.resource.staffId === staffFilter);
+    if (teamStaffIds) list = list.filter((e) => teamStaffIds.has(e.resource.staffId));
     if (calendarKind === "all") {
       list = list.filter(
         (e) =>
@@ -1112,7 +1182,7 @@ export function SchedulingCalendar({
     else if (calendarKind === "custom")
       list = list.filter((e) => isCustomEntry(e.resource) && e.resource.customCalendarId === customCalendarId);
     return list;
-  }, [events, staffFilter, calendarKind, showAppointmentUI, showShiftUI, showCustomUI, customCalendarId]);
+  }, [events, staffFilter, teamStaffIds, calendarKind, showAppointmentUI, showShiftUI, showCustomUI, customCalendarId]);
 
   // The pending create/shift form is rendered as a real calendar event (a
   // dashed "ghost" block) so its selection stays visible and can be dragged/
@@ -1143,9 +1213,61 @@ export function SchedulingCalendar({
   // staff filter dropdown still narrows which column(s) show, same as it
   // narrows the normal combined view.
   const resourceViewActive = groupByStaff && currentView === "day" && staff.length > 1;
-  const resourceStaff = useMemo(
-    () => (staffFilter === "all" ? staff : staff.filter((s) => s.id === staffFilter)),
-    [staff, staffFilter]
+  const resourceStaff = useMemo(() => {
+    let list = staffFilter === "all" ? staff : staff.filter((s) => s.id === staffFilter);
+    if (teamStaffIds) list = list.filter((s) => teamStaffIds.has(s.id));
+    return list;
+  }, [staff, staffFilter, teamStaffIds]);
+
+  // react-big-calendar's `views` prop, as an object rather than the plain
+  // array it used to be - letting a view name map to a real component
+  // (rather than `true`, meaning "use the built-in one") is how
+  // StaffWeekRosterView gets registered as Week's body when "Group by
+  // staff" is on, while Month/Day/Agenda keep their built-in rendering
+  // untouched. CalendarToolbar.tsx already handles both shapes of `views`.
+  const views = useMemo(
+    () => ({
+      month: true,
+      week: groupByStaff && staff.length > 1 ? StaffWeekRosterView : true,
+      day: true,
+      agenda: true,
+    }),
+    [groupByStaff, staff.length]
+  );
+
+  // Extra, non-standard props forwarded straight through react-big-calendar
+  // to whichever view is active (confirmed via Calendar.js's render() and
+  // withDragAndDrop.js - neither strips unrecognized props) - the built-in
+  // views just ignore these; StaffWeekRosterView is the only one that reads
+  // them, for the staff list/colors it needs beyond react-big-calendar's
+  // standard per-view prop contract. Spread as a variable rather than
+  // inlined as JSX attributes so TypeScript's excess-property check (which
+  // only fires for object literals written directly on a JSX tag) doesn't
+  // flag them against DnDCalendar's typed props.
+  const rosterViewProps = {
+    rosterStaff: resourceStaff,
+    rosterColorTriples: colorTriples,
+    rosterCanCreate: canCreateForCurrentType,
+    rosterTimeFormat: timeFormat,
+  };
+
+  // Week/Day's per-event time label (react-big-calendar's own
+  // `.rbc-event-label`, separate from the staff name/title EventContent
+  // renders below it) - honors the viewer's 12-hour/24-hour preference
+  // (Settings > Account, same as everywhere else this calendar shows a
+  // time) via formatClockTime/formatClockRange. Always the real, full time
+  // - a previous version of this abbreviated it (dropping ":00", "9a"
+  // instead of "9:00 AM") to fight truncation in narrow boxes, which read
+  // as confusing shorthand rather than a real time; that narrow a box just
+  // truncates the real time with an ellipsis now, same as any other text
+  // here, rather than inventing a shorter notation of its own.
+  const calendarFormats = useMemo(
+    () => ({
+      eventTimeRangeFormat: ({ start, end }: { start: Date; end: Date }) => formatClockRange(start, end, timeFormat),
+      eventTimeRangeStartFormat: ({ start }: { start: Date }) => `${formatClockTime(start, timeFormat)} – `,
+      eventTimeRangeEndFormat: ({ end }: { end: Date }) => ` – ${formatClockTime(end, timeFormat)}`,
+    }),
+    [timeFormat]
   );
 
   const eventPropGetter = useCallback(
@@ -1406,18 +1528,31 @@ export function SchedulingCalendar({
         );
       }
 
+      // Week/Day's day-column width gets divided among however many events
+      // overlap in time (see dayLayoutAlgorithm="no-overlap" above) - once
+      // there's more than one at a time, each box can easily end up narrower
+      // than a single word. A single combined "name · title" line truncated
+      // as one string (the old version of this) meant the title ate into the
+      // name's share of that narrow space, often leaving nothing legible at
+      // all past 3-4 characters. Stacking name and title as two *separately*
+      // truncating lines instead means each only has to fit its own
+      // (usually much shorter) text - "Jack" alone almost always fits even
+      // where "Jack · Shift" wouldn't - so a narrow box still reads instead
+      // of going blank. Needs the event box tall enough for two lines
+      // (easily true for a multi-hour shift, not for a 15-30 min slot at a
+      // coarse zoom) - short events still fall back to whatever fits.
       return (
-        <span className="flex min-w-0 items-center gap-1">
+        <span className="flex min-w-0 items-start gap-1">
           <span
-            className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
+            className="mt-px flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
             style={{ backgroundColor: staffAvatarColor(appt.staffId) }}
             title={staffName}
           >
             {staffInitials(staffName)}
           </span>
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-semibold">{staffName}</span>
-            <span className="opacity-80"> · {appointmentTitle(appt)}</span>
+          <span className="min-w-0 flex-1 overflow-hidden">
+            <span className="block truncate leading-tight font-semibold">{staffName}</span>
+            <span className="block truncate leading-tight opacity-80">{appointmentTitle(appt)}</span>
           </span>
         </span>
       );
@@ -1475,12 +1610,33 @@ export function SchedulingCalendar({
             </div>
           )}
 
-          {/* Splits the Day view into one column per staff member so it stays
-              readable once there are more than a handful of shifts at once,
-              and makes it easy to spot who's working alongside whom. Only
-              wired up for Day view (see groupByStaff's declaration) - the
-              button still shows elsewhere so switching views doesn't hide
-              the control, but clicking it jumps to Day view too. */}
+          {teams.length > 0 && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Team</span>
+              <select
+                value={teamFilter}
+                onChange={(e) => setTeamFilter(e.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              >
+                <option value="all">All teams</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Splits a single combined column/day into one lane per staff
+              member so it stays readable once there are more than a handful
+              of shifts at once, and makes it easy to spot who's working
+              alongside whom. Wired up for Day (one column per staff) and
+              Week (StaffWeekRosterView - one row per staff) - see
+              groupByStaff's declaration. The button still shows on Month/
+              Agenda too so switching views doesn't hide the control, but
+              clicking it there jumps to Week (a more useful default than
+              Day for seeing the whole roster) rather than doing nothing. */}
           {staff.length > 1 && (
             <div className="flex flex-col gap-0.5">
               <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Layout</span>
@@ -1490,10 +1646,14 @@ export function SchedulingCalendar({
                     key={layout}
                     type="button"
                     onClick={() => {
-                      if (layout === "staff") setCurrentView("day");
+                      if (layout === "staff" && currentView !== "day" && currentView !== "week") setCurrentView("week");
                       setGroupByStaff(layout === "staff");
                     }}
-                    title={layout === "staff" ? "One column per staff member (Day view)" : "Everyone in one combined view"}
+                    title={
+                      layout === "staff"
+                        ? "One column per staff member (Day) or one row per staff member (Week)"
+                        : "Everyone in one combined view"
+                    }
                     className={`rounded-full px-2.5 py-1 font-medium transition-all duration-150 ${
                       (layout === "staff") === groupByStaff
                         ? "bg-primary-500 text-white shadow-sm"
@@ -1730,7 +1890,7 @@ export function SchedulingCalendar({
                   view={currentView}
                   onNavigate={(date) => setCurrentDate(date)}
                   onView={handleViewChange}
-                  views={["month", "week", "day", "agenda"]}
+                  views={views}
                   // Week/Day: give every overlapping event its own side-by-side
                   // lane instead of react-big-calendar's default "overlap"
                   // algorithm, which lets events partially cover each other
@@ -1746,6 +1906,7 @@ export function SchedulingCalendar({
                   // Day view for that date.
                   popup
                   components={{ toolbar: CalendarToolbar, event: EventContent, timeGutterHeader: TimeGutterHeader }}
+                  formats={calendarFormats}
                   step={timeStep}
                   timeslots={1}
                   min={gridMinTime}
@@ -1763,6 +1924,7 @@ export function SchedulingCalendar({
                         resourceAccessor: (event: CalendarEvent) => event.resource.staffId,
                       }
                     : {})}
+                  {...rosterViewProps}
                   // "ignoreEvents" lets a new selection be drawn starting on top of
                   // an existing event instead of the existing event capturing the
                   // click/drag - this is what lets overlapping bookings be created
@@ -1978,6 +2140,7 @@ export function SchedulingCalendar({
             showColorKey={showColorKeyOnShiftForm}
             customSettings={customSettingsFor(selected.customCalendarId)}
             colorTriples={colorTriples}
+            timeFormat={timeFormat}
             tags={tags}
             staff={staff}
             serviceTypes={isShift(selected) || isCustomEntry(selected) ? shiftServiceTypes : appointmentServiceTypes}
@@ -2030,6 +2193,7 @@ export function AppointmentDetailPanel({
   showColorKey,
   customSettings,
   colorTriples,
+  timeFormat,
   tags,
   staff,
   serviceTypes,
@@ -2073,6 +2237,7 @@ export function AppointmentDetailPanel({
     showPaymentStatus: boolean;
   };
   colorTriples: Record<EventColorKey, ColorTriple>;
+  timeFormat: TimeFormat;
   tags: TagOption[];
   staff: StaffOption[];
   serviceTypes: ServiceTypeOption[];
@@ -2450,6 +2615,11 @@ export function AppointmentDetailPanel({
         </form>
       ) : (
         <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+          <dt className="text-gray-500">When</dt>
+          <dd>
+            {format(new Date(appointment.startTime), "EEE, MMM d")} &middot;{" "}
+            {formatClockRange(new Date(appointment.startTime), new Date(appointment.endTime), timeFormat)}
+          </dd>
           {effectiveShowClient && (
             <>
               <dt className="text-gray-500">Client</dt>

@@ -11,6 +11,7 @@ import {
   isShift,
   type ApiAppointment,
   type StaffOption,
+  type TeamOption,
 } from "../SchedulingCalendar";
 import {
   buildColorTriples,
@@ -47,6 +48,8 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
   const [kindFilter, setKindFilter] = useState<KindFilter>("both");
   const [anchorDate, setAnchorDate] = useState(() => new Date());
   const [staff, setStaff] = useState<StaffOption[]>([]);
+  const [teams, setTeams] = useState<TeamOption[]>([]);
+  const [teamFilter, setTeamFilter] = useState<string>("all");
   const [appointments, setAppointments] = useState<ApiAppointment[]>([]);
   // Tenant-personalized event colors - fetched here rather than imported from
   // SchedulingCalendar.tsx so this view renders the same colors without a
@@ -65,8 +68,9 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
       setLoading(true);
       setError(null);
       try {
-        const [staffData, apptData, settingsData] = await Promise.all([
+        const [staffData, teamData, apptData, settingsData] = await Promise.all([
           fetchJson<{ staff: StaffOption[] }>("/api/staff"),
+          fetchJson<{ teams: TeamOption[] }>("/api/teams"),
           fetchJson<{ appointments: ApiAppointment[] }>(
             `/api/appointments?start=${range.start.toISOString()}&end=${range.end.toISOString()}`
           ),
@@ -74,6 +78,7 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
         ]);
         if (cancelled) return;
         setStaff(staffData.staff);
+        setTeams(teamData.teams);
         setAppointments(apptData.appointments);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
       } catch (err) {
@@ -95,6 +100,13 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
     if (kindFilter === "custom") return appointments.filter(isCustomEntry);
     return appointments.filter((a) => !isShift(a) && !isCustomEntry(a));
   }, [appointments, kindFilter]);
+
+  const visibleStaff = useMemo(() => {
+    if (teamFilter === "all") return staff;
+    const team = teams.find((t) => t.id === teamFilter);
+    const ids = new Set(team?.members.map((m) => m.staffProfileId) ?? []);
+    return staff.filter((s) => ids.has(s.id));
+  }, [staff, teams, teamFilter]);
 
   const byStaff = useMemo(() => {
     const map = new Map<string, ApiAppointment[]>();
@@ -177,6 +189,21 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
           ))}
         </div>
 
+        {teams.length > 0 && (
+          <select
+            value={teamFilter}
+            onChange={(e) => setTeamFilter(e.target.value)}
+            className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+          >
+            <option value="all">All teams</option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+
         <div className="inline-flex gap-1 rounded-full bg-gray-100 p-1 text-sm">
           {(["day", "week"] as const).map((g) => (
             <button
@@ -197,11 +224,11 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
 
       {loading ? (
         <p className="text-sm text-gray-400">Loading...</p>
-      ) : staff.length === 0 ? (
-        <p className="text-sm text-gray-400">No staff yet.</p>
+      ) : visibleStaff.length === 0 ? (
+        <p className="text-sm text-gray-400">{staff.length === 0 ? "No staff yet." : "No staff on this team."}</p>
       ) : (
         <div className="flex flex-col gap-3">
-          {staff.map((member) => {
+          {visibleStaff.map((member) => {
             const items = byStaff.get(member.id) ?? [];
             const apptCount = items.filter((i) => !isShift(i) && !isCustomEntry(i)).length;
             const shiftCount = items.filter(isShift).length;

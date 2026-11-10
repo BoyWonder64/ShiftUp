@@ -31,11 +31,18 @@
     "LARGE": "Grand",
     "XLARGE": "Très grand"
   },
+  "TimeFormatPicker": {
+    "label": "Format de l'heure",
+    "TWELVE_HOUR": "12 heures (9:00 AM)",
+    "TWENTY_FOUR_HOUR": "24 heures / militaire (09:00)"
+  },
   "AccountPage": {
     "languageSectionTitle": "Langue",
     "languageSectionDescription": "Choisissez la langue utilisée dans tout votre compte.",
     "calendarTextSizeSectionTitle": "Taille du texte du calendrier",
     "calendarTextSizeSectionDescription": "Choisissez la taille du texte des événements sur le calendrier.",
+    "timeFormatSectionTitle": "Format de l'heure",
+    "timeFormatSectionDescription": "Choisissez comment les heures s'affichent sur le calendrier et dans les détails des quarts/rendez-vous.",
     "saved": "Enregistré."
   },
   "Dashboard": {

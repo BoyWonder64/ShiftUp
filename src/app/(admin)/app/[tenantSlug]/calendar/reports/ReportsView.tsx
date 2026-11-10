@@ -10,6 +10,7 @@ import {
   type ColorTriple,
   type EventColorKey,
 } from "@/lib/colors/eventColors";
+import type { TimeFormat } from "@/lib/calendar/timeFormat";
 import {
   AppointmentDetailPanel,
   Modal,
@@ -122,6 +123,7 @@ export function ReportsView() {
   const [colorTriples, setColorTriples] = useState<Record<EventColorKey, ColorTriple>>(() =>
     buildColorTriples(resolveEventColors(undefined))
   );
+  const [timeFormat, setTimeFormat] = useState<TimeFormat>("TWELVE_HOUR");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,6 +145,7 @@ export function ReportsView() {
           permData,
           settingsData,
           customCalendarsData,
+          timeFormatData,
         ] = await Promise.all([
           fetchJson<{ staff: StaffOption[] }>("/api/staff"),
           fetchJson<{ serviceTypes: ServiceTypeOption[] }>("/api/appointment-service-types"),
@@ -154,6 +157,7 @@ export function ReportsView() {
           fetchJson<{ customCalendars: CustomCalendarOption[] }>("/api/custom-calendars").catch(() => ({
             customCalendars: [],
           })),
+          fetchJson<{ timeFormat: TimeFormat }>("/api/me/time-format").catch(() => ({ timeFormat: "TWELVE_HOUR" as const })),
         ]);
         setStaff(staffData.staff);
         setAppointmentServiceTypes(apptServiceData.serviceTypes);
@@ -164,6 +168,7 @@ export function ReportsView() {
         setSettings(settingsData.settings);
         setCustomCalendars(customCalendarsData.customCalendars);
         setColorTriples(buildColorTriples(resolveEventColors(settingsData.settings.eventColors)));
+        setTimeFormat(timeFormatData.timeFormat);
       } catch {
         // Not fatal on its own - the main events fetch below still runs; the
         // drill-down panel just won't have every nicety populated.
@@ -488,6 +493,7 @@ export function ReportsView() {
               };
             })()}
             colorTriples={colorTriples}
+            timeFormat={timeFormat}
             tags={tags}
             staff={staff}
             serviceTypes={isShift(selected) || isCustomEntry(selected) ? shiftServiceTypes : appointmentServiceTypes}

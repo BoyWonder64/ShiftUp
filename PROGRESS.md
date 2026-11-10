@@ -21,6 +21,283 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Shift/appointment details now shows the time; dropped the time-shorthand; added a 12-hour/24-hour (military time) preference
+
+Direct follow-up to the time-label fix in the entry right below: "shift
+details needs to include the time. And shorthanding the time isnt good.
+Also add a military time option as well." Three distinct asks, all built:
+
+1. **Time missing from shift/appointment details.** `AppointmentDetailPanel`
+   (the read-only panel opened by clicking any event - shared by the main
+   calendar and Reports' drill-down) had no time field in its read-only
+   view at all, just Client/Service/Staff/Meeting/Payment - genuinely
+   missing, not just hard to find. Added a "When" row at the top: date plus
+   the full start-end time range.
+2. **Drop the "9a-5p" shorthand.** The previous session's fix for truncated
+   time labels invented a shorter notation (dropping ":00", single-letter
+   "a"/"p") to fight narrow-box truncation - reasonable intent, but the
+   user correctly didn't want invented shorthand, real times only. Replaced
+   with `src/lib/calendar/timeFormat.ts`'s `formatClockTime`/
+   `formatClockRange` - always the real, full time; a narrow box now just
+   truncates that real text with an ellipsis, the same as every other
+   string in these chips, rather than a shortened notation of its own.
+3. **A 12-hour/24-hour preference.** New per-user "Time format" setting
+   (Settings → Account), exact same pattern as the existing Calendar text
+   size picker: `User.timeFormat` column (migration
+   `20261103231424_add_user_time_format`, default `TWELVE_HOUR`), GET/PATCH
+   `/api/me/time-format`, `TimeFormatForm.tsx`, translated into all 4
+   locales (en/fr/de/es). Wired into every place a time renders: Week/Day
+   event labels and `StaffWeekRosterView`'s chips (both via
+   `SchedulingCalendar.tsx`'s new `calendarFormats` useMemo, replacing the
+   old module-level shorthand constant), and the new "When" row -
+   `ReportsView.tsx` also fetches it independently so its own
+   `AppointmentDetailPanel` instance stays consistent with the main
+   calendar's.
+
+Needed a real schema migration this time (not just application code) -
+stopped the running `npm run dev` first (Windows file-locks the Prisma
+query engine otherwise, same gotcha noted earlier in this file), ran
+`prisma migrate dev`, confirmed it applied cleanly alongside the
+already-applied (but not yet git-committed) "teams" migrations sitting in
+the working tree from unrelated concurrent work, then restarted the dev
+server afterward so the session was left as it was found.
+
+Browser-verified end to end with a seeded tenant (one hour-aligned shift,
+one non-hour-aligned 9:15-10:30 appointment, to confirm minutes survive):
+Settings → Account shows the new card; switching to 24-hour immediately
+shows "09:00"/"09:15" (not rounded) across the Week grid and the detail
+panel's new "When" row ("Tue, Nov 3 · 09:15 – 10:30"); switching back to
+12-hour shows the real "9:00 AM – 5:00 PM" - read the actual rendered label
+text to confirm, not just the dropdown's own displayed value, since an
+earlier check in this same pass turned out to be reading a stale dropdown
+render rather than the saved preference. `tsc --noEmit` clean throughout,
+including after `AppointmentDetailPanel` picked up a new required prop that
+turned out to have two call sites, not one (`ReportsView.tsx`'s own
+drill-down, caught by the type error rather than missed). Probe tenants and
+scratch scripts deleted afterward.
+
+### The overlap "fix" below wasn't actually fixed - real readability fix, plus a real Day-view data bug found along the way
+
+Direct, justified pushback on the "Overlapping calendar events cleaned up"
+entry further down: "this wasnt fixed at all, if I am on the staff calender
+and I have 2 events, the text its cut off after the third letter... very
+hard to read and use," with a screenshot (two full-day shifts, different
+staff, same day in Week view - "Jac...", "zer..."). Correct call - that
+earlier pass fixed the cascading-*staircase* shape of the overlap problem
+(`dayLayoutAlgorithm="no-overlap"`) but never actually verified the result
+was *readable*, even though my own screenshot at the time already showed
+"9:..." truncated chips. Shouldn't have called it done.
+
+Root-caused properly this time with the actual DOM, not just screenshots:
+`EventContent`'s Week/Day branch truncated `"StaffName · Title"` as one
+combined line (`.truncate`, single `white-space: nowrap`) - in a ~63px-wide
+box (half a day-column, from 2 concurrent events), the title was eating into
+the name's share of an already-tiny budget, routinely leaving nothing
+legible past 3-4 characters. Fix: render name and title as two
+*independently* truncating stacked lines instead of one run-on string - each
+only has to fit its own (usually much shorter) text, so "Jack" alone fits
+where "Jack · Shift" didn't, and multi-hour events (plenty of vertical room,
+just not width) now show far more useful content. Separately also found and
+fixed a related CSS issue specific to short-duration appointments:
+react-big-calendar's own `.rbc-day-slot .rbc-event-content { height: 100% }`
+fights the time-label's fixed height inside a short event box, clipping the
+staff name/title away entirely (not just truncating it) for anything under
+roughly 30-45 minutes at a coarse zoom - fixed by letting content size to
+its own natural height instead of forcing 100%.
+
+While reproducing this with a throwaway tenant, also found a genuine,
+separate, more serious bug: **switching to Day view via the toolbar button
+fetched a zero-width date range** and silently showed **no appointments at
+all**, every time. `handleRangeChange`'s array branch used
+`r[r.length - 1]` directly as the fetch's `end` bound - fine for Week's
+7-element range array, but Day view's range array has exactly one element,
+so `start` and `end` ended up identical, collapsing the fetch to nothing.
+(Week's own 7-element case had a smaller version of the same bug - its
+`end` was missing the same +1-day exclusive adjustment the component's own
+initial `range` value already uses.) This wasn't something introduced this
+session - none of the work in the entry below touches `handleRangeChange` -
+it's an existing bug nobody had hit, most likely because `StaffWeekRosterView`'s
+day-header drill-down (added this session) happens to route around it via a
+different code path, and nothing else in recent sessions exercised switching
+to Day view via the toolbar with real data. Fixed by adding one day to get a
+correct exclusive end bound, same convention already used elsewhere.
+
+Reported back, correctly, one more time after all of the above: "it cuts
+off the time too." Right again - the name/title fix never touched
+react-big-calendar's own separate time-range label ("9:00 AM – 5:00 PM"),
+which truncated just as badly in the same narrow boxes, and a first attempt
+at shortening it ("9:00a–5:00p", 11 characters) still wasn't short enough -
+measured the actual rendered label width this time instead of guessing
+again: only 7-8 characters fit in a 2-way split, full stop, regardless of
+formatting. Fixed by dropping the ":00" when a time lands exactly on the
+hour (the common case for shifts) via a custom `eventTimeRangeFormat`/
+`eventTimeRangeStartFormat`/`eventTimeRangeEndFormat` passed through the
+Calendar's `formats` prop - a whole-hour range now reads "9a–5p" (5
+characters, fits with room to spare), while a non-hour-aligned time (9:15,
+9:30, ...) still shows its minutes in full rather than silently rounding
+something a user actually typed.
+
+Browser-verified against the *exact* scenario from the user's screenshots
+(two full 9am-5pm shifts, different staff/same day): Week Combined now shows
+each event's full "9a–5p" time range, staff initials, and a fully-legible
+"Shift" title (the name text itself still abbreviates in a 2-way split - an
+inherent space constraint of a 7-day-wide grid, not something text layout
+alone can fully solve; the "By staff" roster view below is the answer when
+full names matter at a glance). Day Combined - now actually showing events
+at all - has enough width at just 2 concurrent entries to show everything in
+full: time range, complete name, and title. Re-checked Week "By staff"
+roster, Day "By staff" columns, Week Combined with more events, and Month
+after each round of changes for regressions - none found, zero console
+errors throughout, `tsc --noEmit` clean after every change. Probe tenants
+and scratch scripts deleted afterward, except a few throwaway tenants
+(`repro-*`/`shift-*`/`time-*` slugs) the auto-mode permission classifier
+declined to let me delete via a direct DB write - harmless leftover test
+data, not anything real, but flagged rather than silently left for you to
+find later.
+
+### Staff-roster Week view, for companies with 30-80+ employees
+
+Direct follow-up to the overlapping-events fix below ("having multiple
+events on the screen doesnt look good... the calender doesnt share them
+well"), after the user clarified the app needs to work for companies with
+**30-80+ employees** - condensed event text was still hard to read at that
+scale even with clean side-by-side columns.
+
+Researched this properly before building: Google Calendar's own model
+(split concurrent events into ever-narrower equal columns, no cap) is
+exactly what the earlier fix already replicated, and it was never designed
+for dozens of concurrent people - it just shrinks forever. Purpose-built
+staff-scheduling tools (Deputy, Housecall Pro, When I Work, FL3XX) instead
+give each staff member their own row or column so text never shrinks,
+scaling via scroll instead of squeeze. This app already has that pattern for
+Day view ("By staff" - one column per staff member, react-big-calendar's
+native resource view) but it's Day-only by design - a prior session's own
+code comment flags that a resourced Week view would render staff x 7 days
+of columns (e.g. 80 staff x 7 = 560), unusable even scrolling. Confirmed
+that math before proposing anything, then used `EnterPlanMode` given the
+real architectural decision involved - user picked "build the roster-grid
+Week view" over the lighter alternative (just hardening Day's existing
+by-staff view and leaving Week alone).
+
+Built `StaffWeekRosterView.tsx` - a roster grid (staff as rows, the 7 days
+of the week as columns, each cell holding that staff's compact event chips
+for that day, capped at 3 with a "+N more" that expands in place rather
+than a floating popup) - the same shape Deputy/7shifts/Homebase use for
+their main weekly schedule screen. Registered through react-big-calendar's
+*official* custom-view extension point: `Calendar.js`'s `views` prop
+accepts an object mapping a view name to `true` (built-in) or a component
+with static `range`/`navigate`/`title` methods (confirmed by reading
+`node_modules/react-big-calendar/lib/Calendar.js` and
+`@types/react-big-calendar`'s `ViewStatic`). Registering the new component
+at `views.week` (only when "Group by staff" is on and there's more than one
+staff member - built-in Week otherwise) meant the existing toolbar
+(Today/Back/Next, Month/Week/Day/Agenda, the clickable month/year label)
+and range-driven data fetching (`onRangeChange` -> `handleRangeChange` ->
+`loadAppointments`) needed zero changes - only the Week view's body swaps.
+Also confirmed (via `withDragAndDrop.js` and `Calendar.js`'s `render()`)
+that unrecognized extra props passed to `<DnDCalendar>` forward straight
+through to whichever view is active untouched - that's how the new view
+gets the staff list/colors it needs, and it's also why `onSelectEvent`/
+`onSelectSlot` inside the new view are literally this app's *existing*
+handlers (same `setSelected`/`setCreating` logic, same
+`canCreateForCurrentType` gate) rather than new parallel logic, and why
+`onDrillDown` (never set at the top level) gives a free "click a day header
+-> jump to Day view for that date" affordance via react-big-calendar's own
+default behavior.
+
+Scoped to click-based only (no drag-between-cells) - the existing
+`AppointmentDetailPanel` already has full edit fields (staff/start/end), so
+rescheduling/reassigning via the form covers the same outcome; a natural
+fast-follow if drag is wanted later. The "By staff" toggle now works on Week
+as well as Day (previously Day-only, forcibly switched to Day on click);
+clicking it from Month/Agenda now jumps to Week instead.
+
+Browser-verified end to end: seeded a throwaway tenant via the real
+`/signup` flow, bumped its license to SUBSCRIPTION directly in Postgres
+(clears the free plan's 1-staff cap for this probe tenant only), created 25
+staff and ~49 appointments spread across the week via the real `/api/staff`
+and `/api/appointments` endpoints, then drove it with Playwright: roster
+grid renders one full-text row per staff with zero truncation, sticky
+day-header row stays pinned while scrolling past all 25 rows, today's
+column tinted, click-to-create opens the normal modal correctly pre-filled
+with the clicked staff member and date/time default, click-to-edit opens
+the normal detail panel, day-header click drills into Day view with "By
+staff" preserved (showing Day's own by-staff columns for that date),
+switching back to Combined Week and Month both render exactly as before -
+zero browser console errors throughout. `tsc --noEmit` clean, including the
+extra-props-via-spread approach used to route around TypeScript's
+excess-property check. Probe tenant and scratch scripts deleted afterward.
+
+### Automated E2E test suite (Playwright), plus a real staffId bug it caught
+
+Raised directly ("see if you can automate more testing for this application") -
+previously every browser-driven check this session was a one-off scratchpad
+script, rewritten from scratch and thrown away each time. Replaced that with
+a permanent `e2e/` Playwright suite, checked into the repo: `@playwright/test`
+as a real devDependency (not `--no-save` like the earlier throwaway scripts),
+`playwright.config.ts`, and 4 spec files covering what this session's manual
+testing already exercised by hand - `npm run test:e2e` (or `test:e2e:ui` for
+the interactive runner) now reruns all of it in ~2 minutes instead of me
+re-deriving a verification script from scratch every time.
+
+- **`e2e/signup-login.spec.ts`** - signup → dashboard, sign out → log back in,
+  wrong password / unknown username both show the identical generic error.
+- **`e2e/calendar-create.spec.ts`** - the single "+ Add event" button (both on
+  `/calendar/all` and a fixed-kind page), the in-form type switcher including
+  "Custom event", a full shift creation round-trip, the Custom Event quick-
+  create's free-text title, and that switching types mid-form clears the
+  previous type's fields instead of leaking stale data.
+- **`e2e/settings.spec.ts`** - every Settings tab reachable including the
+  renamed "Calendar Display"/"Manage Calendars", creating a free (not
+  paid-gated) custom calendar, and a preset event created in Settings
+  actually showing up as a pill in the calendar's create form.
+- **`e2e/password-reset.spec.ts`** - the request flow's identical generic
+  message for a real vs. unknown email (no enumeration), a bogus confirm
+  token correctly rejected, and the token-less `/reset-password` page. Real
+  email delivery isn't covered (no `RESEND_API_KEY` in most dev setups) -
+  that half stays a manual check per VERIFY.md.
+- **A real app bug the tests caught, not just a test-writing exercise**:
+  `CreateEntryPanel`/`CustomEventPanel`'s Staff `<select>` defaulted via
+  `useState`'s one-time initializer (`defaultStaffId ?? staff[0]?.id ?? ...`)
+  - since `staff` is fetched async by the parent, opening the form before
+    `GET /api/staff` resolves baked in the empty-list fallback
+  (`"+ Add new staff member"`) *permanently*, with no way for it to pick up
+  the real list once it arrived a moment later. Fixed by computing an
+  `effectiveStaffId` fresh on every render (`staffId ?? defaultStaffId ??
+  staff[0]?.id ?? ...`) instead of trying to sync state in a `useEffect` -
+  the latter was the first instinct but the project's own
+  `react-hooks/set-state-in-effect` lint rule correctly flagged it as the
+  wrong tool here, same precedent as the pre-existing booking-widget fix
+  this file already documents.
+- **`playwright.config.ts` is tuned for `next dev` specifically, not a
+  prebuilt app**: capped at 3 workers (not Playwright's usual
+  `cpuCount/2`) and a 90s per-test timeout, since Turbopack's on-demand
+  per-route compilation means too much parallelism just queues compiles
+  behind each other rather than running faster, and a cold first hit on an
+  uncompiled route has taken 15-20s+ in this project before. Local runs now
+  get 1 retry too (previously CI-only) - an isolated timing flake against a
+  dev server is expected noise here, not a correctness signal.
+- **A genuine environment trap hit while building this out, worth
+  remembering**: running the full parallel suite repeatedly, back-to-back,
+  in one long session exhausted this machine's memory (confirmed directly -
+  0.75GB free out of 16GB at the worst point), which then produced a wave of
+  failures that looked exactly like app bugs (signup repeatedly bouncing
+  back to `/signup`, multiple unrelated tests timing out at once) but
+  weren't - a serial (`--workers=1`) rerun at that point passed **15/15**
+  cleanly in 2.1 minutes, confirming the suite and the app were both fine
+  all along. If a run looks mysteriously flaky across unrelated tests
+  simultaneously, check free memory (`Get-CimInstance Win32_OperatingSystem`)
+  and stray `chrome-headless-shell.exe`/duplicate `node.exe` processes
+  before assuming it's a real bug - don't just keep re-running the full
+  parallel suite, which only makes a tight-memory situation worse.
+- **Verified**: `tsc --noEmit` and `eslint .` clean, full `vitest run`
+  **116/116 passing** (unaffected - no vitest coverage changed). The E2E
+  suite itself: 15/15 passing serially; parallel (the configured default)
+  is also reliable under normal conditions - every failure chased down
+  during this session's own repeated runs traced to either a test-script bug
+  (now fixed), the one real app bug above (now fixed), or this machine's
+  session-accumulated memory pressure (not a defect).
+
 ### Overlapping calendar events cleaned up (Week/Day no-overlap layout, Month "+N more" popup)
 
 Raised directly: "having multiple events on the screen doesnt look good, the
@@ -1178,6 +1455,19 @@ Raised directly: "Move My account to Settings, everyone should have access to Se
 - Unused translation keys removed from all four locale files (`AppHeader.account`, `AccountPage.title`) now that nothing references them.
 
 **Verified**: `tsc --noEmit`, `eslint`, and the full `vitest` suite (15/15) all clean. **Not browser-click-tested or curl-verified against a real STAFF session** - correct by code review (the permission checks reuse already-tested `hasPermission` call sites, and the gating logic is a straightforward per-section lookup) but the actual experience of signing in as a STAFF role with e.g. `VIEW_STAFF` granted and confirming Settings shows exactly Staff + Account, nothing else, hasn't been clicked through.
+
+### Teams - admin-managed staff groupings, plus a Team filter on the Calendar and Roster
+
+Raised directly: "we need to be able to create teams and add the employees to teams" followed by "this also means we need to filter by team". Built 2026-11-03, entirely new - admin-only for now, per the explicit "let the admin have control over this for now" scoping.
+
+- **New `Team`/`TeamMember` tables** (`prisma/schema.prisma`) - `Team` is a plain tenant-scoped named group (`name` unique per tenant, optional `description`); `TeamMember` is a real join table (not an implicit Prisma many-to-many) carrying its own `tenantId`, since every tenant-scoped table needs one for the RLS policy below. `TeamMember.staffProfileId` cascades on delete both ways (deleting a `Team` or a `StaffProfile` just removes the membership row, no "in use" guard the way `Role` deletion has).
+- **RLS**: `teams`/`team_members` both got `ENABLE`/`FORCE ROW LEVEL SECURITY` plus the standard `tenant_isolation_*` policy, same fail-closed pattern as every other tenant table - added as its own migration (`20261103220954_add_teams_rls`) right after the table-creation migration (`20261103220953_add_teams`), since `prisma migrate dev`'s auto-generated SQL from a schema diff never includes RLS statements (they're not something Prisma's schema language can express) - same two-migration shape `custom_roles`/`add_schedule_templates` used historically.
+- **API**: `/api/teams` (GET - any signed-in tenant member, same reasoning as `/api/roles`'s GET; POST - ADMIN-only), `/api/teams/[id]` (PATCH/DELETE - ADMIN-only), `/api/teams/[id]/members` (POST add - ADMIN-only), `/api/teams/[id]/members/[staffProfileId]` (DELETE remove - ADMIN-only).
+- **Settings > Teams** (new section in `sections.ts`, `requirement: "ADMIN"`): `TeamsManager.tsx` - create a team (name + optional description), see each team's member chips with a one-click remove (×), an "Add a staff member" dropdown per team (narrowed to staff not already on it), and delete the whole team.
+- **Team filter on the Calendar** (`SchedulingCalendar.tsx`): a new "Team" dropdown in the toolbar next to the existing "Staff" dropdown, shown whenever the tenant has at least one team. ANDed with the existing staff filter rather than replacing it - picking a team narrows `visibleEvents` and the Day "group by staff" `resourceStaff` columns to that team's members, independent of whatever the Staff dropdown is set to.
+- **Team filter on the Roster** (`RosterView.tsx`): same idea, a "Team" dropdown next to the Day/Week toggle that narrows which staff rows render (`visibleStaff`), with a distinct "No staff on this team." empty state vs. "No staff yet."
+
+**Verified live** with a throwaway signup tenant (created via the real `/signup` flow, a headless Playwright script since no project e2e spec covers Teams yet - script discarded, not checked in): created a team, added a staff member to it, confirmed the member chip and the Team dropdown appear on both Calendar and Roster, selected the team on both and confirmed the filter actually narrows the view (Roster correctly showed just that one staffer), removed the member, deleted the team, confirmed the empty states. `tsc --noEmit` and `eslint` both clean on every touched file. No console errors from any of this flow. **Not yet covered by the checked-in `e2e/` suite** - worth a real `e2e/teams.spec.ts` at some point, same pattern as `e2e/settings.spec.ts`.
 
 ## Known gaps / not yet done
 

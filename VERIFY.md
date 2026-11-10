@@ -15,6 +15,48 @@ deliberately leaves that out so it stays skimmable.
 
 ## New features
 
+- **Teams - group staff, filter the Calendar and Roster by team.** Built
+  2026-11-03. Settings > Teams (admin-only) lets you create a team, add/remove
+  staff members, and delete a team. A new "Team" dropdown shows up on the main
+  Calendar (next to the existing Staff dropdown) and on the Roster page once
+  at least one team exists, narrowing which staff's events/rows show. Check:
+  create a team with a couple of staff on it, confirm the Team dropdown
+  appears on both Calendar and Roster, and picking it actually narrows the
+  view to just that team (combine it with the Staff dropdown too - they
+  should AND together, not fight each other).
+- **Schedule templates: 1-indexed day numbers, a repeat/apply-multiple-periods
+  option, and a live week-grid preview.** Built 2026-11-03 in
+  `ScheduleTemplatesView.tsx`/`src/modules/scheduling/templates.ts`. Three
+  changes, all in the schedule-templates builder (Staff management > Schedule
+  templates):
+  - **Day numbers now read 1-N instead of 0-(N-1)** - both the add-shift
+    form's "Day" input and the shift list ("Day 1", "Day 2", ...). Still
+    stored as a 0-indexed `dayOffset` under the hood (unchanged API contract,
+    unchanged tests) - this is a display-only change, converted at the form
+    boundary.
+  - **A live preview grid** above the flat shift list - one column per day
+    (wraps every 7 columns so a 14/21/28-day template reads as stacked
+    weeks), each cell showing that day's shifts (staff + time). Updates
+    immediately as you add/remove shifts, no save/reload needed. Scrolls
+    (`max-h-80 overflow-auto`) for longer templates instead of growing
+    unbounded.
+  - **A "Repeat (back-to-back periods)" field** next to "Apply to a week" -
+    enter a number (1-52) to generate that many periods in a row, each
+    starting right where the previous one's `periodLengthDays` ends, instead
+    of applying once, waiting, then clicking Apply again for the next week.
+    Preview and the real apply both respect it (new
+    `planTemplateApplyRepeating`/`applyTemplateRepeating`, new `occurrences`
+    field on `POST /api/schedule-templates/[id]/apply`, default `1` so
+    existing single-apply behavior/response shape is unchanged when omitted).
+    Conflict detection runs per-period like before; applying writes
+    occurrences sequentially in one transaction, so a later occurrence's
+    conflict check sees appointments the earlier occurrences in the same
+    request already created.
+  Check in the app: open a template with periodLengthDays 14+, confirm the
+  grid wraps into two visible week-rows and a shift you add shows up in the
+  right cell immediately; then pick a period start date, set Repeat to 3,
+  hit Preview, and confirm it lists shifts across 3 consecutive periods
+  before you commit with Apply.
 - **"Custom event" quick-create - a genuinely separate, lightweight form for
   a one-off entry like "Lunch outing" or "Doctor's appointment," filed under
   *either* the Appointments or Shifts calendar (your choice), not a third
@@ -415,27 +457,135 @@ deliberately leaves that out so it stays skimmable.
 - **Roster page now gated by the real `VIEW_ROSTER` permission** instead of a
   hardcoded ADMIN/MANAGER/SUPERVISOR check. Check: Settings → Permissions,
   confirm `VIEW_ROSTER` actually controls who can reach `/calendar/roster`.
-- **Overlapping Week/Day events no longer mash into unreadable slivers.**
-  Raised 2026-10-25 (TODO.md: "events on the calendar overlap too much").
-  `SchedulingCalendar.tsx` now passes react-big-calendar's
-  `dayLayoutAlgorithm="no-overlap"` instead of its default `"overlap"` -
-  concurrent events each get their own clean side-by-side lane, same as
-  Google Calendar, instead of partially covering each other in a cascading
-  staircase once more than two or three coincided. The now-pointless
-  "shorter event stacks in front of a longer one" z-index logic
-  (`stackingZIndex`) was removed along with it. Month view also now passes
-  `popup` so a day cell's "+N more" opens an inline popup listing every event
-  for that day (styled to match the app, z-index raised above the draft
-  event) instead of silently navigating to Day view - and Month's event
-  chips dropped the avatar-badge treatment (kept for Week/Day) in favor of a
-  compact colored-dot + name line, so more fit per row before overflowing.
-  Browser-verified end to end with a seeded test tenant (3 staff, ~15
-  overlapping same-day appointments): Week view shows clean side-by-side
-  columns, Month view shows compact chips plus a working "+N more" popup, Day
-  view unaffected, no console errors. Check: on a day with several
-  overlapping bookings, Week/Day should read as distinct side-by-side boxes
-  rather than a staircase of slivers, and Month's "+N more" should pop open a
-  list right there instead of jumping you to Day view.
+- **Overlapping Week/Day events no longer mash into unreadable slivers, and
+  their text no longer goes blank/unreadable once two or more share a slot.**
+  Raised 2026-10-25 (TODO.md: "events on the calendar overlap too much"),
+  then correctly pushed back on ("this wasnt fixed at all... text its cut
+  off after the third letter") after the first pass only fixed the
+  cascading-staircase *shape* of the problem, not actual readability - a
+  real miss, since my own verification screenshot at the time already showed
+  "9:..." truncated chips and I didn't catch it. Two separate things were
+  actually wrong, both now fixed:
+  1. `SchedulingCalendar.tsx` passes react-big-calendar's
+     `dayLayoutAlgorithm="no-overlap"` (each concurrent event gets a clean
+     side-by-side lane instead of partially covering the next one), plus
+     Month's `popup` "+N more" and compact chip treatment - this part was
+     right, it just wasn't sufficient on its own.
+  2. The real readability fix: `EventContent`'s Week/Day branch used to
+     truncate "StaffName · Title" as *one* combined line, so the title ate
+     into the name's share of an already-narrow box - a 2-person overlap
+     easily left nothing legible past 3-4 characters. Now renders name and
+     title as two *independently* truncating stacked lines, so each only
+     has to fit its own (usually much shorter) text - "Jack" alone fits
+     where "Jack · Shift" didn't. A second, unrelated CSS issue
+     (`.rbc-event-content`'s `height: 100%` fighting the time-label's fixed
+     height inside a short event box) was also clipping that content
+     entirely for short-duration appointments, separate from the width
+     problem - fixed by letting it size to its own content instead.
+  3. Also found and fixed, while digging into this: switching to **Day
+     view via the toolbar button fetched a zero-width date range** (an
+     off-by-one in `handleRangeChange`'s array branch - react-big-calendar's
+     single-day `range()` array has one element, and using it as both
+     `start` and `end` collapsed the fetch window to nothing) - Day view
+     silently showed **no appointments at all** when reached this way. Now
+     adds one day to get a proper exclusive end bound, matching the
+     convention `range`'s own initial value already used.
+  4. Pointed out directly, after the above: "it cuts off the time too" -
+     correct, the name/title fix above left react-big-calendar's own
+     separate time-range label (e.g. "9:00 AM – 5:00 PM") untouched, and it
+     truncated just as badly in the same narrow boxes. Measured the actual
+     rendered width rather than guessing again: that label only has room
+     for 7-8 characters in a 2-way split, so even a shortened "9:00a–5:00p"
+     (11 characters) still truncated. Now drops the ":00" when a time lands
+     exactly on the hour - the common case for shifts - via a custom
+     `eventTimeRangeFormat`/`eventTimeRangeStartFormat`/
+     `eventTimeRangeEndFormat` passed through the Calendar's `formats` prop,
+     so a whole-hour range reads "9a–5p" (5 characters, fits) while a
+     non-hour-aligned time (9:15, 9:30, ...) still shows its minutes in
+     full.
+  Browser-verified end to end against the exact scenario from the
+  follow-up screenshots (two full 9am-5pm shifts, different staff, same
+  day): Week Combined now shows the full "9a–5p" time range, the staff
+  initials badge, and a fully-legible "Shift" line for each (the name text
+  itself still abbreviates in a 2-way split - an inherent space constraint
+  of a 7-day-wide grid; use the "By staff" roster view below for full names
+  when that matters); Day Combined - now actually showing its events at all
+  - has enough per-event width at just 2 concurrent entries to show
+  everything fully: time range, full name, and title, no truncation. Also
+  re-checked Week "By staff" roster, Day "By staff" columns, Week
+  Combined with more events, and Month for regressions - none found, zero
+  console errors throughout. Check: a day with 2+ overlapping shifts/
+  appointments in Week or Day Combined view should show at least the title
+  fully and the name as far as it fits (not blank, not 3-4 garbage
+  characters), and switching to Day view from the toolbar should always
+  show that day's real events.
+- **Shift/appointment details now shows the time, a 12-hour/24-hour (military
+  time) preference was added, and the time-shortening above was removed.**
+  Direct follow-up, after the compact-time fix immediately above: "shift
+  details needs to include the time. And shorthanding the time isnt good.
+  Also add a military time option as well." All three addressed:
+  1. The read-only "Appointment/Shift details" panel (`AppointmentDetailPanel`,
+     opened by clicking any event, used from both the main calendar and
+     Reports) had no time field at all - added a "When" row at the top:
+     date plus the full start–end time range.
+  2. The "9a–5p" shorthand from the previous fix is gone - every time shown
+     anywhere (Week/Day event labels, the "By staff" roster view's chips,
+     the new "When" row) is now the real, full time (`formatClockTime`/
+     `formatClockRange`, `src/lib/calendar/timeFormat.ts`) - a narrow event
+     box now just truncates that real text with an ellipsis, like any other
+     text here, rather than a shortened notation.
+  3. A new per-user **Time format** preference (Settings → Account, same
+     pattern as the existing Calendar text size picker) lets anyone switch
+     between 12-hour ("9:00 AM") and 24-hour/military ("09:00") - a new
+     `User.timeFormat` column (`TWELVE_HOUR` default), GET/PATCH
+     `/api/me/time-format`, `TimeFormatForm.tsx`, translated into all 4
+     locales. Drives every formatted time this user sees.
+  Browser-verified end to end with a seeded tenant (one hour-aligned shift,
+  one non-hour-aligned 9:15–10:30 appointment): Settings → Account shows the
+  new "Time format" card; switching it to 24-hour immediately shows
+  "09:00"/"09:15" (exact minutes preserved, nothing rounded) across the Week
+  grid and the detail panel's new "When" row ("Tue, Nov 3 · 09:15 – 10:30");
+  switching back to 12-hour shows the full "9:00 AM – 5:00 PM" - confirmed
+  via the actual rendered label text, not just the dropdown's own display -
+  with no "9a" shorthand anywhere. `tsc --noEmit` clean, zero console errors.
+  Check: Settings → Account → Time format, flip it, confirm the calendar and
+  a shift/appointment's details both follow it, and that details always
+  shows when something is scheduled.
+- **A staff-roster Week view, for companies with 30-80+ employees.**
+  Follow-up to the overlap fix directly above - raised after confirming that
+  even clean side-by-side columns stop being readable once enough staff are
+  scheduled at once, and that neither Google Calendar's approach nor this
+  app's existing "By staff" Day view (one column per staff, via
+  react-big-calendar's native resource view) scale past a handful of people
+  without either shrinking text indefinitely or - if naively extended to
+  Week - rendering staff × 7 days of columns (e.g. 80 staff × 7 = 560,
+  unusable even scrolling). Researched how purpose-built scheduling tools
+  (Deputy, Housecall Pro, When I Work, FL3XX) actually handle this before
+  building anything: one row or column per staff member, scaling via scroll
+  rather than squeeze. Built as a new `StaffWeekRosterView.tsx` - a roster
+  grid (staff as rows, the 7 days of the week as columns, each cell holding
+  that person's compact event chips for that day, capped at 3 with a
+  "+N more" that expands in place) - registered through react-big-calendar's
+  official custom-view extension point (`views.week`), so the existing
+  toolbar (Today/Back/Next, Month/Week/Day/Agenda, the clickable month/year
+  label) and range-driven data fetching keep working unchanged; only the
+  Week view's body swaps when "By staff" is on. Click-based only in this
+  pass (no drag-between-cells) - rescheduling/reassigning already works via
+  the existing detail panel's edit fields, same as before. The "By staff"
+  toggle now works on Week as well as Day (previously Day-only); clicking it
+  while on Month/Agenda now jumps to Week instead of Day. A day-header click
+  in the roster jumps to Day view for that date with the toggle preserved
+  (showing Day's own by-staff columns).
+  Browser-verified end to end with a seeded test tenant (25 staff, ~49
+  appointments spread across the week): roster grid renders one full-text
+  row per staff with no truncation, sticky day-header stays put while
+  scrolling past 25 rows, today's column tinted, click-to-create opens the
+  usual modal pre-filled with the clicked staff/date, click-to-edit opens
+  the usual detail panel, day-header click drills into Day view with "By
+  staff" preserved, and switching back to Combined Week / Month shows no
+  regressions - zero console errors throughout. Check: Calendar → Week → "By
+  staff" with a real, larger staff list - names and times should stay fully
+  readable regardless of headcount, with no library console warnings.
 
 ## Built on an unconfirmed assumption — just need your yes/no
 
