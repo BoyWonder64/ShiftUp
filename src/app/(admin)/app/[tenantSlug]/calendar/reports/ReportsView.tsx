@@ -10,7 +10,7 @@ import {
   type ColorTriple,
   type EventColorKey,
 } from "@/lib/colors/eventColors";
-import type { TimeFormat } from "@/lib/calendar/timeFormat";
+import { formatClockRange, type TimeFormat } from "@/lib/calendar/timeFormat";
 import {
   AppointmentDetailPanel,
   Modal,
@@ -455,7 +455,7 @@ export function ReportsView() {
                         <span className="text-gray-500">{e.staff.displayName}</span>
                       </span>
                       <span className="text-xs text-gray-400">
-                        {format(new Date(e.startTime), "MMM d, h:mm a")}
+                        {format(new Date(e.startTime), "MMM d")}, {formatClockRange(new Date(e.startTime), new Date(e.endTime), timeFormat)}
                       </span>
                     </button>
                   </li>
@@ -473,6 +473,7 @@ export function ReportsView() {
             permissions={permissions}
             allowEditingBookedEvents={settings.allowEditingBookedEvents}
             canCancel={false}
+            canDelete={false}
             canEdit={false}
             canFindCoverage={false}
             readOnly

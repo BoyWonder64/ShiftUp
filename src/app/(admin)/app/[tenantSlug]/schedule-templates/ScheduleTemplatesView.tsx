@@ -5,6 +5,14 @@ import { useEffect, useState } from "react";
 // Mirrors MAX_TEMPLATE_APPLY_OCCURRENCES in src/modules/scheduling/templates.ts (server-only module, not importable here).
 const MAX_REPEAT_OCCURRENCES = 52;
 
+// Mirrors REPEAT_CADENCES in src/modules/scheduling/templates.ts (same reason as above).
+const REPEAT_CADENCE_OPTIONS = [
+  { value: "DAILY", label: "Daily" },
+  { value: "WEEKLY", label: "Weekly" },
+  { value: "MONTHLY", label: "Monthly" },
+] as const;
+type RepeatCadence = (typeof REPEAT_CADENCE_OPTIONS)[number]["value"];
+
 interface StaffOption {
   id: string;
   displayName: string;
@@ -251,6 +259,7 @@ function TemplateDetail({
 
   const [periodStart, setPeriodStart] = useState("");
   const [repeatCount, setRepeatCount] = useState("1");
+  const [repeatCadence, setRepeatCadence] = useState<RepeatCadence>("WEEKLY");
   const [plan, setPlan] = useState<PlanItem[] | null>(null);
   const [occurrencePlans, setOccurrencePlans] = useState<OccurrencePlan[] | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -361,7 +370,12 @@ function TemplateDetail({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: true, occurrences }),
+          body: JSON.stringify({
+            periodStart: new Date(periodStart).toISOString(),
+            dryRun: true,
+            occurrences,
+            cadence: repeatCadence,
+          }),
         }
       );
       if (plan.occurrences) {
@@ -386,7 +400,12 @@ function TemplateDetail({
       const { result } = await fetchJson<{ result: ApplyResult }>(`/api/schedule-templates/${template.id}/apply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ periodStart: new Date(periodStart).toISOString(), dryRun: false, occurrences }),
+        body: JSON.stringify({
+          periodStart: new Date(periodStart).toISOString(),
+          dryRun: false,
+          occurrences,
+          cadence: repeatCadence,
+        }),
       });
       setApplyResult(result);
       setPlan(null);
@@ -613,7 +632,26 @@ function TemplateDetail({
             />
           </label>
           <label className="flex flex-col gap-1 text-sm">
-            Repeat (back-to-back periods)
+            Repeat every
+            <select
+              value={repeatCadence}
+              onChange={(e) => {
+                setRepeatCadence(e.target.value as RepeatCadence);
+                setPlan(null);
+                setOccurrencePlans(null);
+                setApplyResult(null);
+              }}
+              className="rounded-md border border-gray-300 px-2 py-1.5"
+            >
+              {REPEAT_CADENCE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            Times
             <input
               type="number"
               min={1}
@@ -639,8 +677,11 @@ function TemplateDetail({
         </div>
         {occurrences > 1 && (
           <p className="mt-1 text-xs text-gray-400">
-            Each period is {template.periodLengthDays} day{template.periodLengthDays === 1 ? "" : "s"} long, so period
-            2 starts right after period 1 ends, and so on.
+            This {template.periodLengthDays}-day pattern will be applied {occurrences} times,{" "}
+            {repeatCadence === "DAILY" ? "one day apart" : repeatCadence === "WEEKLY" ? "one week apart" : "one month apart"}
+            {" "}(same day{repeatCadence === "MONTHLY" ? " of the month" : " of the week"} each time).
+            {template.periodLengthDays > (repeatCadence === "DAILY" ? 1 : repeatCadence === "WEEKLY" ? 7 : 28) &&
+              " The pattern is longer than that gap, so later occurrences overlap earlier ones - any conflicts still show up below."}
           </p>
         )}
 

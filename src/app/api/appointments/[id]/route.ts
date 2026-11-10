@@ -5,9 +5,11 @@ import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import {
   cancelAppointment,
+  deleteAppointment,
   getAppointmentById,
   reassignAppointmentStaff,
   rescheduleAppointment,
+  restoreAppointment,
   SchedulingConflictError,
 } from "@/modules/scheduling/service";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
@@ -143,10 +145,17 @@ export async function PATCH(
         // Appointment, which don't know about permissions) so the
         // CANCEL_SHIFTS/CANCEL_APPOINTMENTS and EDIT_SHIFTS/EDIT_APPOINTMENTS
         // split below can pick the right key for this specific event.
-        const existing = await tx.appointment.findUniqueOrThrow({ where: { id }, select: { entryKind: true } });
+        const existing = await tx.appointment.findUniqueOrThrow({
+          where: { id },
+          select: { entryKind: true, status: true },
+        });
         const entryKind = existing.entryKind;
+        // Un-cancelling is the inverse of cancelling, so it shares the same
+        // CANCEL_* gate (and, like cancelling, isn't subject to the
+        // "Allow editing booked events" switch below).
+        const wantsRestore = data.status === "BOOKED" && existing.status === "CANCELLED";
 
-        if (data.status === "CANCELLED") {
+        if (data.status === "CANCELLED" || wantsRestore) {
           const canCancel = await hasPermission(
             tx,
             session.tenantId,
@@ -155,7 +164,7 @@ export async function PATCH(
             entryKind === "SHIFT" ? "CANCEL_SHIFTS" : entryKind === "CUSTOM" ? "CANCEL_CUSTOM_ENTRIES" : "CANCEL_APPOINTMENTS"
           );
           if (!canCancel) throw new Error("FORBIDDEN");
-          return cancelAppointment(tx, id);
+          return wantsRestore ? restoreAppointment(tx, session.tenantId, id) : cancelAppointment(tx, id);
         }
 
         // Settings > Calendar > "Allow editing booked events" - a tenant-wide
@@ -264,6 +273,46 @@ export async function PATCH(
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     console.error("Failed to update appointment", err);
+    return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
+  }
+}
+
+/** Permanent delete - distinct from PATCH status CANCELLED, which keeps the row (struck through on the calendar, still counted in reports). */
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  try {
+    const session = await requireTenantSession();
+    const deleted = await runInTenantContext(session.tenantId, session.userId, session.role, async (tx) => {
+      const existing = await tx.appointment.findUnique({ where: { id }, select: { entryKind: true } });
+      if (!existing) return false;
+      const canDelete = await hasPermission(
+        tx,
+        session.tenantId,
+        session.role,
+        session.roleId,
+        existing.entryKind === "SHIFT"
+          ? "DELETE_SHIFTS"
+          : existing.entryKind === "CUSTOM"
+            ? "DELETE_CUSTOM_ENTRIES"
+            : "DELETE_APPOINTMENTS"
+      );
+      if (!canDelete) throw new Error("FORBIDDEN");
+      await deleteAppointment(tx, id);
+      return true;
+    });
+    if (!deleted) return NextResponse.json({ error: "Not found." }, { status: 404 });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    if (err instanceof Error && err.message === "UNAUTHENTICATED") {
+      return NextResponse.json({ error: "Not authorized." }, { status: 401 });
+    }
+    if (err instanceof Error && err.message === "FORBIDDEN") {
+      return NextResponse.json({ error: "Not authorized." }, { status: 403 });
+    }
+    console.error("Failed to delete appointment", err);
     return NextResponse.json({ error: "Something went wrong." }, { status: 500 });
   }
 }

@@ -10,6 +10,7 @@ import {
   planTemplateApplyRepeating,
   applyTemplateRepeating,
   MAX_TEMPLATE_APPLY_OCCURRENCES,
+  REPEAT_CADENCES,
 } from "@/modules/scheduling/templates";
 
 const applySchema = z.object({
@@ -19,9 +20,11 @@ const applySchema = z.object({
   // first, then apply skips whatever's still flagged rather than blocking
   // the whole run.
   dryRun: z.boolean().default(true),
-  // How many back-to-back periods to generate in one go (TODO.md: "repeat
-  // the template"). 1 = today's single-period behavior.
+  // How many periods to generate in one go (TODO.md: "repeat the
+  // template"). 1 = today's single-period behavior.
   occurrences: z.number().int().min(1).max(MAX_TEMPLATE_APPLY_OCCURRENCES).default(1),
+  // How far apart those periods land - only meaningful when occurrences > 1.
+  cadence: z.enum(REPEAT_CADENCES).default("WEEKLY"),
 });
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -40,13 +43,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (!allowed) throw new Error("FORBIDDEN");
       await assertScheduleTemplatesEnabled(tx, session.tenantId);
 
-      const { occurrences } = parsed.data;
+      const { occurrences, cadence } = parsed.data;
       if (occurrences > 1) {
         if (parsed.data.dryRun) {
-          const plan = await planTemplateApplyRepeating(tx, session.tenantId, id, periodStart, occurrences);
+          const plan = await planTemplateApplyRepeating(tx, session.tenantId, id, periodStart, occurrences, cadence);
           return { plan };
         }
-        const result = await applyTemplateRepeating(tx, session.tenantId, id, periodStart, occurrences, session.userId);
+        const result = await applyTemplateRepeating(
+          tx,
+          session.tenantId,
+          id,
+          periodStart,
+          occurrences,
+          session.userId,
+          cadence
+        );
         return { result };
       }
 

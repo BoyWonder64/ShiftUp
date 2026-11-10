@@ -21,6 +21,113 @@ actually verified, not a quick current-state reference.
 
 ## Completed and verified this session
 
+### Week/Day: all-day entries stay in the grid; shorter events stack in front (supersedes the "no-overlap" entries below)
+
+Raised directly: only ~two all-day events visible per day on the staff view,
+"if I add another it goes to the very top," and "shorter events need to take
+precedence in front." Two root causes, both confirmed in react-big-calendar's
+source before changing anything:
+
+1. Any entry running midnight-to-midnight (or across midnight) is pulled out
+   of the time grid into the all-day strip above it (`TimeGrid.js`), which
+   grows with every entry and pushes the real grid out of view. `toEvent`
+   now ends a midnight-to-midnight entry 1ms before midnight for display
+   (snapped back to the minute by `applyReschedule` on drag/resize), and
+   `showMultiDayTimes` keeps genuine overnight shifts in the grid on both days.
+2. `dayLayoutAlgorithm="no-overlap"` (from earlier this session) can only
+   split width into equal lanes, so a long shift permanently took half the
+   column and nothing could sit in front of it. Replaced with a custom
+   `stackedDayLayout.ts`: events starting within 30 min of each other sit
+   side by side; one starting later inside another is nested in front of
+   that whole side-by-side group at 88% width. `eventPropGetter` restores a
+   duration-based zIndex (shorter = further front). Entries about one grid
+   slot tall collapse name and title to one line so the title isn't clipped.
+
+Browser-verified with three all-day entries plus a 1-hour entry for one
+staff member and an 8-5 shift for another: nothing in the top strip, the
+all-day entries sit side by side as a backdrop, the shorter entries render
+in front at near-full width with full text, in both Day "By staff" and Week.
+
+### Schedule template "Repeat" now picks a cadence (Daily/Weekly/Monthly), not just a raw count
+
+Raised directly: "repeat on the template maker needs to be choice to be
+daily weekly or monthly." The "Repeat" field that shipped earlier the same
+day (separate work, see the entry further down) only ever took a plain
+count - it always chained occurrences back-to-back using the template's own
+`periodLengthDays` as the gap (`addDays(periodStart, i * periodLengthDays)`),
+so it only ever read as "weekly" for the common 7-day template and had no
+way to express "apply this pattern once a month" at all.
+
+Generalized the interval instead of the count: `src/modules/scheduling/
+templates.ts` gained `RepeatCadence` ("DAILY" | "WEEKLY" | "MONTHLY") and an
+`occurrenceStart(periodStart, cadence, index)` helper, now what
+`planTemplateApplyRepeating`/`applyTemplateRepeating` call per occurrence
+instead of the old periodLengthDays multiplication - DAILY/WEEKLY step by a
+fixed number of days (`addDays`/`addWeeks`), MONTHLY steps by calendar
+months (`addMonths`, so a template applied starting the 15th stays on the
+15th every month regardless of how many days that month actually has, not a
+fixed ~30-day approximation). Both functions default `cadence` to `"WEEKLY"`
+when omitted - matches the old implicit behavior for the common case, so
+nothing calling the API without the new field changes behavior. The API
+route (`POST /api/schedule-templates/[id]/apply`) gained a `cadence` field
+in its zod schema, same default.
+
+Deliberately didn't add validation stopping a cadence shorter than the
+template's own `periodLengthDays` (e.g. Daily on a 7-day pattern, which
+overlaps every occurrence with the next) - conflict detection already runs
+per-occurrence and flags whatever that produces, same philosophy as every
+other conflict in this app (surface it, let the admin decide, never
+silently block). Confirmed this works as a feature, not a bug, while
+testing - see below.
+
+UI (`ScheduleTemplatesView.tsx`): replaced the single "Repeat (back-to-back
+periods)" number input with two fields, "Repeat every" (Daily/Weekly/Monthly
+select) and "Times" (the same 1-52 count as before), plus cadence-aware
+helper text that explains the overlap case when it applies instead of
+staying silent about it.
+
+Browser-verified end to end against a template with one 9am-5pm shift:
+Monthly × 3 from Nov 3 produced occurrences on Nov 2, Dec 2, and Jan 2 (same
+day of the month each time - the one-day display offset from the period
+-start date is a pre-existing `<input type="date">`/timezone quirk
+unrelated to this change, not something introduced here); Daily × 4 from the
+same start date correctly flagged one occurrence as a conflict against a
+real pre-existing shift for the same staff member on that date from earlier
+testing - proof the overlap-is-allowed design surfaces genuine
+double-bookings exactly as intended rather than silently creating them.
+`tsc --noEmit` clean, existing `templates.test.ts` suite (12 tests, none of
+which previously covered the repeating path) still passes unchanged.
+
+### "Teams" settings merged into the Staff settings tab
+
+Raised directly: "move teams settings into staff." The standalone Teams tab
+itself was built by separate, unrelated concurrent work earlier the same
+day (new `Team`/`TeamMember` models, `/api/teams/*`, its own settings page)
+- not something from this session, just something this session was asked to
+relocate. Moved `TeamsManager.tsx` from its own `settings/teams/` directory
+into `settings/staff/`, rendered directly below `StaffManager` on the Staff
+settings page as its own card (same stacked-cards pattern Account's
+preference forms already use), removed the `teams` entry from
+`sections.ts` (the single source of truth both the settings nav and index
+read from, so the standalone tab disappeared for free), and deleted the now
+-empty `settings/teams/` route outright rather than redirecting it, since
+nothing else in the app linked to it directly.
+
+One thing worth getting right rather than just copy-pasting: Teams'
+create/edit API was always ADMIN-only server-side
+(`requireRole(["ADMIN"])`, `/api/teams/route.ts`), narrower than Staff's
+own `VIEW_STAFF` section gate - some non-admin roles can reach Staff
+settings without being able to touch Teams. Simply inheriting Staff's
+visibility would have shown the Teams card (and its now-broken buttons) to
+roles that could never actually use it, so it's conditionally rendered only
+for `ctx.isAdmin` within the Staff page instead.
+
+Browser-verified: Settings nav no longer lists "Teams" as its own tab,
+`/admin/settings/staff` shows both the staff list and a working Teams card
+beneath it (create team, add/remove members all functioned against the
+existing `/api/teams/*` routes, untouched), and the old
+`/admin/settings/teams` URL now 404s. `tsc --noEmit` clean.
+
 ### Shift/appointment details now shows the time; dropped the time-shorthand; added a 12-hour/24-hour (military time) preference
 
 Direct follow-up to the time-label fix in the entry right below: "shift

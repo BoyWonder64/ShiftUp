@@ -1,4 +1,4 @@
-import { addDays, startOfDay } from "date-fns";
+import { addDays, addMonths, addWeeks, startOfDay } from "date-fns";
 import type { Tx } from "@/lib/tenant-context";
 import { createAppointment, SchedulingConflictError } from "./service";
 
@@ -271,8 +271,33 @@ export interface TemplateApplyResult {
   skipped: Array<{ templateShiftId: string; staffId: string; dayOffset: number; reason: "CONFLICT" }>;
 }
 
-/** Caps how many back-to-back periods a single "repeat" request can generate (e.g. weekly for a year). */
+/** Caps how many occurrences a single "repeat" request can generate (e.g. weekly for a year). */
 export const MAX_TEMPLATE_APPLY_OCCURRENCES = 52;
+
+/**
+ * How far apart repeated occurrences land, independent of the template's own
+ * `periodLengthDays` (the pattern's length, not its repeat interval) - raised
+ * directly: "repeat on the template maker needs to be choice to be daily
+ * weekly or monthly" (previously always chained occurrences back-to-back
+ * using periodLengthDays as the gap, which only read as "weekly" for a
+ * 7-day template and had no way to express "apply this same pattern once a
+ * month" at all). MONTHLY uses addMonths (calendar months, 28-31 days) not a
+ * fixed day count, so "the 15th of every month" stays the 15th regardless of
+ * month length.
+ */
+export const REPEAT_CADENCES = ["DAILY", "WEEKLY", "MONTHLY"] as const;
+export type RepeatCadence = (typeof REPEAT_CADENCES)[number];
+
+function occurrenceStart(periodStart: Date, cadence: RepeatCadence, index: number): Date {
+  switch (cadence) {
+    case "DAILY":
+      return addDays(periodStart, index);
+    case "WEEKLY":
+      return addWeeks(periodStart, index);
+    case "MONTHLY":
+      return addMonths(periodStart, index);
+  }
+}
 
 export interface TemplateApplyOccurrencePlan {
   occurrenceIndex: number;
@@ -281,21 +306,23 @@ export interface TemplateApplyOccurrencePlan {
 }
 
 /**
- * Repeats planTemplateApply across `occurrences` back-to-back periods, each
- * starting right where the previous one ends (periodStart + i *
- * periodLengthDays) - this is what "repeat the template" (TODO.md) means in
- * practice: apply the same pattern to this week, then next week, then the
- * week after, etc., instead of one manual apply per period. Occurrences
- * never overlap in time (each is exactly periodLengthDays long), so
- * conflict detection within planTemplateApply - which only looks at its own
- * occurrence's date range - already covers the whole run.
+ * Repeats planTemplateApply across `occurrences` periods, `cadence` apart
+ * (periodStart + i periods, per occurrenceStart above) - this is what
+ * "repeat the template" (TODO.md) means in practice: apply the same pattern
+ * to this period, then the next, then the one after, etc., instead of one
+ * manual apply per period. A cadence shorter than the template's own
+ * periodLengthDays (e.g. DAILY on a 7-day template) will overlap occurrences
+ * in time - not blocked, since conflict detection within planTemplateApply
+ * (which runs independently per occurrence) already surfaces whatever that
+ * produces, same as any other double-booking.
  */
 export async function planTemplateApplyRepeating(
   tx: Tx,
   tenantId: string,
   templateId: string,
   periodStart: Date,
-  occurrences: number
+  occurrences: number,
+  cadence: RepeatCadence = "WEEKLY"
 ): Promise<{
   template: { id: string; name: string; periodLengthDays: number };
   occurrences: TemplateApplyOccurrencePlan[];
@@ -305,7 +332,7 @@ export async function planTemplateApplyRepeating(
 
   const results: TemplateApplyOccurrencePlan[] = [];
   for (let i = 0; i < occurrences; i++) {
-    const start = addDays(periodStart, i * template.periodLengthDays);
+    const start = occurrenceStart(periodStart, cadence, i);
     const { items } = await planTemplateApply(tx, tenantId, templateId, start);
     results.push({ occurrenceIndex: i, periodStart: start, items });
   }
@@ -314,10 +341,10 @@ export async function planTemplateApplyRepeating(
 }
 
 /**
- * Repeats applyTemplate across `occurrences` back-to-back periods. Runs
- * sequentially (not in parallel) so each occurrence's conflict check sees
- * every appointment created by the occurrences before it within the same
- * transaction.
+ * Repeats applyTemplate across `occurrences` periods, `cadence` apart (see
+ * planTemplateApplyRepeating above). Runs sequentially (not in parallel) so
+ * each occurrence's conflict check sees every appointment created by the
+ * occurrences before it within the same transaction.
  */
 export async function applyTemplateRepeating(
   tx: Tx,
@@ -325,7 +352,8 @@ export async function applyTemplateRepeating(
   templateId: string,
   periodStart: Date,
   occurrences: number,
-  createdByUserId: string
+  createdByUserId: string,
+  cadence: RepeatCadence = "WEEKLY"
 ): Promise<{ created: TemplateApplyResult["created"]; skipped: TemplateApplyResult["skipped"]; occurrenceCount: number }> {
   const template = await getTemplate(tx, tenantId, templateId);
   if (!template) throw new Error("NOT_FOUND");
@@ -333,7 +361,7 @@ export async function applyTemplateRepeating(
   const created: TemplateApplyResult["created"] = [];
   const skipped: TemplateApplyResult["skipped"] = [];
   for (let i = 0; i < occurrences; i++) {
-    const start = addDays(periodStart, i * template.periodLengthDays);
+    const start = occurrenceStart(periodStart, cadence, i);
     const result = await applyTemplate(tx, tenantId, templateId, start, createdByUserId);
     created.push(...result.created);
     skipped.push(...result.skipped);

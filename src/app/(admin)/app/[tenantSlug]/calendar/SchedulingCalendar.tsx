@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   Calendar,
   dateFnsLocalizer,
@@ -8,7 +8,17 @@ import {
   type View,
 } from "react-big-calendar";
 import withDragAndDrop, { type EventInteractionArgs } from "react-big-calendar/lib/addons/dragAndDrop";
-import { addDays, format, parse, startOfWeek, getDay, isSameDay } from "date-fns";
+// Internal module, not part of react-big-calendar's public API - the exact
+// component Week.js/Day.js both delegate to (see
+// node_modules/react-big-calendar/lib/Week.js). Reused directly below
+// (createFilteredDaysView) to render an arbitrary fixed set of days instead
+// of always a full Sun-Sat week. No published types for this subpath (only
+// react-big-calendar's top-level API is typed) - an ambient `declare
+// module` doesn't take precedence over the real, resolvable .js file here,
+// so this is suppressed at the import instead.
+// @ts-expect-error -- see comment above; no .d.ts for this internal module
+import TimeGrid from "react-big-calendar/lib/TimeGrid";
+import { addDays, eachDayOfInterval, format, parse, startOfWeek, getDay, isSameDay } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
@@ -27,10 +37,12 @@ import { getCustomHolidaysInRange, type ComputedHoliday } from "@/lib/holidays/f
 import { getEnabledHolidaysInRange } from "@/lib/holidays/catalog";
 import { CALENDAR_TEXT_SIZE_REM, type CalendarTextSize } from "@/lib/calendar/textSize";
 import { formatClockRange, formatClockTime, type TimeFormat } from "@/lib/calendar/timeFormat";
+import { condenseEvents, type CondensedKind } from "@/lib/calendar/condenseEvents";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { CalendarLegend } from "./CalendarLegend";
 import { MiniMonthCalendar } from "./MiniMonthCalendar";
 import { StaffWeekRosterView } from "./StaffWeekRosterView";
+import { columnDayLayout } from "./columnDayLayout";
 
 // Pass date-fns's startOfWeek directly - dateFnsLocalizer only ever calls it
 // as startOfWeek(new Date(), { locale }) internally (see
@@ -90,6 +102,126 @@ function TimeGutterHeader() {
       {label}
     </div>
   );
+}
+
+const DayDragContext = createContext<{
+  enabled: boolean;
+  dragDays: Date[] | null;
+  onStart: (date: Date) => void;
+  onEnter: (date: Date) => void;
+  consumeDragFlag: () => boolean;
+} | null>(null);
+
+/**
+ * react-big-calendar's `components.header` slot for the Week/Day time-grid's
+ * day column headers (TimeGridHeader.renderHeaderCells wraps whatever this
+ * renders in its own "drill down to Day view" button whenever one applies -
+ * see node_modules/react-big-calendar/lib/TimeGridHeader.js). Reused here so
+ * dragging across Week's day headers can narrow the grid to just the
+ * dragged range (`visibleDayFilter` below, set via `onStart`/`onEnter`'s
+ * drag-tracking in the main component). A plain click (no drag) still
+ * drills down exactly as before - `consumeDragFlag` only reports true, and
+ * suppresses the click via stopPropagation/preventDefault, when the mouseup
+ * that just fired actually spanned more than one day.
+ */
+function DayHeaderCell({ date, label }: { date: Date; label: string }) {
+  const ctx = useContext(DayDragContext);
+  if (!ctx?.enabled) return <span>{label}</span>;
+  const highlighted = ctx.dragDays?.some((d) => isSameDay(d, date)) ?? false;
+  return (
+    <span
+      onMouseDown={(e) => {
+        e.preventDefault();
+        ctx.onStart(date);
+      }}
+      onMouseEnter={() => ctx.onEnter(date)}
+      onClick={(e) => {
+        if (ctx.consumeDragFlag()) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }}
+      title="Drag across days to show only that range"
+      className={`block cursor-pointer select-none rounded px-1 transition-colors ${
+        highlighted ? "bg-primary-100 text-primary-700" : ""
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+/**
+ * A thin wrapper around react-big-calendar's own internal TimeGrid - the
+ * exact component Week.js delegates to - that renders a *fixed* set of days
+ * instead of the full Sun-Sat week TimeGrid.range would otherwise compute.
+ * Backs both the "Show days" toolbar input and drag-selecting the Week
+ * view's day headers (DayHeaderCell above) - both just produce a `days`
+ * array through the same `setVisibleDayFilter` setter in the main
+ * component.
+ *
+ * react-big-calendar's View.range/.navigate/.title statics only ever
+ * receive `{localizer}` (range/navigate) or `{localizer, length}` (title) -
+ * no custom app state - so `days` has to be baked into a *fresh* component
+ * (new statics closing over this call's `days`) rather than read from props
+ * at call time. The `views` useMemo below recreates this view whenever
+ * `visibleDayFilter` changes - the same reactivity pattern already used
+ * there for StaffWeekRosterView/groupByStaff. Back/Next re-derive a shifted
+ * `days` array and push it back through `setVisibleDayFilter` themselves
+ * (closed over here) rather than just returning a new focal date, since
+ * nothing else would otherwise tell the *next* instance of this view what
+ * the shifted window should be.
+ */
+function createFilteredDaysView(days: Date[], setVisibleDayFilter: (days: Date[] | null) => void) {
+  function FilteredDaysView(props: Record<string, unknown>) {
+    const { localizer, min, max, scrollToTime, ...rest } = props as {
+      localizer: { startOf: (d: Date, unit: string) => Date; endOf: (d: Date, unit: string) => Date };
+      min?: Date;
+      max?: Date;
+      scrollToTime?: Date;
+    };
+    return (
+      <TimeGrid
+        {...rest}
+        range={days}
+        eventOffset={15}
+        localizer={localizer}
+        min={min ?? localizer.startOf(new Date(), "day")}
+        max={max ?? localizer.endOf(new Date(), "day")}
+        scrollToTime={scrollToTime ?? localizer.startOf(new Date(), "day")}
+      />
+    );
+  }
+
+  FilteredDaysView.range = () => days;
+
+  FilteredDaysView.navigate = (date: Date, action: string) => {
+    if (action === "TODAY") {
+      setVisibleDayFilter(null);
+      return new Date();
+    }
+    if (action === "PREV" || action === "NEXT") {
+      const delta = action === "PREV" ? -days.length : days.length;
+      const shifted = days.map((d) => addDays(d, delta));
+      setVisibleDayFilter(shifted);
+      return shifted[0];
+    }
+    return date;
+  };
+
+  FilteredDaysView.title = () => {
+    const start = days[0];
+    const end = days[days.length - 1];
+    if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+      return `${format(start, "MMMM d")} – ${format(end, "d")}`;
+    }
+    if (start.getFullYear() === end.getFullYear()) {
+      return `${format(start, "MMMM d")} – ${format(end, "MMMM d")}`;
+    }
+    return `${format(start, "MMMM d, yyyy")} – ${format(end, "MMMM d, yyyy")}`;
+  };
+
+  return FilteredDaysView;
 }
 
 type EntryMode = "appointment" | "shift" | "custom";
@@ -210,6 +342,11 @@ export interface CalendarEvent {
   start: Date;
   end: Date;
   resource: ApiAppointment;
+  // Only set on a summary block standing in for several real entries on a
+  // crowded grid (see condenseEvents.ts) - "same" is everyone on one shift,
+  // "overflow" is a "+N more" block. `resource` is then just the first
+  // member's, so color/kind lookups keep working unchanged.
+  group?: { kind: CondensedKind; members: CalendarEvent[] };
 }
 
 /**
@@ -477,13 +614,60 @@ function toEvent(appt: ApiAppointment): CalendarEvent {
   // this plain string rather than EventContent's richer markup below) so
   // it's the part that survives truncation, not the part ellipsis eats first.
   const title = `${appt.staff.displayName}: ${appointmentTitle(appt)}`;
+  const start = new Date(appt.startTime);
+  const end = new Date(appt.endTime);
+  // react-big-calendar moves anything that starts and ends exactly at
+  // midnight into the all-day strip above the Week/Day grid, where every
+  // such entry stacks and pushes the real grid out of view. Ending it 1ms
+  // before midnight keeps it in the grid as a full-height block.
+  if (isMidnight(start) && isMidnight(end) && end > start) end.setTime(end.getTime() - 1);
+  return { id: appt.id, title, start, end, resource: appt };
+}
+
+const GROUP_EVENT_ID_PREFIX = "__group__";
+
+/** Entries only share a "same" block when they'd look identical on the grid apart from who's working: same kind, title, status and color. */
+function groupKeyOf(event: CalendarEvent): string {
+  const a = event.resource;
+  return [a.entryKind, a.customCalendarId ?? "", a.status, a.tagId ?? "", a.colorKey ?? "", appointmentTitle(a)].join("|");
+}
+
+function makeGroupEvent(members: CalendarEvent[], kind: CondensedKind): CalendarEvent {
+  const sorted = [...members].sort(
+    (a, b) => a.start.getTime() - b.start.getTime() || a.resource.staff.displayName.localeCompare(b.resource.staff.displayName)
+  );
+  const start = new Date(Math.min(...sorted.map((m) => m.start.getTime())));
+  const end = new Date(Math.max(...sorted.map((m) => m.end.getTime())));
+  const label = groupLabel(sorted, kind);
+  const names = sorted.map((m) => m.resource.staff.displayName).join(", ");
   return {
-    id: appt.id,
-    title,
-    start: new Date(appt.startTime),
-    end: new Date(appt.endTime),
-    resource: appt,
+    id: `${GROUP_EVENT_ID_PREFIX}${kind}:${start.getTime()}:${end.getTime()}:${sorted[0].id}`,
+    // Plain-text version for the hover tooltip and screen readers.
+    title: kind === "same" ? `${label} · ${sorted.length} staff: ${names}` : `${label}: ${names}`,
+    start,
+    end,
+    resource: sorted[0].resource,
+    group: { kind, members: sorted },
   };
+}
+
+function groupLabel(members: CalendarEvent[], kind: CondensedKind): string {
+  return kind === "same" ? appointmentTitle(members[0].resource) : `+${members.length} more`;
+}
+
+function isMidnight(d: Date): boolean {
+  return d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0;
+}
+
+/** One minute shorter is always one z-index step further forward; stays below the draft event's 10081. */
+function stackingZIndex(start: Date, end: Date): number {
+  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
+  return Math.max(1, 10080 - minutes);
+}
+
+/** Snaps to the nearest whole minute - undoes toEvent's 1ms midnight nudge when an event is dragged or resized. */
+function toNearestMinute(d: Date): Date {
+  return new Date(Math.round(d.getTime() / 60_000) * 60_000);
 }
 
 /** "2024-01-01T09:00" - the format `<input type="datetime-local">` needs, in the browser's local time (not UTC). */
@@ -661,6 +845,19 @@ export function SchedulingCalendar({
     return { start, end };
   });
   const [selected, setSelected] = useState<ApiAppointment | null>(null);
+  // The summary block ("Shift · 15 staff" / "+N more") whose member list is open.
+  const [openGroup, setOpenGroup] = useState<CalendarEvent | null>(null);
+  // Width of the calendar card, measured so the crowding limit (maxLanes
+  // below) follows the real day-column width instead of assuming a desktop.
+  const calendarWrapperRef = useRef<HTMLDivElement>(null);
+  const [gridWidth, setGridWidth] = useState(900);
+  useEffect(() => {
+    const el = calendarWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => setGridWidth(entries[0].contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const [creating, setCreating] = useState<
     | {
         start: Date;
@@ -690,6 +887,96 @@ export function SchedulingCalendar({
   // a flat list), so switching to either of those turns it back off - see
   // handleViewChange below.
   const [groupByStaff, setGroupByStaff] = useState(false);
+  // Narrows the Week view to show only a specific set of days - either
+  // picked by dragging across the Week view's day headers (DayHeaderCell,
+  // startDayDrag/enterDayDrag below) or by the "Show days" toolbar input
+  // (handleDayCountChange below). Null means no filter - react-big-
+  // calendar's own full-week default. Drives a real custom view
+  // (createFilteredDaysView) rather than hiding columns with CSS, so
+  // data-fetching (onRangeChange) and Back/Next/Today navigation all stay
+  // correct for whatever's actually shown - see that function's doc comment.
+  const [visibleDayFilter, setVisibleDayFilter] = useState<Date[] | null>(null);
+  // In-progress drag state for DayHeaderCell - `dragDays` is reactive
+  // (drives the highlight while dragging); the refs track the gesture
+  // itself without forcing a render on every mouseenter, and survive past
+  // the mouseup that clears `dragDays` so the "click" event that always
+  // fires right after mouseup can still tell a real drag apart from a
+  // plain click (see consumeDragFlag).
+  const [dragDays, setDragDays] = useState<Date[] | null>(null);
+  const dragAnchorRef = useRef<Date | null>(null);
+  const dragActiveRef = useRef(false);
+  const dragCommittedRef = useRef(false);
+
+  const startDayDrag = useCallback((date: Date) => {
+    dragAnchorRef.current = date;
+    dragActiveRef.current = true;
+    setDragDays([date]);
+  }, []);
+
+  const enterDayDrag = useCallback((date: Date) => {
+    const anchor = dragAnchorRef.current;
+    if (!dragActiveRef.current || !anchor) return;
+    const [from, to] = anchor <= date ? [anchor, date] : [date, anchor];
+    setDragDays(eachDayOfInterval({ start: from, end: to }));
+  }, []);
+
+  const consumeDragFlag = useCallback(() => {
+    const was = dragCommittedRef.current;
+    dragCommittedRef.current = false;
+    return was;
+  }, []);
+
+  // Commits the drag on mouseup wherever it happens to end (not just over a
+  // header cell) - document-level so releasing the mouse off the grid
+  // entirely still ends the gesture instead of leaving it stuck active.
+  useEffect(() => {
+    function handleMouseUp() {
+      if (!dragActiveRef.current) return;
+      dragActiveRef.current = false;
+      setDragDays((days) => {
+        if (days && days.length > 1) {
+          setVisibleDayFilter(days);
+          dragCommittedRef.current = true;
+        } else {
+          dragCommittedRef.current = false;
+        }
+        return null;
+      });
+    }
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => document.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  const dayDragContextValue = useMemo(
+    () => ({
+      enabled: currentView === "week",
+      dragDays,
+      onStart: startDayDrag,
+      onEnter: enterDayDrag,
+      consumeDragFlag,
+    }),
+    [currentView, dragDays, startDayDrag, enterDayDrag, consumeDragFlag]
+  );
+
+  // "Show days" toolbar input - an empty/invalid value clears the filter
+  // back to the normal full week; any other value becomes "the next N days
+  // starting today" and switches into Week view to actually show it (same
+  // as applying a drag selection does via the mouseup handler above).
+  const handleDayCountChange = useCallback(
+    (raw: string) => {
+      const n = Number(raw);
+      if (!raw || !Number.isFinite(n) || n < 1) {
+        setVisibleDayFilter(null);
+        return;
+      }
+      const clamped = Math.min(60, Math.max(1, Math.round(n)));
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      setVisibleDayFilter(Array.from({ length: clamped }, (_, i) => addDays(start, i)));
+      if (currentView !== "week") setCurrentView("week");
+    },
+    [currentView]
+  );
   // Whether the create modal has finished its entrance transition - kept
   // separate from `creating` itself so the modal doesn't just snap into
   // view the instant a slot is selected. The draft "ghost" event on the
@@ -967,8 +1254,8 @@ export function SchedulingCalendar({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          startTime: start.toISOString(),
-          endTime: end.toISOString(),
+          startTime: toNearestMinute(start).toISOString(),
+          endTime: toNearestMinute(end).toISOString(),
           ...(staffId ? { staffId } : {}),
         }),
       });
@@ -1039,6 +1326,9 @@ export function SchedulingCalendar({
   const canCancelShift = !readOnly && (permissions?.CANCEL_SHIFTS ?? false);
   const canCancelAppointment = !readOnly && (permissions?.CANCEL_APPOINTMENTS ?? false);
   const canCancelCustom = !readOnly && (permissions?.CANCEL_CUSTOM_ENTRIES ?? false);
+  const canDeleteShift = !readOnly && (permissions?.DELETE_SHIFTS ?? false);
+  const canDeleteAppointment = !readOnly && (permissions?.DELETE_APPOINTMENTS ?? false);
+  const canDeleteCustom = !readOnly && (permissions?.DELETE_CUSTOM_ENTRIES ?? false);
   // Generic "is the Create group worth showing at all" / "can anything on
   // this grid ever be dragged" checks - the specific buttons/accessors below
   // still each gate on their own specific permission, not this.
@@ -1052,6 +1342,11 @@ export function SchedulingCalendar({
     (appt: ApiAppointment) =>
       isShift(appt) ? canCancelShift : isCustomEntry(appt) ? canCancelCustom : canCancelAppointment,
     [canCancelShift, canCancelAppointment, canCancelCustom]
+  );
+  const canDeleteEvent = useCallback(
+    (appt: ApiAppointment) =>
+      isShift(appt) ? canDeleteShift : isCustomEntry(appt) ? canDeleteCustom : canDeleteAppointment,
+    [canDeleteShift, canDeleteAppointment, canDeleteCustom]
   );
   const canCreateForMode = useCallback(
     (mode: EntryMode) => (mode === "shift" ? canCreateShift : mode === "custom" ? canCreateCustom : canCreateAppointment),
@@ -1190,8 +1485,45 @@ export function SchedulingCalendar({
   // mouse is released (react-big-calendar's own slot-selection highlight is
   // only ever momentary).
   const draftSlot = creating;
+
+  // Day view only (see groupByStaff's declaration above for why) - the
+  // staff filter dropdown still narrows which column(s) show, same as it
+  // narrows the normal combined view.
+  const resourceViewActive = groupByStaff && currentView === "day" && staff.length > 1;
+
+  // How many lanes one day column has room for (see condenseEvents.ts and
+  // columnDayLayout.ts), from the column's real width. A lane needs ~30px to
+  // show a staff avatar at all (maxLanes - past that the rest become "+N
+  // more") and ~50px to show a name (nameLanes - past that, people on the
+  // same shift share one labelled block instead of becoming avatar-only
+  // bars). Roughly 3 and 2 in a 7-day week, 12 and 12 in Day view.
+  const dayColumnCount = currentView === "day" ? 1 : (visibleDayFilter?.length ?? 7);
+  const dayColumnWidth = Math.max(0, gridWidth - 90) / dayColumnCount;
+  const maxLanes = Math.min(12, Math.max(2, Math.floor(dayColumnWidth / 30)));
+  const nameLanes = Math.min(maxLanes, Math.max(1, Math.floor(dayColumnWidth / 50)));
+
+  // What actually goes on the grid. With 50-80 staff a single day can hold
+  // 15 people on each of several overlapping shifts - drawn one box each,
+  // that's unreadable slivers no layout can rescue. So wherever a day is
+  // too crowded to show every entry, identical ones collapse into one block
+  // per shift and any remaining excess into "+N more"; clicking either
+  // lists everyone in it. The per-staff views (Group by staff) and Agenda
+  // already give every entry its own row, so they're left untouched.
+  const displayEvents = useMemo(() => {
+    const gridIsCombined =
+      (currentView === "day" && !resourceViewActive) || (currentView === "week" && !(groupByStaff && staff.length > 1));
+    if (currentView !== "month" && !gridIsCombined) return visibleEvents;
+    return condenseEvents(visibleEvents, {
+      mode: currentView === "month" ? "day" : "time",
+      limit: currentView === "month" ? 3 : maxLanes,
+      groupLimit: currentView === "month" ? 3 : nameLanes,
+      groupKey: groupKeyOf,
+      makeGroup: makeGroupEvent,
+    });
+  }, [visibleEvents, currentView, resourceViewActive, groupByStaff, staff.length, maxLanes, nameLanes]);
+
   const calendarEvents = useMemo(() => {
-    if (!draftSlot) return visibleEvents;
+    if (!draftSlot) return displayEvents;
     const draft: CalendarEvent = {
       id: DRAFT_EVENT_ID,
       // The "(drag to adjust)" hint itself is appended by EventContent, not
@@ -1206,13 +1538,9 @@ export function SchedulingCalendar({
       // back to DRAFT_RESOURCE's empty id (no column) otherwise.
       resource: draftSlot.defaultStaffId ? { ...DRAFT_RESOURCE, staffId: draftSlot.defaultStaffId } : DRAFT_RESOURCE,
     };
-    return [...visibleEvents, draft];
-  }, [visibleEvents, draftSlot]);
+    return [...displayEvents, draft];
+  }, [displayEvents, draftSlot]);
 
-  // Day view only (see groupByStaff's declaration above for why) - the
-  // staff filter dropdown still narrows which column(s) show, same as it
-  // narrows the normal combined view.
-  const resourceViewActive = groupByStaff && currentView === "day" && staff.length > 1;
   const resourceStaff = useMemo(() => {
     let list = staffFilter === "all" ? staff : staff.filter((s) => s.id === staffFilter);
     if (teamStaffIds) list = list.filter((s) => teamStaffIds.has(s.id));
@@ -1228,11 +1556,16 @@ export function SchedulingCalendar({
   const views = useMemo(
     () => ({
       month: true,
-      week: groupByStaff && staff.length > 1 ? StaffWeekRosterView : true,
+      week:
+        groupByStaff && staff.length > 1
+          ? StaffWeekRosterView
+          : visibleDayFilter
+            ? createFilteredDaysView(visibleDayFilter, setVisibleDayFilter)
+            : true,
       day: true,
       agenda: true,
     }),
-    [groupByStaff, staff.length]
+    [groupByStaff, staff.length, visibleDayFilter]
   );
 
   // Extra, non-standard props forwarded straight through react-big-calendar
@@ -1267,6 +1600,16 @@ export function SchedulingCalendar({
       eventTimeRangeStartFormat: ({ start }: { start: Date }) => `${formatClockTime(start, timeFormat)} – `,
       eventTimeRangeEndFormat: ({ end }: { end: Date }) => ` – ${formatClockTime(end, timeFormat)}`,
     }),
+    [timeFormat]
+  );
+
+  // Hover text - the full story for an event whose lane is too narrow to
+  // show more than an avatar.
+  const eventTooltip = useCallback(
+    (event: CalendarEvent) =>
+      event.id.startsWith(BLOCKED_EVENT_ID_PREFIX)
+        ? event.title
+        : `${formatClockRange(event.start, event.end, timeFormat)} · ${event.title}`,
     [timeFormat]
   );
 
@@ -1313,6 +1656,20 @@ export function SchedulingCalendar({
         };
       }
 
+      if (event.group?.kind === "overflow") {
+        // A mix of unrelated entries, so no one entry's color - neutral, and
+        // visibly not a booking itself.
+        return {
+          style: {
+            backgroundColor: "#f3f4f6",
+            borderColor: "#9ca3af",
+            color: "#374151",
+            zIndex: stackingZIndex(event.start, event.end),
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
+          },
+        };
+      }
+
       const appt = event.resource;
       const c = resolveAppointmentColor(appt, colorTriples);
 
@@ -1322,9 +1679,10 @@ export function SchedulingCalendar({
           borderColor: c.border,
           color: c.text,
           textDecoration: appt.status === "CANCELLED" ? "line-through" : undefined,
-          // A slight elevation shadow so each event chip reads as a raised
-          // card, Google Calendar-style.
-          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.2)",
+          // Only matters in Month view, where a multi-day bar can sit under
+          // a shorter chip - Week/Day lanes never overlap (columnDayLayout).
+          zIndex: stackingZIndex(event.start, event.end),
+          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
         },
       };
     },
@@ -1465,8 +1823,6 @@ export function SchedulingCalendar({
     [minutesToGridTime, amPmHalf, calendarStartMinute, calendarEndMinute]
   );
 
-  const calendarWrapperRef = useRef<HTMLDivElement>(null);
-
   // Smoothly scrolls the Week/Day time gutter to the top (AM) or the
   // midpoint (PM) of whatever range is currently rendered (the tenant's
   // configured calendarStartMinute/calendarEndMinute, see gridMinTime/
@@ -1494,15 +1850,90 @@ export function SchedulingCalendar({
   // first in the text that does truncate.
   const EventContent = useCallback(
     ({ event }: { event: CalendarEvent }) => {
+      // Week/Day draw the time here rather than through react-big-calendar's
+      // own one-line label (hidden in globals.css), so it can wrap onto a
+      // second line in a narrow lane instead of being cut off mid-time.
+      const time =
+        currentView === "week" || currentView === "day" ? (
+          <span className="cal-time">
+            <span>
+              {formatClockTime(event.start, timeFormat)}
+              <span className="cal-dash"> –</span>
+            </span>
+            <span>{formatClockTime(event.end, timeFormat)}</span>
+          </span>
+        ) : null;
+
       if (event.id === DRAFT_EVENT_ID) {
         return (
           <>
-            {event.title}
-            {showDragHint && <span className="ml-1 text-[10px] opacity-75">(drag to adjust)</span>}
+            {time}
+            <span className="cal-text">
+              {event.title}
+              {showDragHint && <span className="ml-1 text-[10px] opacity-75">(drag to adjust)</span>}
+            </span>
           </>
         );
       }
       if (event.id.startsWith(BLOCKED_EVENT_ID_PREFIX)) return <>{event.title}</>;
+
+      // A summary block (see condenseEvents.ts): what it is and how many
+      // people are in it lead, since that's what has to survive a narrow
+      // box; the initials underneath wrap to fill whatever room is left and
+      // are simply clipped by the box when there isn't any.
+      if (event.group) {
+        const { kind, members } = event.group;
+        const label = groupLabel(members, kind);
+        if (currentView === "month") {
+          return (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="flex-shrink-0 rounded-full border border-current px-1 text-[10px] font-bold leading-tight">
+                {members.length}
+              </span>
+              <span className="min-w-0 flex-1 truncate">
+                <span className="font-semibold">{label}</span>
+                <span className="opacity-80"> · {formatClockRange(event.start, event.end, timeFormat)}</span>
+              </span>
+            </span>
+          );
+        }
+        const shown = members.slice(0, 12);
+        return (
+          <span className="flex min-w-0 flex-col gap-1">
+            {time}
+            <span className="flex min-w-0 items-center gap-1">
+              {/* The count is what survives the narrowest lane - the label
+                  beside it is hidden there (cal-text, see globals.css). */}
+              <span
+                className={`flex-shrink-0 text-[10px] font-bold leading-tight ${
+                  kind === "same" ? "rounded-full border border-current px-1" : ""
+                }`}
+              >
+                {kind === "same" ? members.length : `+${members.length}`}
+              </span>
+              <span className="cal-text min-w-0 flex-1 truncate font-semibold leading-tight">
+                {kind === "same" ? label : "more"}
+              </span>
+            </span>
+            <span className="flex flex-wrap gap-0.5">
+              {shown.map((m) => (
+                <span
+                  key={m.id}
+                  className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
+                  style={{ backgroundColor: staffAvatarColor(m.resource.staffId) }}
+                >
+                  {staffInitials(m.resource.staff.displayName)}
+                </span>
+              ))}
+              {members.length > shown.length && (
+                <span className="flex h-4 items-center text-[10px] font-semibold leading-none opacity-80">
+                  +{members.length - shown.length}
+                </span>
+              )}
+            </span>
+          </span>
+        );
+      }
 
       const appt = event.resource;
       const staffName = appt.staff.displayName;
@@ -1522,42 +1953,40 @@ export function SchedulingCalendar({
             />
             <span className="min-w-0 flex-1 truncate">
               <span className="font-semibold">{staffName}</span>
+              <span className="opacity-80"> · {formatClockRange(new Date(appt.startTime), new Date(appt.endTime), timeFormat)}</span>
               <span className="opacity-80"> · {appointmentTitle(appt)}</span>
             </span>
           </span>
         );
       }
 
-      // Week/Day's day-column width gets divided among however many events
-      // overlap in time (see dayLayoutAlgorithm="no-overlap" above) - once
-      // there's more than one at a time, each box can easily end up narrower
-      // than a single word. A single combined "name · title" line truncated
-      // as one string (the old version of this) meant the title ate into the
-      // name's share of that narrow space, often leaving nothing legible at
-      // all past 3-4 characters. Stacking name and title as two *separately*
-      // truncating lines instead means each only has to fit its own
-      // (usually much shorter) text - "Jack" alone almost always fits even
-      // where "Jack · Shift" wouldn't - so a narrow box still reads instead
-      // of going blank. Needs the event box tall enough for two lines
-      // (easily true for a multi-hour shift, not for a 15-30 min slot at a
-      // coarse zoom) - short events still fall back to whatever fits.
+      // Week/Day's day-column width is shared between however many events
+      // overlap (one lane each, see columnDayLayout.ts), so what's shown
+      // adapts to the lane's width - the cal-* classes are switched by
+      // container queries in globals.css. A wide lane shows everything; a
+      // medium one drops the avatar so the name gets the room; the
+      // narrowest shows just the avatar (who) in a bar whose position on the
+      // grid already says when, with the rest in the hover tooltip. Name and
+      // title truncate as separate lines so a long title never eats the name.
       return (
-        <span className="flex min-w-0 items-start gap-1">
-          <span
-            className="mt-px flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
-            style={{ backgroundColor: staffAvatarColor(appt.staffId) }}
-            title={staffName}
-          >
-            {staffInitials(staffName)}
+        <>
+          {time}
+          <span className="cal-who flex min-w-0 items-start gap-1">
+            <span
+              className="cal-avatar mt-px flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
+              style={{ backgroundColor: staffAvatarColor(appt.staffId) }}
+            >
+              {staffInitials(staffName)}
+            </span>
+            <span className="cal-text min-w-0 flex-1 overflow-hidden">
+              <span className="block truncate leading-tight font-semibold">{staffName}</span>
+              <span className="block truncate leading-tight opacity-80">{appointmentTitle(appt)}</span>
+            </span>
           </span>
-          <span className="min-w-0 flex-1 overflow-hidden">
-            <span className="block truncate leading-tight font-semibold">{staffName}</span>
-            <span className="block truncate leading-tight opacity-80">{appointmentTitle(appt)}</span>
-          </span>
-        </span>
+        </>
       );
     },
-    [showDragHint, currentView]
+    [showDragHint, currentView, timeFormat]
   );
 
   return (
@@ -1696,6 +2125,32 @@ export function SchedulingCalendar({
           {/* Controls the Week/Day time gutter's row size - hour, half-hour,
               or 15-minute blocks. No effect in Month view, which doesn't
               show a time gutter at all. */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Show days</span>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={1}
+                max={60}
+                placeholder="All"
+                value={visibleDayFilter ? visibleDayFilter.length : ""}
+                onChange={(e) => handleDayCountChange(e.target.value)}
+                title="Show only the next N days, starting today - or drag across the Week view's day headers to pick a specific range"
+                className="w-14 rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+              />
+              {visibleDayFilter && (
+                <button
+                  type="button"
+                  onClick={() => setVisibleDayFilter(null)}
+                  title="Clear day filter"
+                  className="rounded-full bg-white px-2 py-1 text-xs font-medium text-gray-400 shadow-sm hover:text-red-600"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] font-medium tracking-wide text-gray-400 uppercase">Time grid</span>
             <div className="inline-flex gap-0.5 rounded-full bg-white p-0.5 text-xs shadow-sm">
@@ -1880,6 +2335,7 @@ export function SchedulingCalendar({
                     </button>
                   </p>
                 )}
+                <DayDragContext.Provider value={dayDragContextValue}>
                 <DnDCalendar
                   localizer={localizer}
                   events={calendarEvents}
@@ -1891,21 +2347,23 @@ export function SchedulingCalendar({
                   onNavigate={(date) => setCurrentDate(date)}
                   onView={handleViewChange}
                   views={views}
-                  // Week/Day: give every overlapping event its own side-by-side
-                  // lane instead of react-big-calendar's default "overlap"
-                  // algorithm, which lets events partially cover each other
-                  // (a cascading staircase of slivers once more than two or
-                  // three coincide - unreadable, see TODO.md's "events on the
-                  // calendar overlap too much" entry). "no-overlap" is what
-                  // Google Calendar actually does for concurrent events: each
-                  // one gets a clean, non-overlapping column.
-                  dayLayoutAlgorithm="no-overlap"
+                  // One lane per event, never overlapping (see columnDayLayout.ts).
+                  dayLayoutAlgorithm={columnDayLayout}
+                  tooltipAccessor={eventTooltip}
+                  // Overnight entries (e.g. 8pm-6am) render in the grid on
+                  // both days instead of the all-day strip at the top.
+                  showMultiDayTimes
                   // Month: "+N more" opens an inline popup listing the rest of
                   // that day's events (Google Calendar's day-cell overflow
                   // behavior) instead of the default of silently navigating to
                   // Day view for that date.
                   popup
-                  components={{ toolbar: CalendarToolbar, event: EventContent, timeGutterHeader: TimeGutterHeader }}
+                  components={{
+                    toolbar: CalendarToolbar,
+                    event: EventContent,
+                    timeGutterHeader: TimeGutterHeader,
+                    header: DayHeaderCell,
+                  }}
                   formats={calendarFormats}
                   step={timeStep}
                   timeslots={1}
@@ -1932,11 +2390,21 @@ export function SchedulingCalendar({
                   // there.
                   selectable={canCreateForCurrentType ? "ignoreEvents" : false}
                   resizable={canEdit || canCreate}
+                  // A summary block stands in for several entries - there's no
+                  // single booking to reschedule, so it's click-to-open only.
                   draggableAccessor={(event: CalendarEvent) =>
-                    event.id === DRAFT_EVENT_ID ? (creating ? canCreateForMode(creating.mode) : false) : canEditEvent(event.resource)
+                    event.group
+                      ? false
+                      : event.id === DRAFT_EVENT_ID
+                        ? (creating ? canCreateForMode(creating.mode) : false)
+                        : canEditEvent(event.resource)
                   }
                   resizableAccessor={(event: CalendarEvent) =>
-                    event.id === DRAFT_EVENT_ID ? (creating ? canCreateForMode(creating.mode) : false) : canEditEvent(event.resource)
+                    event.group
+                      ? false
+                      : event.id === DRAFT_EVENT_ID
+                        ? (creating ? canCreateForMode(creating.mode) : false)
+                        : canEditEvent(event.resource)
                   }
                   onRangeChange={handleRangeChange}
                   onSelectSlot={(slot: SlotInfo) => {
@@ -1973,6 +2441,10 @@ export function SchedulingCalendar({
                   }}
                   onSelectEvent={(event: CalendarEvent) => {
                     if (event.id === DRAFT_EVENT_ID) return;
+                    if (event.group) {
+                      setOpenGroup(event);
+                      return;
+                    }
                     setSelected(event.resource);
                   }}
                   onEventDrop={handleEventDrop}
@@ -1980,6 +2452,7 @@ export function SchedulingCalendar({
                   eventPropGetter={eventPropGetter}
                   dayPropGetter={dayPropGetter}
                 />
+                </DayDragContext.Provider>
               </>
             )}
           </div>
@@ -2123,6 +2596,69 @@ export function SchedulingCalendar({
         </Modal>
       )}
 
+      {openGroup?.group && (
+        <Modal onClose={() => setOpenGroup(null)}>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-xl">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold text-gray-900">
+                  {openGroup.group.kind === "same"
+                    ? appointmentTitle(openGroup.resource)
+                    : `${openGroup.group.members.length} entries`}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  {format(openGroup.start, "EEE, MMM d")} · {formatClockRange(openGroup.start, openGroup.end, timeFormat)}
+                  {openGroup.group.kind === "same" && ` · ${openGroup.group.members.length} staff`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpenGroup(null)}
+                className="rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
+              >
+                Close
+              </button>
+            </div>
+            <ul className="mt-3 max-h-[55vh] divide-y divide-gray-100 overflow-y-auto">
+              {openGroup.group.members.map((m) => {
+                const c = resolveAppointmentColor(m.resource, colorTriples);
+                return (
+                  <li key={m.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOpenGroup(null);
+                        setSelected(m.resource);
+                      }}
+                      className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left hover:bg-gray-50"
+                    >
+                      <span
+                        className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white"
+                        style={{ backgroundColor: staffAvatarColor(m.resource.staffId) }}
+                      >
+                        {staffInitials(m.resource.staff.displayName)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-gray-900">
+                          {m.resource.staff.displayName}
+                        </span>
+                        <span className="block truncate text-xs text-gray-500">
+                          {formatClockRange(m.start, m.end, timeFormat)} · {appointmentTitle(m.resource)}
+                        </span>
+                      </span>
+                      <span
+                        className="h-3 w-3 flex-shrink-0 rounded-full border"
+                        style={{ backgroundColor: c.bg, borderColor: c.border }}
+                      />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </Modal>
+      )}
+
       {selected && (
         <Modal onClose={() => setSelected(null)}>
           <AppointmentDetailPanel
@@ -2130,6 +2666,7 @@ export function SchedulingCalendar({
             permissions={permissions}
             allowEditingBookedEvents={allowEditingBookedEvents}
             canCancel={canCancelEvent(selected)}
+            canDelete={canDeleteEvent(selected)}
             canEdit={canEditEvent(selected)}
             canFindCoverage={canEditEvent(selected)}
             readOnly={readOnly}
@@ -2183,6 +2720,7 @@ export function AppointmentDetailPanel({
   permissions,
   allowEditingBookedEvents,
   canCancel,
+  canDelete,
   canEdit,
   canFindCoverage,
   readOnly = false,
@@ -2209,7 +2747,10 @@ export function AppointmentDetailPanel({
   // doc comment. ANDed into canEditEstimates below the same way the parent
   // already ANDs it into canEdit itself (via canEditEvent).
   allowEditingBookedEvents: boolean;
+  // Also gates un-cancelling - restoring is the inverse of cancelling and
+  // shares its CANCEL_* permission server-side.
   canCancel: boolean;
+  canDelete: boolean;
   canEdit: boolean;
   canFindCoverage: boolean;
   readOnly?: boolean;
@@ -2273,6 +2814,7 @@ export function AppointmentDetailPanel({
   const [value, setValue] = useState(appointment.estimatedValue ?? "");
   const [saving, setSaving] = useState(false);
   const entryMode: EntryMode = entryModeOf(appointment);
+  const entryNoun = entryMode === "shift" ? "shift" : entryMode === "custom" ? "entry" : "appointment";
   const visibleTags = tagsForMode(tags, entryMode);
   // Resolves each shift-only toggle (showJobType etc.) against the right
   // settings source for this entry's actual kind: appointments always show
@@ -2298,6 +2840,9 @@ export function AppointmentDetailPanel({
   const [assigning, setAssigning] = useState<string | null>(null);
   const [outcomeSaving, setOutcomeSaving] = useState(false);
   const [outcomeError, setOutcomeError] = useState<string | null>(null);
+  // Shared by cancel/restore/delete - only one of them can be in flight at a time.
+  const [lifecycleSaving, setLifecycleSaving] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState<string | null>(null);
 
   async function saveColorValue(value: string) {
     setSavingTag(true);
@@ -2385,6 +2930,35 @@ export function AppointmentDetailPanel({
       body: JSON.stringify({ status: "CANCELLED" }),
     });
     onChanged();
+  }
+
+  async function restoreAppointment() {
+    setLifecycleSaving(true);
+    setLifecycleError(null);
+    try {
+      await fetchJson(`/api/appointments/${appointment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "BOOKED" }),
+      });
+      onChanged();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : `Couldn't restore this ${entryNoun}.`);
+      setLifecycleSaving(false);
+    }
+  }
+
+  async function deleteAppointment() {
+    if (!window.confirm(`Permanently delete this ${entryNoun}? It will be removed from the calendar and reports. This can't be undone.`)) return;
+    setLifecycleSaving(true);
+    setLifecycleError(null);
+    try {
+      await fetchJson(`/api/appointments/${appointment.id}`, { method: "DELETE" });
+      onChanged();
+    } catch (err) {
+      setLifecycleError(err instanceof Error ? err.message : `Couldn't delete this ${entryNoun}.`);
+      setLifecycleSaving(false);
+    }
   }
 
   async function setOutcomeStatus(status: "BOOKED" | "COMPLETED" | "NO_SHOW") {
@@ -2915,13 +3489,39 @@ export function AppointmentDetailPanel({
         </div>
       )}
 
-      {!editing && canCancel && appointment.status !== "CANCELLED" && (
-        <button
-          onClick={cancelAppointment}
-          className="mt-4 rounded-md border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50"
-        >
-          Cancel {entryMode === "shift" ? "shift" : entryMode === "custom" ? "entry" : "appointment"}
-        </button>
+      {!editing && (canCancel || canDelete) && (
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-2">
+            {canCancel && appointment.status !== "CANCELLED" && (
+              <button
+                onClick={cancelAppointment}
+                disabled={lifecycleSaving}
+                className="rounded-md border border-red-300 px-3 py-1 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                Cancel {entryNoun}
+              </button>
+            )}
+            {canCancel && appointment.status === "CANCELLED" && (
+              <button
+                onClick={restoreAppointment}
+                disabled={lifecycleSaving}
+                className="rounded-md border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Restore {entryNoun}
+              </button>
+            )}
+            {canDelete && (
+              <button
+                onClick={deleteAppointment}
+                disabled={lifecycleSaving}
+                className="rounded-md bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Delete {entryNoun}
+              </button>
+            )}
+          </div>
+          {lifecycleError && <p className="mt-1 text-sm text-red-600">{lifecycleError}</p>}
+        </div>
       )}
     </div>
   );

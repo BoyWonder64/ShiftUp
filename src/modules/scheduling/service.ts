@@ -184,6 +184,41 @@ export async function cancelAppointment(tx: Tx, id: string) {
   });
 }
 
+/**
+ * Un-cancels an entry back to BOOKED. Re-runs the same overlap checks a
+ * create would, since the slot may have been filled while this row sat
+ * cancelled (cancelled rows are ignored by both the app-level check and the
+ * DB constraint).
+ */
+export async function restoreAppointment(tx: Tx, tenantId: string, id: string) {
+  const existing = await tx.appointment.findUniqueOrThrow({
+    where: { id },
+    select: { staffId: true, startTime: true, endTime: true, clientId: true, entryKind: true },
+  });
+  if (!existing.clientId) {
+    await assertOverlapAllowedForClientlessEntry(
+      tx,
+      tenantId,
+      existing.staffId,
+      existing.startTime,
+      existing.endTime,
+      existing.entryKind,
+      id
+    );
+  }
+  try {
+    return await tx.appointment.update({ where: { id }, data: { status: "BOOKED" } });
+  } catch (err) {
+    if (isOverlapConstraintViolation(err)) throw new SchedulingConflictError();
+    throw err;
+  }
+}
+
+/** Hard delete - unlike cancelAppointment, the row is gone from the calendar and reports entirely. Nothing references Appointment, so there's nothing to cascade. */
+export async function deleteAppointment(tx: Tx, id: string) {
+  return tx.appointment.delete({ where: { id } });
+}
+
 /** Reassigns a shift/appointment to a different staff member - goes through the same EXCLUDE-constraint-checked path as any other write. */
 export async function reassignAppointmentStaff(tx: Tx, tenantId: string, id: string, staffId: string) {
   const existing = await tx.appointment.findUniqueOrThrow({

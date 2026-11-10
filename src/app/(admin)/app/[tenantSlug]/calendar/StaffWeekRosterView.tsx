@@ -5,7 +5,7 @@ import { addDays, addWeeks, format, isToday, startOfWeek } from "date-fns";
 import { enUS } from "date-fns/locale";
 import type { NavigateAction, SlotInfo, View } from "react-big-calendar";
 import type { ColorTriple, EventColorKey } from "@/lib/colors/eventColors";
-import { formatClockTime, type TimeFormat } from "@/lib/calendar/timeFormat";
+import { formatClockRange, type TimeFormat } from "@/lib/calendar/timeFormat";
 import {
   DRAFT_EVENT_ID,
   appointmentTitle,
@@ -184,7 +184,7 @@ export function StaffWeekRosterView({
                           e.stopPropagation();
                           onSelectEvent(evt);
                         }}
-                        title={`${formatClockTime(evt.start, rosterTimeFormat)} · ${appointmentTitle(evt.resource)}`}
+                        title={`${s.displayName} · ${formatClockRange(evt.start, evt.end, rosterTimeFormat)} · ${appointmentTitle(evt.resource)}`}
                         className="block w-full truncate rounded px-1 py-0.5 text-left text-[length:var(--calendar-event-font-size,0.75rem)]"
                         style={{
                           backgroundColor: c.bg,
@@ -193,7 +193,8 @@ export function StaffWeekRosterView({
                           textDecoration: isCancelled(evt.resource) ? "line-through" : undefined,
                         }}
                       >
-                        {formatClockTime(evt.start, rosterTimeFormat)} &middot; {appointmentTitle(evt.resource)}
+                        <span className="font-semibold">{s.displayName}</span> &middot;{" "}
+                        {formatClockRange(evt.start, evt.end, rosterTimeFormat)} &middot; {appointmentTitle(evt.resource)}
                       </button>
                     );
                   })}

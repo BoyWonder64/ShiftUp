@@ -59,19 +59,13 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   {
     slug: "staff",
     label: "Staff",
-    description: "Add, edit, and remove staff accounts.",
+    description: "Add, edit, and remove staff accounts, and group them into teams.",
     requirement: "VIEW_STAFF",
   },
   {
     slug: "permissions",
     label: "Permissions",
     description: "Define roles and decide what each one can do and see.",
-    requirement: "ADMIN",
-  },
-  {
-    slug: "teams",
-    label: "Teams",
-    description: "Group staff into teams and filter the calendar/roster by team.",
     requirement: "ADMIN",
   },
   {

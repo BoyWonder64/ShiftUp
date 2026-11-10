@@ -40,23 +40,33 @@ deliberately leaves that out so it stays skimmable.
     immediately as you add/remove shifts, no save/reload needed. Scrolls
     (`max-h-80 overflow-auto`) for longer templates instead of growing
     unbounded.
-  - **A "Repeat (back-to-back periods)" field** next to "Apply to a week" -
-    enter a number (1-52) to generate that many periods in a row, each
-    starting right where the previous one's `periodLengthDays` ends, instead
-    of applying once, waiting, then clicking Apply again for the next week.
-    Preview and the real apply both respect it (new
-    `planTemplateApplyRepeating`/`applyTemplateRepeating`, new `occurrences`
-    field on `POST /api/schedule-templates/[id]/apply`, default `1` so
-    existing single-apply behavior/response shape is unchanged when omitted).
-    Conflict detection runs per-period like before; applying writes
-    occurrences sequentially in one transaction, so a later occurrence's
-    conflict check sees appointments the earlier occurrences in the same
-    request already created.
+  - **A "Repeat every [Daily/Weekly/Monthly] × N times" control** next to
+    "Apply to a week" (originally shipped as a plain back-to-back-periods
+    count with no cadence choice; raised directly the same day - "repeat on
+    the template maker needs to be choice to be daily weekly or monthly" -
+    and rebuilt to add it). The cadence sets how far apart repeated
+    occurrences land, independent of the template's own `periodLengthDays`
+    (its pattern length, not its repeat interval): DAILY/WEEKLY step by a
+    fixed number of days, MONTHLY steps by calendar months (`date-fns`
+    `addMonths`, so "the 15th" stays the 15th regardless of a month's actual
+    length) - previously there was no way to express "apply this pattern
+    once a month" at all. Preview and the real apply both respect it (new
+    `cadence` field on `POST /api/schedule-templates/[id]/apply`, default
+    `"WEEKLY"` - matches the old implicit back-to-back behavior for the
+    common 7-day template case, so a request that omits it behaves the same
+    as before). A cadence shorter than the pattern's own length (e.g. Daily
+    on a 7-day template) isn't blocked - occurrences overlap in time and
+    conflict detection (unchanged, still per-occurrence) flags whatever that
+    produces, same as any other double-booking. Conflict detection runs
+    per-period like before; applying writes occurrences sequentially in one
+    transaction, so a later occurrence's conflict check sees appointments
+    the earlier occurrences in the same request already created.
   Check in the app: open a template with periodLengthDays 14+, confirm the
   grid wraps into two visible week-rows and a shift you add shows up in the
-  right cell immediately; then pick a period start date, set Repeat to 3,
-  hit Preview, and confirm it lists shifts across 3 consecutive periods
-  before you commit with Apply.
+  right cell immediately; then pick a period start date, set Repeat every to
+  Monthly and Times to 3, hit Preview, and confirm the listed occurrences
+  land on the same day of the month, three months running (then try Daily/
+  Weekly too) before you commit with Apply.
 - **"Custom event" quick-create - a genuinely separate, lightweight form for
   a one-off entry like "Lunch outing" or "Doctor's appointment," filed under
   *either* the Appointments or Shifts calendar (your choice), not a third
@@ -551,6 +561,23 @@ deliberately leaves that out so it stays skimmable.
   Check: Settings → Account → Time format, flip it, confirm the calendar and
   a shift/appointment's details both follow it, and that details always
   shows when something is scheduled.
+- **"Teams" settings moved into the Staff settings tab, raised directly
+  ("move teams settings into staff").** The standalone Teams tab (added by
+  separate, unrelated work earlier the same day - not something built in
+  this session) is gone from the Settings nav; `TeamsManager` now renders as
+  its own card directly below the staff list/add-staff card on the Staff
+  settings page instead, same visual pattern as Account's stacked
+  preference cards. Still admin-only to use - Teams' create/edit API was
+  always ADMIN-only server-side (`requireRole(["ADMIN"])`,
+  `/api/teams/route.ts`), narrower than Staff's own `VIEW_STAFF` gate, so
+  it's conditionally rendered only for `ctx.isAdmin` rather than inheriting
+  Staff's broader visibility. The old `/admin/settings/teams` route is
+  deleted outright (confirmed it now 404s) rather than redirected, since
+  nothing else in the app links to it directly (`sections.ts` is the single
+  source of truth the nav/index already read from). Check: Settings nav has
+  no separate "Teams" entry, Settings → Staff shows both the staff list and
+  a "Teams" card beneath it (create/add-member still works), and a non-admin
+  staff member with Staff-section access doesn't see the Teams card.
 - **A staff-roster Week view, for companies with 30-80+ employees.**
   Follow-up to the overlap fix directly above - raised after confirming that
   even clean side-by-side columns stop being readable once enough staff are

@@ -28,6 +28,9 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 // Admin-only to use, per the original ask - this isn't gated behind the
 // permission matrix the way Staff/Services are, same as Roles/Permissions.
+// Rendered only for ADMIN viewers (see staff/page.tsx) since this moved
+// in under the Staff section, which itself gates on VIEW_STAFF - a
+// permission some non-admin roles can hold, broader than this ever was.
 export function TeamsManager() {
   const [teams, setTeams] = useState<TeamRow[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);

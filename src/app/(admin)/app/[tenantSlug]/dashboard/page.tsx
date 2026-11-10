@@ -29,6 +29,8 @@ const ACCESS_CATEGORIES: Array<{ key: string; permissionKeys: PermissionKey[] }>
       "EDIT_APPOINTMENTS",
       "CANCEL_SHIFTS",
       "CANCEL_APPOINTMENTS",
+      "DELETE_SHIFTS",
+      "DELETE_APPOINTMENTS",
     ],
   },
   { key: "jobEstimates", permissionKeys: ["VIEW_JOB_ESTIMATES", "EDIT_JOB_ESTIMATES"] },
@@ -65,6 +67,8 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   EDIT_APPOINTMENTS: "reschedule",
   CANCEL_SHIFTS: "cancel",
   CANCEL_APPOINTMENTS: "cancel",
+  DELETE_SHIFTS: "remove",
+  DELETE_APPOINTMENTS: "remove",
   // Not in any ACCESS_CATEGORIES list below - the Custom calendar is its own
   // separate page/permission set, not folded into the "appointments"
   // category above; only needed to satisfy Record<PermissionKey, string>'s
@@ -73,6 +77,7 @@ const ACTION_KEYS: Record<PermissionKey, string> = {
   CREATE_CUSTOM_ENTRIES: "create",
   EDIT_CUSTOM_ENTRIES: "reschedule",
   CANCEL_CUSTOM_ENTRIES: "cancel",
+  DELETE_CUSTOM_ENTRIES: "remove",
   VIEW_JOB_ESTIMATES: "view",
   EDIT_JOB_ESTIMATES: "edit",
   VIEW_TIME_OFF: "view",

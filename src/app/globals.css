@@ -96,26 +96,73 @@ body {
 .rbc-event.rbc-selected {
   background-color: var(--color-primary-600);
 }
-/* Week/Day time grid: SchedulingCalendar.tsx sets dayLayoutAlgorithm="no-overlap"
- * so concurrent events get their own non-overlapping lane (Google Calendar-
- * style) instead of react-big-calendar's default "overlap" algorithm, which
- * let events partially cover each other - a cascading staircase of
- * unreadable slivers once more than two or three coincided. "no-overlap"
- * already bakes in its own small gap between lanes, but gives none at all to
- * the leftmost lane and only a thin 1px border otherwise (see
- * react-big-calendar.css's `.rbc-day-slot .rbc-event`) - this margin adds a
- * consistent gap on every side of every event instead. The chained
- * `.rbc-event.rbc-event` selector isn't a typo - it's a specificity bump
- * (one class repeated = an extra selector's worth of specificity with no
- * extra markup) so this reliably wins over that library rule regardless of
- * CSS load order. The margin insets each event from its computed left/width
- * slot - since margin sits outside the box-sizing: border-box width, it
- * opens a real gap rather than shrinking the slot RBC already calculated.
+/* Week/Day time grid: events are positioned by columnDayLayout.ts - one lane
+ * each, never overlapping. That layout makes each event 3px narrower than
+ * its lane; this 1.5px margin centres it in the lane so neighbours get a
+ * real gap. The chained `.rbc-event.rbc-event` selector isn't a typo - it's
+ * a specificity bump (one class repeated = an extra selector's worth of
+ * specificity with no extra markup) so this reliably wins over
+ * react-big-calendar.css's own `.rbc-day-slot .rbc-event` rule regardless
+ * of CSS load order.
  */
 .rbc-day-slot .rbc-event.rbc-event,
 .rbc-day-slot .rbc-background-event.rbc-background-event {
   margin: 0 1.5px;
   border-width: 2px;
+}
+/* Each event is a size container, so its content (EventContent in
+ * SchedulingCalendar.tsx, the cal-* classes) can adapt to however wide its
+ * lane turned out - see the @container rules below. Tighter side padding
+ * than the library's 5px because in a 30px lane that padding is most of the
+ * box; `nowrap` because the library's `column wrap` pushes whatever doesn't
+ * fit vertically into a second column that a narrow lane has no room for.
+ */
+.rbc-day-slot .rbc-event.rbc-event {
+  container-type: inline-size;
+  flex-flow: column nowrap;
+  padding: 2px 3px;
+}
+/* The library's own time label is a single line that can only be cut off;
+ * EventContent renders the time itself (.cal-time) so it can wrap. */
+.rbc-day-slot .rbc-event .rbc-event-label {
+  display: none;
+}
+/* Start and end are two unbreakable pieces: side by side when there's room,
+ * end time on its own line when there isn't - never truncated mid-time. */
+.rbc-day-slot .cal-time {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.3em;
+  font-size: 80%;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+/* Widths below are the event's inner width (its lane minus border/padding). */
+@container (max-width: 64px) {
+  /* Not enough room for avatar + name - the name is worth more. */
+  .rbc-day-slot .cal-who .cal-avatar {
+    display: none;
+  }
+}
+@container (max-width: 48px) {
+  /* "8:00 AM –" no longer fits on a line; stacked start/end reads fine without the dash. */
+  .rbc-day-slot .cal-dash {
+    display: none;
+  }
+}
+@container (max-width: 34px) {
+  /* Too narrow for any text: just who it is. When is the bar's position on
+   * the grid; everything else is in the hover tooltip. */
+  .rbc-day-slot .cal-time,
+  .rbc-day-slot .cal-text {
+    display: none;
+  }
+  .rbc-day-slot .cal-who .cal-avatar {
+    display: flex;
+  }
+  .rbc-day-slot .cal-who {
+    justify-content: center;
+  }
 }
 /* react-big-calendar's own `.rbc-day-slot .rbc-event-content` sets
  * `height: 100%` alongside `flex: 1 1 0` inside a column-flex event box that

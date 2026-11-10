@@ -76,6 +76,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
           { label: "Create", shiftKey: "CREATE_SHIFTS", appointmentKey: "CREATE_APPOINTMENTS" },
           { label: "Edit", shiftKey: "EDIT_SHIFTS", appointmentKey: "EDIT_APPOINTMENTS" },
           { label: "Cancel", shiftKey: "CANCEL_SHIFTS", appointmentKey: "CANCEL_APPOINTMENTS" },
+          { label: "Delete permanently", shiftKey: "DELETE_SHIFTS", appointmentKey: "DELETE_APPOINTMENTS" },
           {
             label: "See all (outside your own)",
             shiftKey: "VIEW_ALL_SHIFTS",

@@ -264,11 +264,11 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
                       const timeLabel =
                         granularity === "day"
                           ? `${format(new Date(appt.startTime), "h:mm a")} – ${format(new Date(appt.endTime), "h:mm a")}`
-                          : format(new Date(appt.startTime), "EEE h:mm a");
+                          : `${format(new Date(appt.startTime), "EEE h:mm a")} – ${format(new Date(appt.endTime), "h:mm a")}`;
                       return (
                         <span
                           key={appt.id}
-                          title={appointmentTitle(appt)}
+                          title={`${member.displayName} · ${timeLabel} · ${appointmentTitle(appt)}`}
                           className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-full px-2.5 py-1 text-xs"
                           style={{
                             backgroundColor: cancelled
@@ -278,6 +278,7 @@ export function RosterView({ tenantSlug }: { tenantSlug: string }) {
                             textDecoration: cancelled ? "line-through" : undefined,
                           }}
                         >
+                          <span className="shrink-0 font-semibold">{member.displayName}</span>
                           <span className="shrink-0 font-medium">{timeLabel}</span>
                           <span className="truncate">{appointmentTitle(appt)}</span>
                         </span>
