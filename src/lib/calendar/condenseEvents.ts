@@ -3,8 +3,8 @@
  * *before* they reach the grid, so the grid never has to split a day column
  * into more slivers than it has room for.
  *
- * Two kinds of block, both only ever created where the calendar is actually
- * crowded (a small team keeps seeing every entry individually):
+ * Two kinds of block, created only where more is happening at once than the
+ * caller's limits allow:
  *
  * - "same": entries that are the same thing at the same time (15 people on
  *   the 9-5 shift) become one block - "Shift · 15 staff".

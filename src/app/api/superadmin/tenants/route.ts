@@ -16,7 +16,20 @@ export async function GET() {
         orderBy: { createdAt: "desc" },
         include: {
           license: true,
-          _count: { select: { users: true, staffProfiles: true, appointments: true } },
+          _count: {
+            select: {
+              users: true,
+              staffProfiles: true,
+              appointments: true,
+              clients: true,
+              customCalendars: true,
+              scheduleTemplates: true,
+              teams: true,
+              timeOffs: true,
+              eventPresets: true,
+              roles: true,
+            },
+          },
         },
       })
     );

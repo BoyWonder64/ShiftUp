@@ -38,6 +38,15 @@ import { getEnabledHolidaysInRange } from "@/lib/holidays/catalog";
 import { CALENDAR_TEXT_SIZE_REM, type CalendarTextSize } from "@/lib/calendar/textSize";
 import { formatClockRange, formatClockTime, type TimeFormat } from "@/lib/calendar/timeFormat";
 import { condenseEvents, type CondensedKind } from "@/lib/calendar/condenseEvents";
+import {
+  MAX_REPEAT_OCCURRENCES,
+  REPEAT_CADENCES,
+  parseRepeatCount,
+  repeatResultNotice,
+  repeatStartTimes,
+  repeatSummary,
+  type RepeatCadence,
+} from "@/lib/calendar/repeat";
 import { CalendarToolbar } from "./CalendarToolbar";
 import { CalendarLegend } from "./CalendarLegend";
 import { MiniMonthCalendar } from "./MiniMonthCalendar";
@@ -196,10 +205,9 @@ function createFilteredDaysView(days: Date[], setVisibleDayFilter: (days: Date[]
   FilteredDaysView.range = () => days;
 
   FilteredDaysView.navigate = (date: Date, action: string) => {
-    if (action === "TODAY") {
-      setVisibleDayFilter(null);
-      return new Date();
-    }
+    // "TODAY" is handled one level up (SchedulingCalendar's onNavigate) -
+    // react-big-calendar's moveDate (utils/move.js) never calls a view's
+    // .navigate for that action, it substitutes today's date directly.
     if (action === "PREV" || action === "NEXT") {
       const delta = action === "PREV" ? -days.length : days.length;
       const shifted = days.map((d) => addDays(d, delta));
@@ -659,11 +667,10 @@ function isMidnight(d: Date): boolean {
   return d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0;
 }
 
-/** One minute shorter is always one z-index step further forward; stays below the draft event's 10081. */
-function stackingZIndex(start: Date, end: Date): number {
-  const minutes = Math.round((end.getTime() - start.getTime()) / 60000);
-  return Math.max(1, 10080 - minutes);
-}
+// A thin white ring (as Google Calendar draws) so an event lying partly on
+// top of another reads as a separate card even when both are the same
+// color, plus a soft drop shadow for depth.
+const EVENT_OUTLINE_SHADOW = "0 0 0 1px #fff, 0 1px 3px rgba(0, 0, 0, 0.25)";
 
 /** Snaps to the nearest whole minute - undoes toEvent's 1ms midnight nudge when an event is dragged or resized. */
 function toNearestMinute(d: Date): Date {
@@ -845,6 +852,8 @@ export function SchedulingCalendar({
     return { start, end };
   });
   const [selected, setSelected] = useState<ApiAppointment | null>(null);
+  // Result of the last repeated create ("Created 3 of 4. Skipped Nov 16...").
+  const [notice, setNotice] = useState<{ text: string; tone: "success" | "warning" } | null>(null);
   // The summary block ("Shift · 15 staff" / "+N more") whose member list is open.
   const [openGroup, setOpenGroup] = useState<CalendarEvent | null>(null);
   // Width of the calendar card, measured so the crowding limit (maxLanes
@@ -1493,22 +1502,20 @@ export function SchedulingCalendar({
 
   // How many lanes one day column has room for (see condenseEvents.ts and
   // columnDayLayout.ts), from the column's real width. A lane needs ~30px to
-  // show a staff avatar at all (maxLanes - past that the rest become "+N
-  // more") and ~50px to show a name (nameLanes - past that, people on the
-  // same shift share one labelled block instead of becoming avatar-only
-  // bars). Roughly 3 and 2 in a 7-day week, 12 and 12 in Day view.
+  // show a staff avatar at all - past that the rest become "+N more".
+  // Roughly 3 in a 7-day week, 12 in Day view.
   const dayColumnCount = currentView === "day" ? 1 : (visibleDayFilter?.length ?? 7);
   const dayColumnWidth = Math.max(0, gridWidth - 90) / dayColumnCount;
   const maxLanes = Math.min(12, Math.max(2, Math.floor(dayColumnWidth / 30)));
-  const nameLanes = Math.min(maxLanes, Math.max(1, Math.floor(dayColumnWidth / 50)));
 
   // What actually goes on the grid. With 50-80 staff a single day can hold
   // 15 people on each of several overlapping shifts - drawn one box each,
-  // that's unreadable slivers no layout can rescue. So wherever a day is
-  // too crowded to show every entry, identical ones collapse into one block
-  // per shift and any remaining excess into "+N more"; clicking either
-  // lists everyone in it. The per-staff views (Group by staff) and Agenda
-  // already give every entry its own row, so they're left untouched.
+  // that's unreadable slivers no layout can rescue. So two or more people
+  // on the identical shift always share one block (groupLimit: 1 - the same
+  // on a quiet day as a busy one), and whatever still exceeds the lanes a
+  // day column has room for becomes "+N more"; clicking either lists
+  // everyone in it. The per-staff views (Group by staff) and Agenda already
+  // give every entry its own row, so they're left untouched.
   const displayEvents = useMemo(() => {
     const gridIsCombined =
       (currentView === "day" && !resourceViewActive) || (currentView === "week" && !(groupByStaff && staff.length > 1));
@@ -1516,11 +1523,11 @@ export function SchedulingCalendar({
     return condenseEvents(visibleEvents, {
       mode: currentView === "month" ? "day" : "time",
       limit: currentView === "month" ? 3 : maxLanes,
-      groupLimit: currentView === "month" ? 3 : nameLanes,
+      groupLimit: 1,
       groupKey: groupKeyOf,
       makeGroup: makeGroupEvent,
     });
-  }, [visibleEvents, currentView, resourceViewActive, groupByStaff, staff.length, maxLanes, nameLanes]);
+  }, [visibleEvents, currentView, resourceViewActive, groupByStaff, staff.length, maxLanes]);
 
   const calendarEvents = useMemo(() => {
     if (!draftSlot) return displayEvents;
@@ -1664,8 +1671,7 @@ export function SchedulingCalendar({
             backgroundColor: "#f3f4f6",
             borderColor: "#9ca3af",
             color: "#374151",
-            zIndex: stackingZIndex(event.start, event.end),
-            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
+            boxShadow: EVENT_OUTLINE_SHADOW,
           },
         };
       }
@@ -1679,10 +1685,9 @@ export function SchedulingCalendar({
           borderColor: c.border,
           color: c.text,
           textDecoration: appt.status === "CANCELLED" ? "line-through" : undefined,
-          // Only matters in Month view, where a multi-day bar can sit under
-          // a shorter chip - Week/Day lanes never overlap (columnDayLayout).
-          zIndex: stackingZIndex(event.start, event.end),
-          boxShadow: "0 1px 3px rgba(0, 0, 0, 0.25)",
+          // No z-index on purpose: where Week/Day events overlap, front-to-
+          // back order is the order columnDayLayout returns them in.
+          boxShadow: EVENT_OUTLINE_SHADOW,
         },
       };
     },
@@ -1897,7 +1902,6 @@ export function SchedulingCalendar({
             </span>
           );
         }
-        const shown = members.slice(0, 12);
         return (
           <span className="flex min-w-0 flex-col gap-1">
             {time}
@@ -1915,21 +1919,22 @@ export function SchedulingCalendar({
                 {kind === "same" ? label : "more"}
               </span>
             </span>
-            <span className="flex flex-wrap gap-0.5">
-              {shown.map((m) => (
-                <span
-                  key={m.id}
-                  className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
-                  style={{ backgroundColor: staffAvatarColor(m.resource.staffId) }}
-                >
-                  {staffInitials(m.resource.staff.displayName)}
+            {/* Every member by name - several to a row where the block is
+                wide (Day view), one per row where it's a single narrow lane.
+                In the narrowest lane the names drop out (cal-text) and the
+                avatars alone wrap. */}
+            <span className="flex flex-wrap gap-x-2 gap-y-0.5">
+              {members.map((m) => (
+                <span key={m.id} className="flex max-w-full min-w-0 items-center gap-1">
+                  <span
+                    className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-[9px] font-bold leading-none text-white"
+                    style={{ backgroundColor: staffAvatarColor(m.resource.staffId) }}
+                  >
+                    {staffInitials(m.resource.staff.displayName)}
+                  </span>
+                  <span className="cal-text min-w-0 truncate leading-tight">{m.resource.staff.displayName}</span>
                 </span>
               ))}
-              {members.length > shown.length && (
-                <span className="flex h-4 items-center text-[10px] font-semibold leading-none opacity-80">
-                  +{members.length - shown.length}
-                </span>
-              )}
             </span>
           </span>
         );
@@ -1997,6 +2002,22 @@ export function SchedulingCalendar({
       style={{ "--calendar-event-font-size": CALENDAR_TEXT_SIZE_REM[calendarTextSize] } as React.CSSProperties}
     >
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      {/* How a repeated create went - shown after its form closes, since a
+          skipped date (already booked) is something the user needs to see. */}
+      {notice && (
+        <div
+          role="status"
+          className={`flex items-start justify-between gap-3 rounded-md px-3 py-2 text-sm ${
+            notice.tone === "warning" ? "bg-amber-50 text-amber-800" : "bg-green-50 text-green-800"
+          }`}
+        >
+          <span>{notice.text}</span>
+          <button type="button" onClick={() => setNotice(null)} className="shrink-0 font-medium underline hover:no-underline">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {readOnly && (
         <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-600">
@@ -2344,7 +2365,17 @@ export function SchedulingCalendar({
                   endAccessor="end"
                   date={currentDate}
                   view={currentView}
-                  onNavigate={(date) => setCurrentDate(date)}
+                  onNavigate={(date, _view, action) => {
+                    // react-big-calendar's own "TODAY" handling (utils/move.js's
+                    // moveDate) special-cases this action and never calls the
+                    // active view's static `.navigate` - it just substitutes
+                    // today's date directly - so createFilteredDaysView's
+                    // navigate can't clear the filter for this one action the
+                    // way it does for PREV/NEXT. Done here instead, where the
+                    // action is actually visible.
+                    if (action === "TODAY" && visibleDayFilter) setVisibleDayFilter(null);
+                    setCurrentDate(date);
+                  }}
                   onView={handleViewChange}
                   views={views}
                   // One lane per event, never overlapping (see columnDayLayout.ts).
@@ -2503,8 +2534,9 @@ export function SchedulingCalendar({
               onRangeChange={(start, end) => setCreating((prev) => (prev ? { ...prev, start, end } : prev))}
               staff={staff}
               onClose={() => setCreating(null)}
-              onCreated={() => {
+              onCreated={(repeatNotice) => {
                 setCreating(null);
+                setNotice(repeatNotice ?? null);
                 setCreationCount(bumpCreationCount());
                 void loadAppointments(range);
               }}
@@ -2586,8 +2618,9 @@ export function SchedulingCalendar({
               onClientCreated={loadClients}
               onTagCreated={loadTags}
               onClose={() => setCreating(null)}
-              onCreated={() => {
+              onCreated={(repeatNotice) => {
                 setCreating(null);
+                setNotice(repeatNotice ?? null);
                 setCreationCount(bumpCreationCount());
                 void loadAppointments(range);
               }}
@@ -3711,8 +3744,12 @@ function CreateEntryPanel({
   onClientCreated: () => void;
   onTagCreated: () => void;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (notice?: RepeatNotice) => void;
 }) {
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatCadence, setRepeatCadence] = useState<RepeatCadence>("WEEKLY");
+  const [repeatCount, setRepeatCount] = useState("4");
+  const repeatTotal = repeatOn ? parseRepeatCount(repeatCount) : 1;
   // null = no explicit choice made yet, so the effective value below keeps
   // tracking defaultStaffId/staff as they arrive. `staff` is fetched async
   // by the parent and can still be empty on this panel's first render
@@ -3907,10 +3944,13 @@ function CreateEntryPanel({
         clientId = selectedClientId;
       }
 
-      await fetchJson("/api/appointments", {
+      const saved = await fetchJson<RepeatResponse>("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(repeatTotal > 1
+            ? { repeatStartTimes: repeatStartTimes(startTime, repeatCadence, repeatTotal).map((d) => d.toISOString()) }
+            : {}),
           entryKind: mode === "shift" ? "SHIFT" : mode === "custom" ? "CUSTOM" : "APPOINTMENT",
           customCalendarId: mode === "custom" ? customCalendarId : undefined,
           staffId: resolvedStaffId,
@@ -3927,7 +3967,7 @@ function CreateEntryPanel({
           colorKey: resolvedColorKey,
         }),
       });
-      onCreated();
+      onCreated(repeatTotal > 1 ? repeatResultNotice(repeatTotal, saved.repeat) : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Couldn't create ${mode === "custom" ? "entry" : mode}.`);
       setConflict(err instanceof ApiError && err.status === 409);
@@ -4408,6 +4448,16 @@ function CreateEntryPanel({
         </div>
       )}
 
+      <RepeatControl
+        start={startTime}
+        enabled={repeatOn}
+        onEnabledChange={setRepeatOn}
+        cadence={repeatCadence}
+        onCadenceChange={setRepeatCadence}
+        count={repeatCount}
+        onCountChange={setRepeatCount}
+      />
+
       {error && !conflict && <p className="text-sm text-red-600">{error}</p>}
 
       <button
@@ -4428,8 +4478,90 @@ function CreateEntryPanel({
             : mode === "custom"
               ? "Create custom entry"
               : "Create appointment"}
+        {!submitting && repeatTotal > 1 && ` (${repeatTotal} times)`}
       </button>
     </form>
+  );
+}
+
+/** Tells the parent how a repeated save went, so it can show it after the form closes (see `notice` in SchedulingCalendar). */
+type RepeatNotice = { text: string; tone: "success" | "warning" };
+
+/** What the API returns for a repeated create (see POST /api/appointments). */
+type RepeatResponse = {
+  repeat?: { createdCount: number; skipped: { startTime: string; reason: "CONFLICT" | "LIMIT" }[] };
+};
+
+/**
+ * The "Repeat this event" checkbox shared by every create form. Unchecked
+ * (the default) it's one line and nothing else changes; checked, it reveals
+ * "Every [Week] for [4] weeks" and a plain-English summary of the real dates,
+ * so it's clear what will be created before pressing the button.
+ */
+function RepeatControl({
+  start,
+  enabled,
+  onEnabledChange,
+  cadence,
+  onCadenceChange,
+  count,
+  onCountChange,
+}: {
+  start: Date;
+  enabled: boolean;
+  onEnabledChange: (on: boolean) => void;
+  cadence: RepeatCadence;
+  onCadenceChange: (cadence: RepeatCadence) => void;
+  count: string;
+  onCountChange: (count: string) => void;
+}) {
+  const total = parseRepeatCount(count);
+  const unit = REPEAT_CADENCES.find((c) => c.value === cadence) ?? REPEAT_CADENCES[1];
+  return (
+    <div className="flex flex-col gap-2 text-sm">
+      <label className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => onEnabledChange(e.target.checked)}
+          className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+        />
+        Repeat this event
+      </label>
+      {enabled && (
+        <div className="flex flex-col gap-2 rounded-md border border-gray-200 bg-white/60 p-3">
+          <div className="flex flex-wrap items-center gap-2 text-gray-700">
+            Every
+            <select
+              aria-label="Repeat every"
+              value={cadence}
+              onChange={(e) => onCadenceChange(e.target.value as RepeatCadence)}
+              className="rounded-md border border-gray-300 px-2 py-1"
+            >
+              {REPEAT_CADENCES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            for
+            <input
+              type="number"
+              aria-label={`Number of ${unit.plural}`}
+              min={1}
+              max={MAX_REPEAT_OCCURRENCES}
+              value={count}
+              onChange={(e) => onCountChange(e.target.value)}
+              className="w-16 rounded-md border border-gray-300 px-2 py-1"
+            />
+            {total === 1 ? unit.label.toLowerCase() : unit.plural}
+          </div>
+          <p className="text-xs text-gray-500">
+            {repeatSummary(start, cadence, total)} Any date that is already booked for this person is skipped.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4481,8 +4613,12 @@ function CustomEventPanel({
   onRangeChange: (start: Date, end: Date) => void;
   staff: StaffOption[];
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (notice?: RepeatNotice) => void;
 }) {
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatCadence, setRepeatCadence] = useState<RepeatCadence>("WEEKLY");
+  const [repeatCount, setRepeatCount] = useState("4");
+  const repeatTotal = repeatOn ? parseRepeatCount(repeatCount) : 1;
   const [title, setTitle] = useState("");
   // Same "staff can still be empty on first render" reasoning as
   // CreateEntryPanel's effectiveStaffId - computed fresh each render rather
@@ -4507,10 +4643,13 @@ function CustomEventPanel({
     setError(null);
     setConflict(false);
     try {
-      await fetchJson("/api/appointments", {
+      const saved = await fetchJson<RepeatResponse>("/api/appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(repeatTotal > 1
+            ? { repeatStartTimes: repeatStartTimes(startTime, repeatCadence, repeatTotal).map((d) => d.toISOString()) }
+            : {}),
           entryKind: mode === "shift" ? "SHIFT" : "APPOINTMENT",
           customTitle: title.trim(),
           staffId: effectiveStaffId,
@@ -4518,7 +4657,7 @@ function CustomEventPanel({
           endTime: endTime.toISOString(),
         }),
       });
-      onCreated();
+      onCreated(repeatTotal > 1 ? repeatResultNotice(repeatTotal, saved.repeat) : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't create event.");
       setConflict(err instanceof ApiError && err.status === 409);
@@ -4629,6 +4768,16 @@ function CustomEventPanel({
           </div>
         </div>
       )}
+      <RepeatControl
+        start={startTime}
+        enabled={repeatOn}
+        onEnabledChange={setRepeatOn}
+        cadence={repeatCadence}
+        onCadenceChange={setRepeatCadence}
+        count={repeatCount}
+        onCountChange={setRepeatCount}
+      />
+
       {error && !conflict && <p className="text-sm text-red-600">{error}</p>}
 
       <button
@@ -4636,7 +4785,7 @@ function CustomEventPanel({
         disabled={submitting}
         className="self-start rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-gray-800 disabled:opacity-50"
       >
-        {submitting ? "Creating..." : "Create event"}
+        {submitting ? "Creating..." : repeatTotal > 1 ? `Create event (${repeatTotal} times)` : "Create event"}
       </button>
     </form>
   );

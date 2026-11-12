@@ -1,17 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { addDays, addMonths, addWeeks, format } from "date-fns";
 
 // Mirrors MAX_TEMPLATE_APPLY_OCCURRENCES in src/modules/scheduling/templates.ts (server-only module, not importable here).
 const MAX_REPEAT_OCCURRENCES = 52;
 
 // Mirrors REPEAT_CADENCES in src/modules/scheduling/templates.ts (same reason as above).
+// `label`/`plural` read as the unit in "Every [week] for [4] [weeks]".
 const REPEAT_CADENCE_OPTIONS = [
-  { value: "DAILY", label: "Daily" },
-  { value: "WEEKLY", label: "Weekly" },
-  { value: "MONTHLY", label: "Monthly" },
+  { value: "DAILY", label: "Day", plural: "days", gapDays: 1 },
+  { value: "WEEKLY", label: "Week", plural: "weeks", gapDays: 7 },
+  { value: "MONTHLY", label: "Month", plural: "months", gapDays: 28 },
 ] as const;
 type RepeatCadence = (typeof REPEAT_CADENCE_OPTIONS)[number]["value"];
+
+/** Same stepping as occurrenceStart in src/modules/scheduling/templates.ts, for the plain-English summary. */
+function occurrenceDate(start: Date, cadence: RepeatCadence, index: number): Date {
+  return cadence === "DAILY" ? addDays(start, index) : cadence === "WEEKLY" ? addWeeks(start, index) : addMonths(start, index);
+}
 
 interface StaffOption {
   id: string;
@@ -258,7 +265,9 @@ function TemplateDetail({
   const [removingShiftId, setRemovingShiftId] = useState<string | null>(null);
 
   const [periodStart, setPeriodStart] = useState("");
-  const [repeatCount, setRepeatCount] = useState("1");
+  // "Just once" vs "Repeat" - the count/cadence below only apply when this is on.
+  const [repeatOn, setRepeatOn] = useState(false);
+  const [repeatCount, setRepeatCount] = useState("4");
   const [repeatCadence, setRepeatCadence] = useState<RepeatCadence>("WEEKLY");
   const [plan, setPlan] = useState<PlanItem[] | null>(null);
   const [occurrencePlans, setOccurrencePlans] = useState<OccurrencePlan[] | null>(null);
@@ -357,7 +366,18 @@ function TemplateDetail({
     }
   }
 
-  const occurrences = Math.max(1, Number(repeatCount) || 1);
+  // How many times in total the schedule goes on the calendar, the first one included.
+  const occurrences = repeatOn ? Math.min(MAX_REPEAT_OCCURRENCES, Math.max(1, Math.round(Number(repeatCount)) || 1)) : 1;
+  const cadenceOption = REPEAT_CADENCE_OPTIONS.find((o) => o.value === repeatCadence) ?? REPEAT_CADENCE_OPTIONS[1];
+  // Local midnight of the picked date, for the summary sentence only.
+  const startDate = periodStart ? new Date(`${periodStart}T00:00`) : null;
+
+  // Any change to when/how often invalidates a preview that's already showing.
+  function resetPreview() {
+    setPlan(null);
+    setOccurrencePlans(null);
+    setApplyResult(null);
+  }
 
   async function handlePreview() {
     if (!periodStart) return;
@@ -610,80 +630,109 @@ function TemplateDetail({
       </section>
 
       <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-medium">Apply to a week</h2>
+        <h2 className="text-lg font-medium">Add this schedule to the calendar</h2>
         <p className="mt-1 text-sm text-gray-500">
-          Pick the date this period should start on. Preview shows exactly what will be created and flags any
-          double-booking before anything is actually scheduled.
+          Choose when it starts and whether it repeats. Nothing is scheduled until you preview and confirm.
         </p>
 
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <label className="flex flex-col gap-1 text-sm">
-            Period start date
+        <div className="mt-4 flex flex-col gap-4">
+          <label className="flex flex-col gap-1 text-sm font-medium text-gray-700">
+            1. Start date
             <input
               type="date"
               value={periodStart}
               onChange={(e) => {
                 setPeriodStart(e.target.value);
-                setPlan(null);
-                setOccurrencePlans(null);
-                setApplyResult(null);
+                resetPreview();
               }}
-              className="rounded-md border border-gray-300 px-2 py-1.5"
+              className="w-fit rounded-md border border-gray-300 px-2 py-1.5 font-normal"
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Repeat every
-            <select
-              value={repeatCadence}
-              onChange={(e) => {
-                setRepeatCadence(e.target.value as RepeatCadence);
-                setPlan(null);
-                setOccurrencePlans(null);
-                setApplyResult(null);
-              }}
-              className="rounded-md border border-gray-300 px-2 py-1.5"
-            >
-              {REPEAT_CADENCE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
+
+          <div className="flex flex-col gap-2 text-sm">
+            <span className="font-medium text-gray-700">2. How often</span>
+            <div className="flex w-fit rounded-lg border border-gray-300 p-0.5">
+              {[
+                { on: false, label: "Just once" },
+                { on: true, label: "Repeat" },
+              ].map((opt) => (
+                <button
+                  key={opt.label}
+                  type="button"
+                  aria-pressed={repeatOn === opt.on}
+                  onClick={() => {
+                    setRepeatOn(opt.on);
+                    resetPreview();
+                  }}
+                  className={`rounded-md px-3 py-1 font-medium transition-colors ${
+                    repeatOn === opt.on ? "bg-primary-500 text-white shadow-sm" : "text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
                   {opt.label}
-                </option>
+                </button>
               ))}
-            </select>
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Times
-            <input
-              type="number"
-              min={1}
-              max={MAX_REPEAT_OCCURRENCES}
-              value={repeatCount}
-              onChange={(e) => {
-                setRepeatCount(e.target.value);
-                setPlan(null);
-                setOccurrencePlans(null);
-                setApplyResult(null);
-              }}
-              className="w-20 rounded-md border border-gray-300 px-2 py-1.5"
-            />
-          </label>
+            </div>
+
+            {repeatOn && (
+              <div className="flex flex-wrap items-center gap-2 text-gray-700">
+                Every
+                <select
+                  aria-label="Repeat every"
+                  value={repeatCadence}
+                  onChange={(e) => {
+                    setRepeatCadence(e.target.value as RepeatCadence);
+                    resetPreview();
+                  }}
+                  className="rounded-md border border-gray-300 px-2 py-1.5"
+                >
+                  {REPEAT_CADENCE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                for
+                <input
+                  type="number"
+                  aria-label={`Number of ${cadenceOption.plural}`}
+                  min={1}
+                  max={MAX_REPEAT_OCCURRENCES}
+                  value={repeatCount}
+                  onChange={(e) => {
+                    setRepeatCount(e.target.value);
+                    resetPreview();
+                  }}
+                  className="w-16 rounded-md border border-gray-300 px-2 py-1.5"
+                />
+                {occurrences === 1 ? cadenceOption.label.toLowerCase() : cadenceOption.plural}
+              </div>
+            )}
+          </div>
+
+          {/* The choices above, read back as one plain sentence with real dates. */}
+          <p className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-600">
+            {!startDate
+              ? "Pick a start date to see when this schedule will be added."
+              : occurrences === 1
+                ? `This schedule will be added once, starting ${format(startDate, "EEE, MMM d, yyyy")}.`
+                : `This schedule will be added ${occurrences} times: first starting ${format(startDate, "EEE, MMM d")}, then again every ${cadenceOption.label.toLowerCase()}, with the last one starting ${format(occurrenceDate(startDate, repeatCadence, occurrences - 1), "EEE, MMM d, yyyy")}.`}
+            {occurrences > 1 && template.periodLengthDays > cadenceOption.gapDays && (
+              <span className="mt-1 block text-amber-700">
+                This schedule is {template.periodLengthDays} days long, which is longer than one {cadenceOption.label.toLowerCase()}, so
+                each repeat will overlap the one before it. Any double-bookings are flagged in the preview.
+              </span>
+            )}
+          </p>
+
           <button
             type="button"
             onClick={handlePreview}
             disabled={!periodStart || planning || template.shifts.length === 0}
-            className="rounded-lg border border-primary-300 px-4 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50 disabled:opacity-50"
+            className="w-fit rounded-lg border border-primary-300 px-4 py-1.5 text-sm font-medium text-primary-700 hover:bg-primary-50 disabled:opacity-50"
           >
             {planning ? "Loading preview..." : "Preview"}
           </button>
         </div>
-        {occurrences > 1 && (
-          <p className="mt-1 text-xs text-gray-400">
-            This {template.periodLengthDays}-day pattern will be applied {occurrences} times,{" "}
-            {repeatCadence === "DAILY" ? "one day apart" : repeatCadence === "WEEKLY" ? "one week apart" : "one month apart"}
-            {" "}(same day{repeatCadence === "MONTHLY" ? " of the month" : " of the week"} each time).
-            {template.periodLengthDays > (repeatCadence === "DAILY" ? 1 : repeatCadence === "WEEKLY" ? 7 : 28) &&
-              " The pattern is longer than that gap, so later occurrences overlap earlier ones - any conflicts still show up below."}
-          </p>
-        )}
 
         {template.shifts.length === 0 && (
           <p className="mt-2 text-sm text-gray-400">Add at least one shift above before applying this template.</p>

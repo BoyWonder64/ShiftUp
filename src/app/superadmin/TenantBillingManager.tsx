@@ -14,7 +14,21 @@ interface Tenant {
   disabled: boolean;
   excludeFromIncome: boolean;
   license: { tier: string; billingPlan: BillingPlan; status: LicenseStatus } | null;
-  _count: { users: number; staffProfiles: number; appointments: number };
+  publicBookingEnabled: boolean;
+  appointmentsCalendarEnabled: boolean;
+  shiftsCalendarEnabled: boolean;
+  _count: {
+    users: number;
+    staffProfiles: number;
+    appointments: number;
+    clients: number;
+    customCalendars: number;
+    scheduleTemplates: number;
+    teams: number;
+    timeOffs: number;
+    eventPresets: number;
+    roles: number;
+  };
 }
 
 const BILLING_PLANS: BillingPlan[] = ["FREE", "ONE_TIME", "SUBSCRIPTION"];
@@ -242,9 +256,27 @@ export function TenantBillingManager() {
 
                 {open && (
                   <div className="flex flex-col gap-4 border-t border-gray-100 px-4 py-4">
-                    <div className="text-sm text-gray-500">
-                      {t._count.staffProfiles} staff · {t._count.appointments} appointments ·{" "}
-                      {t._count.users} user{t._count.users === 1 ? "" : "s"}
+                    <div className="flex flex-col gap-2 text-sm text-gray-500">
+                      <div>
+                        {t._count.staffProfiles} staff · {t._count.appointments} appointments ·{" "}
+                        {t._count.clients} clients · {t._count.users} user{t._count.users === 1 ? "" : "s"}
+                      </div>
+                      <div>
+                        {t._count.customCalendars} custom calendars · {t._count.scheduleTemplates} schedule templates ·{" "}
+                        {t._count.teams} teams · {t._count.timeOffs} time off · {t._count.eventPresets} event presets ·{" "}
+                        {t._count.roles} roles
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge tone={t.publicBookingEnabled ? "green" : "gray"}>
+                          Public booking {t.publicBookingEnabled ? "on" : "off"}
+                        </Badge>
+                        <Badge tone={t.appointmentsCalendarEnabled ? "green" : "gray"}>
+                          Appointments calendar {t.appointmentsCalendarEnabled ? "on" : "off"}
+                        </Badge>
+                        <Badge tone={t.shiftsCalendarEnabled ? "green" : "gray"}>
+                          Shifts calendar {t.shiftsCalendarEnabled ? "on" : "off"}
+                        </Badge>
+                      </div>
                     </div>
 
                     {draft ? (

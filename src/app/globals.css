@@ -96,10 +96,11 @@ body {
 .rbc-event.rbc-selected {
   background-color: var(--color-primary-600);
 }
-/* Week/Day time grid: events are positioned by columnDayLayout.ts - one lane
- * each, never overlapping. That layout makes each event 3px narrower than
- * its lane; this 1.5px margin centres it in the lane so neighbours get a
- * real gap. The chained `.rbc-event.rbc-event` selector isn't a typo - it's
+/* Week/Day time grid: events are positioned by columnDayLayout.ts, the way
+ * Google Calendar does it - one lane each, with an event running a little
+ * way underneath the later event to its right. Side-by-side events are made
+ * 3px narrower than their lane; this 1.5px margin centres them in it so
+ * neighbours get a real gap. The chained `.rbc-event.rbc-event` selector isn't a typo - it's
  * a specificity bump (one class repeated = an extra selector's worth of
  * specificity with no extra markup) so this reliably wins over
  * react-big-calendar.css's own `.rbc-day-slot .rbc-event` rule regardless
@@ -159,9 +160,6 @@ body {
   }
   .rbc-day-slot .cal-who .cal-avatar {
     display: flex;
-  }
-  .rbc-day-slot .cal-who {
-    justify-content: center;
   }
 }
 /* react-big-calendar's own `.rbc-day-slot .rbc-event-content` sets

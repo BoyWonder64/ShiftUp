@@ -4,6 +4,7 @@ import { requireTenantSession } from "@/lib/auth/current-user";
 import { runInTenantContext } from "@/lib/tenant-context";
 import { hasPermission } from "@/lib/permissions/service";
 import { createAppointment, listAppointmentsInRange, SchedulingConflictError } from "@/modules/scheduling/service";
+import { createRepeatingAppointments, MAX_REPEAT_OCCURRENCES } from "@/modules/scheduling/recurrence";
 import { assertCanAddAppointment, PlanLimitError } from "@/lib/licensing/limits";
 import { EVENT_COLOR_KEYS } from "@/lib/colors/eventColors";
 import { getOwnStaffProfile } from "@/modules/timeoff/service";
@@ -105,6 +106,11 @@ const createSchema = z.object({
   location: z.string().max(500).optional().nullable(),
   tagId: z.string().uuid().optional().nullable(),
   colorKey: z.enum(EVENT_COLOR_KEYS).optional().nullable(),
+  // Repeat: the start time of every copy *after* the first (startTime/endTime
+  // above stay the first occurrence, and every copy keeps its length). The
+  // browser works the dates out in the user's own timezone - see
+  // createRepeatingAppointments for why the server doesn't.
+  repeatStartTimes: z.array(z.string().datetime()).max(MAX_REPEAT_OCCURRENCES - 1).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -117,7 +123,7 @@ export async function POST(request: NextRequest) {
     }
     const data = parsed.data;
 
-    const appointment = await runInTenantContext(
+    const { appointment, repeat } = await runInTenantContext(
       session.tenantId,
       session.userId,
       session.role,
@@ -142,9 +148,7 @@ export async function POST(request: NextRequest) {
           const customCalendar = await tx.customCalendar.findUnique({ where: { id: data.customCalendarId } });
           if (!customCalendar || customCalendar.tenantId !== session.tenantId) throw new Error("NOT_FOUND");
         }
-        await assertCanAddAppointment(tx, session.tenantId);
-
-        return createAppointment(tx, session.tenantId, {
+        const input = {
           staffId: data.staffId,
           entryKind: data.entryKind,
           customCalendarId: data.entryKind === "CUSTOM" ? data.customCalendarId : null,
@@ -161,12 +165,41 @@ export async function POST(request: NextRequest) {
           tagId: data.tagId,
           colorKey: data.colorKey,
           createdByUserId: session.userId,
-          source: "ADMIN",
-        });
+          source: "ADMIN" as const,
+        };
+
+        if (data.repeatStartTimes?.length) {
+          const result = await createRepeatingAppointments(
+            tx,
+            session.tenantId,
+            input,
+            data.repeatStartTimes.map((s) => new Date(s)),
+            // Checked before every copy, so the free plan's monthly cap
+            // stops a series partway rather than being blown past by one request.
+            () => assertCanAddAppointment(tx, session.tenantId)
+          );
+          return { appointment: result.created[0], repeat: result };
+        }
+
+        await assertCanAddAppointment(tx, session.tenantId);
+        return { appointment: await createAppointment(tx, session.tenantId, input), repeat: null };
       }
     );
 
-    return NextResponse.json({ appointment }, { status: 201 });
+    return NextResponse.json(
+      {
+        appointment,
+        ...(repeat
+          ? {
+              repeat: {
+                createdCount: repeat.created.length,
+                skipped: repeat.skipped.map((s) => ({ startTime: s.startTime.toISOString(), reason: s.reason })),
+              },
+            }
+          : {}),
+      },
+      { status: 201 }
+    );
   } catch (err) {
     if (err instanceof Error && err.message === "UNAUTHENTICATED") {
       return NextResponse.json({ error: "Not authorized." }, { status: 401 });
