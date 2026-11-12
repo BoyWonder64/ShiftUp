@@ -18,7 +18,7 @@ import withDragAndDrop, { type EventInteractionArgs } from "react-big-calendar/l
 // so this is suppressed at the import instead.
 // @ts-expect-error -- see comment above; no .d.ts for this internal module
 import TimeGrid from "react-big-calendar/lib/TimeGrid";
-import { addDays, eachDayOfInterval, format, parse, startOfWeek, getDay, isSameDay } from "date-fns";
+import { addDays, format, parse, startOfWeek, getDay, isSameDay } from "date-fns";
 import { enUS } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
@@ -38,6 +38,7 @@ import { getEnabledHolidaysInRange } from "@/lib/holidays/catalog";
 import { CALENDAR_TEXT_SIZE_REM, type CalendarTextSize } from "@/lib/calendar/textSize";
 import { formatClockRange, formatClockTime, type TimeFormat } from "@/lib/calendar/timeFormat";
 import { condenseEvents, type CondensedKind } from "@/lib/calendar/condenseEvents";
+import { dragDayRange, formatDayFilterTitle, parseDayCountFilter, shiftDayFilter } from "@/lib/calendar/dayFilter";
 import {
   MAX_REPEAT_OCCURRENCES,
   REPEAT_CADENCES,
@@ -209,25 +210,14 @@ function createFilteredDaysView(days: Date[], setVisibleDayFilter: (days: Date[]
     // react-big-calendar's moveDate (utils/move.js) never calls a view's
     // .navigate for that action, it substitutes today's date directly.
     if (action === "PREV" || action === "NEXT") {
-      const delta = action === "PREV" ? -days.length : days.length;
-      const shifted = days.map((d) => addDays(d, delta));
+      const shifted = shiftDayFilter(days, action);
       setVisibleDayFilter(shifted);
       return shifted[0];
     }
     return date;
   };
 
-  FilteredDaysView.title = () => {
-    const start = days[0];
-    const end = days[days.length - 1];
-    if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
-      return `${format(start, "MMMM d")} – ${format(end, "d")}`;
-    }
-    if (start.getFullYear() === end.getFullYear()) {
-      return `${format(start, "MMMM d")} – ${format(end, "MMMM d")}`;
-    }
-    return `${format(start, "MMMM d, yyyy")} – ${format(end, "MMMM d, yyyy")}`;
-  };
+  FilteredDaysView.title = () => formatDayFilterTitle(days);
 
   return FilteredDaysView;
 }
@@ -925,8 +915,7 @@ export function SchedulingCalendar({
   const enterDayDrag = useCallback((date: Date) => {
     const anchor = dragAnchorRef.current;
     if (!dragActiveRef.current || !anchor) return;
-    const [from, to] = anchor <= date ? [anchor, date] : [date, anchor];
-    setDragDays(eachDayOfInterval({ start: from, end: to }));
+    setDragDays(dragDayRange(anchor, date));
   }, []);
 
   const consumeDragFlag = useCallback(() => {
@@ -973,16 +962,9 @@ export function SchedulingCalendar({
   // as applying a drag selection does via the mouseup handler above).
   const handleDayCountChange = useCallback(
     (raw: string) => {
-      const n = Number(raw);
-      if (!raw || !Number.isFinite(n) || n < 1) {
-        setVisibleDayFilter(null);
-        return;
-      }
-      const clamped = Math.min(60, Math.max(1, Math.round(n)));
-      const start = new Date();
-      start.setHours(0, 0, 0, 0);
-      setVisibleDayFilter(Array.from({ length: clamped }, (_, i) => addDays(start, i)));
-      if (currentView !== "week") setCurrentView("week");
+      const days = parseDayCountFilter(raw, new Date());
+      setVisibleDayFilter(days);
+      if (days && currentView !== "week") setCurrentView("week");
     },
     [currentView]
   );
